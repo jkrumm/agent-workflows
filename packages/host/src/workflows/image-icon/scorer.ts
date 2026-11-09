@@ -2,10 +2,11 @@ import { join } from 'node:path'
 import type { Scorer, Verdict } from '@agent-workflows/runtime'
 import sharp from 'sharp'
 import { z } from 'zod'
+import { hexRgb } from './color.ts'
 import { ImageIconInput, type ImageIconInputValue, ImageIconOutput, type ImageIconOutputValue } from './schema.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
-export const IMAGE_ICON_SCORER_VERSION = '2026-11-03.1'
+export const IMAGE_ICON_SCORER_VERSION = '2026-11-09.1'
 
 /**
  * What a careful reader expects of one run beyond the output's own consistency: the model steps that ran (their order
@@ -18,16 +19,18 @@ export const ImageIconReference = z.strictObject({
 export type ImageIconReference = z.output<typeof ImageIconReference>
 
 /** The icon set spec: name, mime and pixel size of every file the workflow lists (`favicon.svg` has no pixel size). */
-const ICO = { name: 'favicon.ico', mime: 'image/x-icon', size: 48 }
-const SVG = { name: 'favicon.svg', mime: 'image/svg+xml', size: 0 }
+const square = (name: string, mime: string, size: number) => ({ name, mime, width: size, height: size })
+const ICO = square('favicon.ico', 'image/x-icon', 48)
+const SVG = square('favicon.svg', 'image/svg+xml', 0)
 const RASTERS = [
-  { name: 'icon-192.png', mime: 'image/png', size: 192 },
-  { name: 'icon-512.png', mime: 'image/png', size: 512 },
-  { name: 'icon-mask.png', mime: 'image/png', size: 512 },
-  { name: 'apple-touch-icon.png', mime: 'image/png', size: 180 },
-  { name: 'icon-1024.png', mime: 'image/png', size: 1024 },
-] as const
-const ICNS = { name: 'AppIcon.icns', mime: 'image/icns', size: 1024 }
+  square('icon-192.png', 'image/png', 192),
+  square('icon-512.png', 'image/png', 512),
+  square('icon-mask.png', 'image/png', 512),
+  square('apple-touch-icon.png', 'image/png', 180),
+  square('icon-1024.png', 'image/png', 1024),
+]
+const ICNS = square('AppIcon.icns', 'image/icns', 1024)
+const CARD = { name: 'og-image.png', mime: 'image/png', width: 1200, height: 630 }
 
 /** A pixel just inside the content corner of `icon-512.png` (box 451 px at offset 30): transparent iff the ground is gone. */
 const CORNER_PROBE = 34
@@ -82,12 +85,26 @@ async function pixel(path: string, x: number, y: number): Promise<[number, numbe
   }
 }
 
-const expectedSpec = (withSvg: boolean) => [ICO, ...(withSvg ? [SVG] : []), ...RASTERS, ICNS]
+const expectedSpec = (withSvg: boolean, withCard: boolean) => [
+  ICO,
+  ...(withSvg ? [SVG] : []),
+  ...RASTERS,
+  ICNS,
+  ...(withCard ? [CARD] : []),
+]
 
 /** The listing is the spec's files in order, each at its path in the run dir, on disk, of the stated size and mime. */
-async function filesCheck(output: ImageIconOutputValue, withSvg: boolean, listed: Map<string, Listed>) {
+async function filesCheck(args: {
+  input: ImageIconInputValue
+  output: ImageIconOutputValue
+  withSvg: boolean
+  listed: Map<string, Listed>
+}) {
+  const { input, output, withSvg, listed } = args
   const c = check()
-  const spec = expectedSpec(withSvg)
+  const withCard = listed.has(CARD.name)
+  if (withCard !== (input.cardTitle !== undefined)) c.fail('og-image.png is listed only with a cardTitle')
+  const spec = expectedSpec(withSvg, withCard)
   const names = output.files.map((f) => f.name)
   if (names.join() !== spec.map((s) => s.name).join())
     c.fail(`files are ${names.join(', ')} (want ${spec.map((s) => s.name).join(', ')})`)
@@ -108,17 +125,17 @@ async function filesCheck(output: ImageIconOutputValue, withSvg: boolean, listed
 async function dimensionsCheck(output: ImageIconOutputValue) {
   const c = check()
   for (const file of output.files) {
-    const want = expectedSpec(true).find((s) => s.name === file.name)
+    const want = expectedSpec(true, true).find((s) => s.name === file.name)
     if (!want) continue
-    if (file.width !== want.size || file.height !== want.size)
-      c.fail(`${file.name} is listed ${file.width}x${file.height} (want ${want.size}x${want.size})`)
+    if (file.width !== want.width || file.height !== want.height)
+      c.fail(`${file.name} is listed ${file.width}x${file.height} (want ${want.width}x${want.height})`)
     const bytes = await bytesOf(file.path)
     if (!bytes) continue
     if (file.mime === 'image/png') {
       const size = pngSize(bytes)
       if (!size) c.fail(`${file.name} is not a PNG`)
-      else if (size.width !== want.size || size.height !== want.size)
-        c.fail(`${file.name} is ${size.width}x${size.height} on disk (want ${want.size}x${want.size})`)
+      else if (size.width !== want.width || size.height !== want.height)
+        c.fail(`${file.name} is ${size.width}x${size.height} on disk (want ${want.width}x${want.height})`)
     } else if (file.name === ICO.name && !startsWith(bytes, [0, 0, 1, 0])) c.fail('favicon.ico has no ICO header')
     else if (file.name === ICNS.name && !startsWith(bytes, [0x69, 0x63, 0x6e, 0x73]))
       c.fail('AppIcon.icns has no icns header')
@@ -160,6 +177,7 @@ async function manifestCheck(output: ImageIconOutputValue, listed: Map<string, L
   if (!tag('rel="manifest"') || !tag('rel="apple-touch-icon"') || !tag('/favicon.ico'))
     c.fail('the head tags lack a required link')
   if (tag('/favicon.svg') !== listed.has(SVG.name)) c.fail('the svg link and favicon.svg disagree')
+  if (tag('og:image') !== listed.has(CARD.name)) c.fail('the og:image tag and og-image.png disagree')
   return c
 }
 
@@ -178,14 +196,22 @@ function svgCheck(input: ImageIconInputValue, output: ImageIconOutputValue, hasS
   return c
 }
 
-/** `apple-touch-icon.png` is flattened on the input's background: its (0, 0) pixel is that colour, opaque. */
+/**
+ * `apple-touch-icon.png` is flattened on the input's background (white when absent): its (0, 0) pixel is that colour,
+ * opaque. A tile master without a background bleeds from the tile itself: the corner only has to be opaque.
+ */
 async function backgroundCheck(input: ImageIconInputValue, output: ImageIconOutputValue) {
   const c = check()
   const file = output.files.find((f) => f.name === 'apple-touch-icon.png')
   const px = file ? await pixel(file.path, 0, 0) : null
-  const want = [1, 3, 5].map((i) => Number.parseInt(input.background.slice(i, i + 2), 16))
-  if (!px) c.fail('apple-touch-icon.png cannot be read')
-  else if (px[3] !== 255 || want.some((v, i) => Math.abs(v - (px[i] ?? 0)) > 2))
+  if (!px) {
+    c.fail('apple-touch-icon.png cannot be read')
+    return c
+  }
+  if (px[3] !== 255) c.fail(`apple-touch-icon.png corner has alpha ${px[3]} (want opaque)`)
+  if (output.tile && input.background === undefined) return c
+  const want = hexRgb(input.background ?? '#ffffff')
+  if (want.some((v, i) => Math.abs(v - (px[i] ?? 0)) > 2))
     c.fail(`apple-touch-icon.png corner is ${px.join(',')} (want ${want.join(',')},255)`)
   return c
 }
@@ -220,7 +246,8 @@ async function alphaCheck(output: ImageIconOutputValue, want: boolean) {
  * - `manifest`: its icons name listed PNGs of the stated size and type, `manifest.webmanifest` and `head.html` match
  *   the output, the head links match the set;
  * - `svg`: `svg: never` left no svg, reason or call; `auto` called vectorize and has the file or the reason, not both;
- * - `background`: the opaque `apple-touch-icon.png` is flattened on the input's background;
+ * - `background`: the opaque `apple-touch-icon.png` is flattened on the input's background (white when absent; opaque
+ *   only, for a tile master without one); `og-image.png` is in the spec exactly when a `cardTitle` was given (1200x630);
  * - `cost`: the price is known and the sum of the steps that ran;
  * and with a reference: `steps` (the model steps that ran are the reference's, in order) and `alpha` (the ground is gone at
  * the corner of `icon-512.png`, or kept, as the reference says). `pass`: every score 1.
@@ -244,7 +271,7 @@ export const imageIconScorer: Scorer<unknown, ImageIconReference> = {
     const hasSvg = listed.has(SVG.name)
 
     const checks: Record<string, Check> = {
-      files: await filesCheck(out, hasSvg, listed),
+      files: await filesCheck({ input: given.data, output: out, withSvg: hasSvg, listed }),
       dimensions: await dimensionsCheck(out),
       manifest: await manifestCheck(out, listed),
       svg: svgCheck(given.data, out, hasSvg),

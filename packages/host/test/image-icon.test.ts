@@ -11,6 +11,8 @@ import { type FakeHandler, startFakeImageServer } from '@agent-workflows/testing
 import { createImageIconWorkflows, type ImageIconCaller } from '../src/workflows/image-icon/index.ts'
 import { cleanVectorized, ICONS_MANIFEST, iconsHtml } from '../src/workflows/image-icon/pipeline.ts'
 import { ImageIconInput } from '../src/workflows/image-icon/schema.ts'
+import { imageIconScorer } from '../src/workflows/image-icon/scorer.ts'
+import { icoFrame, tileMaster } from './image-icon-fixtures.ts'
 import { startTestHost, type TestHost } from './support.ts'
 
 const fake = startFakeImageServer()
@@ -302,6 +304,78 @@ describe('image-icon end to end', () => {
     expect(out.cost).toEqual({ usd: 0.01, source: 'rate' })
   })
 
+  test('a tile master runs full bleed with no background: tile is true, the card ends the list, the head has the og tags, the scorer passes', async () => {
+    const file = await writeSource('tile.png', await tileMaster())
+    const { body } = await run({ file, svg: 'never', cardTitle: 'Hello & <World>', cardLine: 'A "quoted" line' })
+
+    expect(body.status).toBe('done')
+    const out = body.output
+    expect(out.tile).toBe(true)
+    expect(out.files.map((f: { name: string }) => f.name)).toEqual([
+      ...FILE_ORDER.filter((n) => n !== 'favicon.svg'),
+      'og-image.png',
+    ])
+    expect(out.files.at(-1)).toMatchObject({ mime: 'image/png', width: 1200, height: 630 })
+    expect(out.html).toBe(iconsHtml(false, { title: 'Hello & <World>', line: 'A "quoted" line' }))
+    expect(out.html).toContain('content="Hello &amp; &lt;World&gt;"')
+    expect(readFileSync(out.htmlPath, 'utf8')).toBe(`${out.html}\n`)
+    const meta = await sharp(join(out.dir, 'og-image.png')).metadata()
+    expect([meta.width, meta.height]).toEqual([1200, 630])
+    const corner = await sharp(join(out.dir, 'apple-touch-icon.png')).ensureAlpha().raw().toBuffer()
+    expect(corner[3]).toBe(255)
+
+    const verdict = await imageIconScorer.score(ImageIconInput.parse({ file, svg: 'never', cardTitle: 'x' }), out, {
+      source: 'regression',
+      signal: new AbortController().signal,
+    })
+    expect(verdict.feedback).toBeUndefined()
+    expect(verdict.pass).toBe(true)
+    expect(fake.seen).toEqual([])
+  })
+
+  test('a master without a tile reports tile false and no card files by default', async () => {
+    delivers('vectorize', text(RAW_SVG), VECTORIZE)
+    const { body } = await run({ file: GOLDEN_SOURCE })
+    expect(body.output.tile).toBe(false)
+    expect(body.output.files.map((f: { name: string }) => f.name)).toEqual(FILE_ORDER)
+    expect(body.output.html).toBe(iconsHtml(true))
+  })
+
+  test('a flat source drives the ico and the vectorize input: work/flat-source.png and work/small-master.png exist', async () => {
+    delivers('vectorize', text(RAW_SVG), VECTORIZE)
+    const flat = await writeSource('flat.png', await subject(1024))
+    const { body } = await run({ file: GOLDEN_SOURCE, flat })
+
+    expect(body.status).toBe('done')
+    const out = body.output
+    expect(existsSync(join(out.workDir, 'flat-source.png'))).toBe(true)
+    expect(existsSync(join(out.workDir, 'small-master.png'))).toBe(true)
+    const sent = await sharp(requestImage(VECTORIZE).bytes).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+    const centre = (sent.info.height / 2) * sent.info.width * 4 + (sent.info.width / 2) * 4
+    expect([...sent.data.subarray(centre, centre + 3)]).toEqual([200, 60, 40])
+    const frame = await sharp(icoFrame(readFileSync(join(out.dir, 'favicon.ico')), 48))
+      .ensureAlpha()
+      .raw()
+      .toBuffer()
+    expect([...frame.subarray((24 * 48 + 24) * 4, (24 * 48 + 24) * 4 + 3)]).toEqual([200, 60, 40])
+  })
+
+  test('cardLine without cardTitle, a bad flat file and an unreadable flat fail as invalid_input before any billed call', async () => {
+    const notImage = await writeSource('flat-notes.txt', text('hello'))
+    for (const [input, message] of [
+      [{ file: GOLDEN_SOURCE, cardLine: 'only a line' }, 'cardLine needs a cardTitle'],
+      [{ file: GOLDEN_SOURCE, flat: join(root, 'no-flat.png') }, 'no such file'],
+      [{ file: GOLDEN_SOURCE, flat: notImage }, 'image must be png, jpeg or webp'],
+    ] as const) {
+      const { body } = await run(input)
+      expect(body.status).toBe('failed')
+      expect(body.error.message).toContain('failed (invalid_input)')
+      expect(body.error.message).toContain(message)
+      expect((await recorded(body.runId)).usd).toBe(0)
+    }
+    expect(fake.seen).toEqual([])
+  })
+
   test('invalid input fails before any billed call: relative path (400), a missing file, a non-image, upscale: always on 1500 px', async () => {
     expect((await t.call('/workflows/image-icon', { method: 'POST', body: { file: 'relative/a.png' } })).status).toBe(
       400,
@@ -400,12 +474,23 @@ describe('image-icon input', () => {
   test('the defaults, and a schema that refuses unknown keys, a bad background and a relative path', () => {
     expect(ImageIconInput.parse({ file: '/abs/a.png' })).toEqual({
       file: '/abs/a.png',
-      background: '#ffffff',
       cutout: 'auto',
       cutoutModel: 'recraft',
       upscale: 'auto',
       svg: 'auto',
     })
+    expect(ImageIconInput.parse({ file: '/abs/a.png' }).background).toBeUndefined()
+    for (const bad of [
+      { file: '/abs/a.png', flat: 'rel.png' },
+      { file: '/abs/a.png', cardTitle: '' },
+      { file: '/abs/a.png', cardTitle: 'x'.repeat(81) },
+      { file: '/abs/a.png', cardTitle: 't', cardLine: 'x'.repeat(161) },
+    ]) {
+      expect(ImageIconInput.safeParse(bad).success).toBe(false)
+    }
+    expect(
+      ImageIconInput.safeParse({ file: '/abs/a.png', flat: '/abs/f.png', cardTitle: 't', cardLine: 'l' }).success,
+    ).toBe(true)
     for (const bad of [
       { file: '/abs/a.png', extra: 1 },
       { file: '/abs/a.png', background: 'white' },

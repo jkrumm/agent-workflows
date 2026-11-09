@@ -6,6 +6,9 @@ import sharp from 'sharp'
 import { EVAL_DIR, imageIconSuite } from '../src/workflows/image-icon/module.ts'
 import imageIconModule from '../src/workflows/image-icon/module.ts'
 import { encode, FIXTURES, pixels } from '../src/workflows/image-icon/eval/generate.ts'
+import { renderCard } from '../src/workflows/image-icon/card.ts'
+import { detectTile } from '../src/workflows/image-icon/tile.ts'
+import { tileMaster } from './image-icon-fixtures.ts'
 import {
   buildMaster,
   decodeRgba,
@@ -31,21 +34,31 @@ let counter = 0
 /** A real icon set from a fixture, written to disk the way the workflow writes it. */
 async function makeSet(options: {
   source: string
-  background?: string
+  /** Replaces the fixture: a master PNG used as it is. */
+  master?: Buffer
+  /** `null` passes no background to the rasters (a tile master then bleeds). */
+  background?: string | null
   svg?: 'made' | 'skipped' | 'never'
   steps?: ('upscale' | 'cutout' | 'vectorize')[]
+  card?: { title: string; line?: string }
 }): Promise<Made> {
-  const { source, background = '#ffffff', svg = 'never', steps = [] } = options
+  const { source, svg = 'never', steps = [], card } = options
+  const background = options.background === null ? undefined : (options.background ?? '#ffffff')
   const dir = join(root, `set-${counter++}`)
   mkdirSync(dir, { recursive: true })
-  const master = await buildMaster(await decodeRgba(await encode(fixture(source))))
+  const master = options.master ?? (await buildMaster(await decodeRgba(await encode(fixture(source)))))
   const assets = await renderRasters(master, background)
+  const tile = await detectTile(master)
+  if (card) {
+    const bytes = await renderCard({ master, tile, background, ...card })
+    assets.push({ name: 'og-image.png', mime: 'image/png', width: 1200, height: 630, bytes })
+  }
   const svgBytes = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><path d="M0 0h8v8z"/></svg>')
   const files = assets.map((a) => ({ name: a.name, mime: a.mime, width: a.width, height: a.height, bytes: a.bytes }))
   if (svg === 'made')
     files.splice(1, 0, { name: 'favicon.svg', mime: 'image/svg+xml', width: 0, height: 0, bytes: svgBytes })
   for (const f of files) await Bun.write(join(dir, f.name), f.bytes)
-  const html = iconsHtml(svg === 'made')
+  const html = iconsHtml(svg === 'made', card)
   await Bun.write(join(dir, 'head.html'), `${html}\n`)
   await Bun.write(join(dir, 'manifest.webmanifest'), `${JSON.stringify(ICONS_MANIFEST, null, 2)}\n`)
   const output: ImageIconOutputValue = {
@@ -56,6 +69,7 @@ async function makeSet(options: {
     htmlPath: join(dir, 'head.html'),
     manifest: ICONS_MANIFEST,
     manifestPath: join(dir, 'manifest.webmanifest'),
+    tile: tile !== null,
     steps: steps.map((step) => ({ step, model: 'm', costUsd: 0.01, latencyMs: 5 })),
     ...(svg === 'skipped' ? { svgSkippedReason: 'vectorized SVG is 70 KB' } : {}),
     cost: { usd: Number((steps.length * 0.01).toFixed(6)), source: 'rate' },
@@ -169,6 +183,42 @@ describe('image-icon scorer', () => {
     const { output } = await makeSet({ source: 'disc-transparent-512.png', background: '#0b1020' })
     expect((await score({ svg: 'never', background: '#0b1020' }, output)).scores.background).toBe(1)
     expect((await score({ svg: 'never', background: '#ff0000' }, output)).scores.background).toBe(0)
+  })
+
+  test('a tile master with no background passes on an opaque corner; an explicit background must match', async () => {
+    const master = await tileMaster()
+    const bled = await makeSet({ source: '', master, background: null })
+    const verdict = await score({ svg: 'never' }, bled.output)
+    expect(verdict.feedback).toBeUndefined()
+    expect(verdict.scores.background).toBe(1)
+    expect(bled.output.tile).toBe(true)
+    expect((await score({ svg: 'never', background: '#ff0000' }, bled.output)).scores.background).toBe(0)
+    const flat = await makeSet({ source: '', master, background: '#1a2b4c' })
+    expect((await score({ svg: 'never', background: '#1a2b4c' }, flat.output)).scores.background).toBe(1)
+  })
+
+  test('a card adds og-image.png (1200x630) to the spec and og tags to the head; one without the other fails', async () => {
+    const card = { title: 'Title', line: 'A line' }
+    const { output, dir } = await makeSet({ source: 'disc-opaque-512.png', card })
+    const verdict = await score({ svg: 'never', cardTitle: 'Title', cardLine: 'A line' }, output)
+    expect(verdict.feedback).toBeUndefined()
+    expect(verdict.pass).toBe(true)
+    expect(output.files.at(-1)).toMatchObject({ name: 'og-image.png', width: 1200, height: 630 })
+
+    expect((await score({ svg: 'never' }, output)).scores.files).toBe(0)
+    const noTags = { ...output, html: iconsHtml(false) }
+    await Bun.write(join(dir, 'head.html'), `${noTags.html}\n`)
+    expect((await score({ svg: 'never', cardTitle: 'Title' }, noTags)).scores.manifest).toBe(0)
+
+    const plain = await makeSet({ source: 'disc-opaque-512.png' })
+    expect((await score({ svg: 'never', cardTitle: 'Title' }, plain.output)).scores.files).toBe(0)
+
+    const small = await sharp({ create: { width: 64, height: 64, channels: 3, background: '#ffffff' } })
+      .png()
+      .toBuffer()
+    await Bun.write(join(dir, 'og-image.png'), small)
+    const wrongSize = await score({ svg: 'never', cardTitle: 'Title' }, { ...output, html: iconsHtml(false, card) })
+    expect(wrongSize.scores.dimensions).toBe(0)
   })
 
   test('steps and cost: a different step list, an unknown price or a wrong sum is a miss', async () => {

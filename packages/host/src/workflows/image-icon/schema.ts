@@ -15,10 +15,25 @@ export const ImageIconInput = z
     background: z
       .string()
       .regex(/^#[0-9a-fA-F]{6}$/, 'background must be a #rrggbb hex color')
-      .default('#ffffff')
+      .optional()
       .describe(
-        'Fill (#rrggbb) for the opaque targets only: apple-touch-icon, icon-mask and icon-1024 (default #ffffff)',
+        'Fill (#rrggbb) for the opaque targets: apple-touch-icon, icon-mask and icon-1024; for a master with a rounded tile the corners bleed from the tile itself unless this is given; default #ffffff for a master without a tile',
       ),
+    flat: z
+      .string()
+      .min(1)
+      .refine(isAbsolute, 'flat must be an absolute path')
+      .optional()
+      .describe(
+        'Absolute path of a flat derivative of the master (png, jpeg, webp; at most 20 MiB) that drives favicon.ico and favicon.svg instead of the master, so the master may stay metallic or gradient',
+      ),
+    cardTitle: z
+      .string()
+      .min(1)
+      .max(80)
+      .optional()
+      .describe('Title of the social card: when given, og-image.png (1200x630) and the og/twitter head tags are made'),
+    cardLine: z.string().min(1).max(160).optional().describe('Line under the card title (requires cardTitle)'),
     cutout: z
       .enum(['auto', 'always', 'never'])
       .default('auto')
@@ -63,7 +78,7 @@ export const ImageIconOutput = z.object({
   files: z
     .array(IconFile)
     .describe(
-      'favicon.ico, favicon.svg (when made), icon-192, icon-512, icon-mask, apple-touch-icon, icon-1024, AppIcon.icns',
+      'favicon.ico, favicon.svg (when made), icon-192, icon-512, icon-mask, apple-touch-icon, icon-1024, AppIcon.icns, og-image.png (when a card was made)',
     ),
   html: z.string().describe('The <link> tags for the head'),
   htmlPath: z.string(),
@@ -81,6 +96,10 @@ export const ImageIconOutput = z.object({
       }),
     )
     .describe('The model steps that ran, in pipeline order'),
+  tile: z
+    .boolean()
+    .default(false)
+    .describe('The master carried a rounded tile: the full-bleed targets extend it, the icns sits on the macOS grid'),
   svgSkippedReason: z.string().optional().describe('Why favicon.svg is not in the set'),
   cost: Cost.describe('The sum of the steps that ran; $0 when none did'),
   latencyMs: z.int().nonnegative(),

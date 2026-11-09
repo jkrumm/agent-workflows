@@ -1,7 +1,20 @@
 import { WorkflowError } from '@agent-workflows/runtime'
 import sharp from 'sharp'
 import { optimize } from 'svgo'
+import { hexRgb, luminance } from './color.ts'
 import { encodeIcns, encodeIco, ICNS_SIZES, ICNS_TYPES } from './containers.ts'
+import {
+  detectTile,
+  fullBleed,
+  macosIcon,
+  maskable,
+  MASKABLE_BOX,
+  type TileInfo,
+  tileCrop,
+  tileSquare,
+} from './tile.ts'
+
+export { MASKABLE_BOX }
 
 /**
  * The deterministic half of the icon-set pipeline, ported from the retired image-gateway's `/icons`:
@@ -19,9 +32,6 @@ const PADDING = {
   appStore: 0.1,
   icns: 0.1,
 } as const
-
-/** The maskable safe zone: a centered 409px box (80%) inside the 512px icon-mask canvas. */
-export const MASKABLE_BOX = 409
 
 /** Cutout input is downscaled to this long edge first - the icons never need more resolution. */
 export const CUTOUT_INPUT_MAX_EDGE = 1536
@@ -63,6 +73,17 @@ const FAVICON_SIZES = [16, 32, 48] as const
 
 const TRANSPARENT = { r: 0, g: 0, b: 0, alpha: 0 }
 
+/** The fill of the opaque targets for a master without a tile when the caller names none. */
+const DEFAULT_BACKGROUND = '#ffffff'
+
+/** A glyph this light (alpha-weighted mean luminance) vanishes on a light browser tab: it gets a dark backing. */
+const LIGHT_GLYPH_LUMINANCE = 0.85
+const GLYPH_SHARE = 0.7
+const BACKING_RADIUS = 0.225
+const BACKING_COLOR = '#111827'
+/** An explicit `background` darker than this serves as the backing colour. */
+const BACKING_MAX_LUMINANCE = 0.4
+
 export type UpscaleMode = 'auto' | 'always' | 'never'
 
 export interface Rgba {
@@ -87,13 +108,27 @@ export interface IconsManifest {
  * The ICO keeps `sizes="32x32"`: without it Chrome prefers the ICO over the SVG icon. The SVG link
  * exists only when `favicon.svg` was actually emitted.
  */
-export const iconsHtml = (withSvg: boolean): string =>
+export const iconsHtml = (withSvg: boolean, card?: { title: string; line?: string }): string =>
   [
     '<link rel="icon" href="/favicon.ico" sizes="32x32">',
     ...(withSvg ? ['<link rel="icon" href="/favicon.svg" type="image/svg+xml">'] : []),
     '<link rel="apple-touch-icon" href="/apple-touch-icon.png">',
     '<link rel="manifest" href="/manifest.webmanifest">',
+    ...(card ? cardTags(card) : []),
   ].join('\n')
+
+const escapeAttribute = (value: string): string =>
+  value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;')
+
+const cardTags = ({ title, line }: { title: string; line?: string }): string[] => [
+  `<meta property="og:title" content="${escapeAttribute(title)}">`,
+  ...(line ? [`<meta property="og:description" content="${escapeAttribute(line)}">`] : []),
+  '<meta property="og:image" content="/og-image.png">',
+  '<meta property="og:image:width" content="1200">',
+  '<meta property="og:image:height" content="630">',
+  '<meta name="twitter:card" content="summary_large_image">',
+  '<meta name="twitter:image" content="/og-image.png">',
+]
 
 export const ICONS_MANIFEST: IconsManifest = {
   icons: [
@@ -318,28 +353,103 @@ async function pngAsset(args: {
 }
 
 /**
- * Every raster output from the square master, in the gateway's order: favicon.ico (16/32/48),
- * icon-192, icon-512, icon-mask, apple-touch-icon, icon-1024, AppIcon.icns. `background` fills the
- * OPAQUE targets only (icon-mask, apple-touch-icon, icon-1024).
+ * The master that drives the small targets (ico frames, vectorize input). A light glyph on transparency (alpha-weighted
+ * mean luminance >= 0.85) would vanish on a light tab, so it is centred at 70% on a dark rounded-square backing that fills
+ * the canvas. A tile, an opaque image and any darker glyph pass through unchanged.
  */
-export async function renderRasters(master: Buffer, background: string): Promise<IconAsset[]> {
-  const [icoFrames, icnsPngs, icon192, icon512, mask, apple, store] = await Promise.all([
+export async function smallTargetMaster(small: Buffer, background?: string): Promise<Buffer> {
+  const { data, width, height } = await decodeRgba(small)
+  if (lacksTransparency(data)) return small
+  let weighted = 0
+  let weight = 0
+  for (let i = 0; i < data.length; i += 4) {
+    const alpha = data[i + 3] ?? 0
+    if (alpha < ALPHA_FLOOR) continue
+    weighted += (alpha / 255) * luminance([data[i] ?? 0, data[i + 1] ?? 0, data[i + 2] ?? 0])
+    weight += alpha / 255
+  }
+  if (weight === 0 || weighted / weight < LIGHT_GLYPH_LUMINANCE) return small
+  if (await detectTile(small)) return small
+
+  const side = Math.max(width, height)
+  const color = background && luminance(hexRgb(background)) < BACKING_MAX_LUMINANCE ? background : BACKING_COLOR
+  const backing = Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${side}" height="${side}"><rect width="${side}" height="${side}" rx="${side * BACKING_RADIUS}" fill="${color}"/></svg>`,
+  )
+  const glyphSide = Math.round(side * GLYPH_SHARE)
+  const glyph = await sharp(small)
+    .resize(glyphSide, glyphSide, { fit: 'contain', background: TRANSPARENT })
+    .png()
+    .toBuffer()
+  const offset = Math.floor((side - glyphSide) / 2)
+  return sharp(backing)
+    .composite([{ input: glyph, left: offset, top: offset }])
+    .png()
+    .toBuffer()
+}
+
+type OpaqueTargets = { mask: Buffer; apple: Buffer; store: Buffer }
+
+/** A master without a tile: the art fitted into a box and flattened on the background. */
+async function boxedTargets(master: Buffer, background: string): Promise<OpaqueTargets> {
+  const [mask, apple, store] = await Promise.all([
+    renderIcon({ master, size: 512, box: MASKABLE_BOX, background }),
+    renderIcon({ master, size: 180, box: boxFor(180, PADDING.appleTouch), background }),
+    renderIcon({ master, size: 1024, box: boxFor(1024, PADDING.appStore), background }),
+  ])
+  return { mask, apple, store }
+}
+
+/** A tile master: the tile extended to the whole canvas, its art kept inside the maskable safe zone. */
+async function bleedTargets(master: Buffer, tile: TileInfo, background?: string): Promise<OpaqueTargets> {
+  const square = await tileSquare(master, tile, background)
+  const [mask, apple, store] = await Promise.all([
+    maskable(square, tile.edgeColor, 512),
+    fullBleed(square, 180),
+    fullBleed(square, 1024),
+  ])
+  return { mask, apple, store }
+}
+
+const rasterAsset = (name: string, size: number, bytes: Buffer): IconAsset => ({
+  name,
+  mime: 'image/png',
+  width: size,
+  height: size,
+  bytes,
+})
+
+/**
+ * Every raster output from the square master, in the gateway's order: favicon.ico (16/32/48),
+ * icon-192, icon-512, icon-mask, apple-touch-icon, icon-1024, AppIcon.icns. The OPAQUE targets (icon-mask,
+ * apple-touch-icon, icon-1024) are flattened on `background` (default white) - except for a master that carries a
+ * rounded tile (`detectTile`): there they run full bleed, the corners bleeding from the tile unless `background` is
+ * given, and the icns sits on the macOS grid. `options.small` drives the ico frames instead of the master.
+ */
+export async function renderRasters(
+  master: Buffer,
+  background?: string,
+  options: { small?: Buffer } = {},
+): Promise<IconAsset[]> {
+  const tile = await detectTile(master)
+  const [small, crop] = await Promise.all([
+    smallTargetMaster(options.small ?? master, background),
+    tile ? tileCrop(master, tile) : undefined,
+  ])
+  const renderIcns = (size: number) =>
+    crop ? macosIcon(crop, size) : renderIcon({ master, size, box: boxFor(size, PADDING.icns) })
+
+  const [icoFrames, icnsPngs, icon192, icon512, opaque] = await Promise.all([
     Promise.all(
       FAVICON_SIZES.map(async (size) => ({
         size,
-        png: await renderIcon({ master, size, box: boxFor(size, PADDING.favicon) }),
+        png: await renderIcon({ master: small, size, box: boxFor(size, PADDING.favicon) }),
       })),
     ),
-    Promise.all(
-      ICNS_SIZES.map(
-        async (size) => [size, await renderIcon({ master, size, box: boxFor(size, PADDING.icns) })] as const,
-      ),
-    ),
+    Promise.all(ICNS_SIZES.map(async (size) => [size, await renderIcns(size)] as const)),
     pngAsset({ name: 'icon-192.png', master, size: 192, box: boxFor(192, PADDING.pwa) }),
     pngAsset({ name: 'icon-512.png', master, size: 512, box: boxFor(512, PADDING.pwa) }),
-    pngAsset({ name: 'icon-mask.png', master, size: 512, box: MASKABLE_BOX, background }),
-    pngAsset({ name: 'apple-touch-icon.png', master, size: 180, box: boxFor(180, PADDING.appleTouch), background }),
-    pngAsset({ name: 'icon-1024.png', master, size: 1024, box: boxFor(1024, PADDING.appStore), background }),
+    tile ? bleedTargets(master, tile, background) : boxedTargets(master, background ?? DEFAULT_BACKGROUND),
   ])
 
   const icnsBySize = new Map(icnsPngs)
@@ -355,16 +465,21 @@ export async function renderRasters(master: Buffer, background: string): Promise
     { name: 'favicon.ico', mime: 'image/x-icon', width: 48, height: 48, bytes: encodeIco(icoFrames) },
     icon192,
     icon512,
-    mask,
-    apple,
-    store,
+    rasterAsset('icon-mask.png', 512, opaque.mask),
+    rasterAsset('apple-touch-icon.png', 180, opaque.apple),
+    rasterAsset('icon-1024.png', 1024, opaque.store),
     { name: 'AppIcon.icns', mime: 'image/icns', width: 1024, height: 1024, bytes: icns },
   ]
 }
 
-/** The vectorize input: the master on a 1024 canvas with transparent favicon padding. */
-export const vectorizeInput = (master: Buffer): Promise<Buffer> =>
-  renderIcon({ master, size: VECTORIZE_SIZE, box: boxFor(VECTORIZE_SIZE, PADDING.favicon) })
+/** The master fitted into a `size` canvas with the favicon padding, transparent margin. */
+export const faviconIcon = (master: Buffer, size: number): Promise<Buffer> =>
+  renderIcon({ master, size, box: boxFor(size, PADDING.favicon) })
+
+/** The vectorize input: the small-target master on a 1024 canvas with transparent favicon padding. */
+export async function vectorizeInput(master: Buffer, background?: string): Promise<Buffer> {
+  return faviconIcon(await smallTargetMaster(master, background), VECTORIZE_SIZE)
+}
 
 /** Markup that runs or embeds foreign content; the SVG is published under `public/`, so none of it may be written. */
 const ACTIVE_SVG_CONTENT = /<script|<foreignObject|\son[a-z]+\s*=|javascript:/i

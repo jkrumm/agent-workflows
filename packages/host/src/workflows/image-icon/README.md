@@ -8,10 +8,11 @@ Port of image-gateway's `/icons` route (`imgcli icon`); the outputs and their or
 agw image-icon /abs/logo.png
 agw image-icon /abs/logo.png --background '#0b1020' --svg never
 agw image-icon /abs/photo.jpg --cutout always --cutout-model bria --upscale never
+agw image-icon /abs/logo.png --flat /abs/logo-flat.png --card-title 'Acme' --card-line 'Plans that ship'
 ```
 
 For a logo, the master is the winner of a breadth round and edits (`../image/README.md` §A logo or app icon). A metallic or
-gradient master gets no usable `favicon.svg`: make a flat derivative first.
+gradient master gets no usable `favicon.svg`: pass a flat derivative as `--flat` and the master keeps the PNG set.
 
 The command is `image-icon`, not `image icon`: the host refuses a command that is the prefix of another
 (`assertCommands`, `packages/host/src/app.ts`), and `agw image` exists. The capability `image-enhance` follows the same rule.
@@ -19,7 +20,10 @@ The command is `image-icon`, not `image icon`: the host refuses a command that i
 |Input|Default|Meaning|
 |-|-|-|
 |`file`|required|Absolute path on the host: png, jpeg or webp by magic bytes, at most 20 MiB|
-|`background`|`#ffffff`|`#rrggbb` fill for the opaque targets only: `apple-touch-icon`, `icon-mask`, `icon-1024`|
+|`background`|none|`#rrggbb` fill for the opaque targets: `apple-touch-icon`, `icon-mask`, `icon-1024`. Without it: `#ffffff` for a master without a tile, the tile's own colour bleeding into the corners for a master with one|
+|`flat`|none|Absolute path of a flat derivative (png, jpeg, webp, at most 20 MiB, 64 MP): drives `favicon.ico` and `favicon.svg` instead of the master. No upscale, cutout or model step runs on it|
+|`cardTitle` (`--card-title`)|none|1 to 80 chars. Makes `og-image.png` (1200x630) and the og/twitter head tags|
+|`cardLine` (`--card-line`)|none|1 to 160 chars under the title; without `cardTitle` the run fails with `invalid_input` before anything is billed|
 |`cutout`|`auto`|`auto` cuts the background out only when the master has no real transparency; `always`; `never`|
 |`cutoutModel` (`--cutout-model`)|`recraft`|`recraft` ($0.01) or `bria` ($0.018)|
 |`upscale`|`auto`|`auto` under 512 px long edge, 4x (8x under 128 px); `always` accepts at most 1440 px; `never`|
@@ -40,7 +44,10 @@ The command is `image-icon`, not `image icon`: the host refuses a command that i
 pixel size), `icon-192.png`, `icon-512.png`, `icon-mask.png`, `apple-touch-icon.png`, `icon-1024.png`, `AppIcon.icns`.
 `head.html` and `manifest.webmanifest` are written beside them and given as `html` / `manifest`. `steps` lists only the
 model steps that ran; `cost` is their sum (usd 0 when none ran, `unknown` when any ran step's price is unknown).
-`svgSkippedReason` is set when `favicon.svg` was left out.
+`svgSkippedReason` is set when `favicon.svg` was left out. With `cardTitle`, `og-image.png` (1200x630) follows
+`AppIcon.icns`. `tile` is `true` when the master carried a rounded tile: the full-bleed targets extend it and the icns sits
+on the macOS grid. The og tags in `head.html` use a relative `og:image`; scrapers want an absolute URL, which the site
+prefixes.
 
 ## Steps
 
@@ -49,11 +56,11 @@ capabilities read their input from the host's disk.
 
 |Step|Cost|What|
 |-|-|-|
-|`prepare`|free|Read and validate the file, decode it (EXIF applied), choose the upscale scale, refuse a run whose cutout could not take the upscaled size (see Decisions), write `work/source.png`|
+|`prepare`|free|Read and validate the file, decode it (EXIF applied), choose the upscale scale, refuse a run whose cutout could not take the upscaled size (see Decisions) and a `cardLine` without `cardTitle`, write `work/source.png`; with `flat`, validate and decode it the same way into `work/flat-source.png` (journaled as `flatPath`)|
 |`upscale`|$0.002|Only when a scale was chosen: `image.upscale` (real-esrgan) on `source.png` -> `work/upscaled.png`|
 |`cutout`|$0.01 (bria $0.018)|Decided inside the step on the current image: `always`, or `auto` and no real transparency. Then the image is normalised (PNG, at most 1536 px) into `work/cutout-input.png` and sent to `image.cutout` -> `work/cutout.png`. Otherwise it returns `ran: false` with no call|
-|`render`|free|Clean near-transparent pixels, trim and centre on a square master (`work/master.png`), render every raster and write it to `<dir>/`|
-|`vectorize`|$0.01|Only for `svg: auto`: the master on a 1024 canvas (`work/vectorize-input.png`) -> `image.vectorize`, then the result is stripped of the root `width`/`height`/`style` and no-op transforms and optimised with svgo. Over 64 KB it is dropped (`svgSkippedReason`), else written as `favicon.svg`|
+|`render`|free|Clean near-transparent pixels, trim and centre on a square master (`work/master.png`), detect a tile (journaled as `tile`), build the flat source the same way (`work/small-master.png`), render every raster and write it to `<dir>/`; with `cardTitle` also `og-image.png`|
+|`vectorize`|$0.01|Only for `svg: auto`: the small master (the flat source, else the master) on a 1024 canvas (`work/vectorize-input.png`) -> `image.vectorize`, then the result is stripped of the root `width`/`height`/`style` and no-op transforms and optimised with svgo. Over 64 KB it is dropped (`svgSkippedReason`), else written as `favicon.svg`|
 
 After the steps, plain code orders the file list, writes `head.html` (the svg link only if `favicon.svg` exists) and
 `manifest.webmanifest`. A failure in any step fails the run; the model steps that already ran stay on the run record,
@@ -87,6 +94,29 @@ and the error names them with their total ("already billed: upscale $0.002, cuto
   top of the default preset (scripts, event-handler attributes, `javascript:` links); if the result still contains
   `<script`, `<foreignObject`, an `on...=` attribute or `javascript:`, `cleanVectorized` throws and no `favicon.svg` is
   written (the vectorize price stays on the run).
+- **A tile is detected, not declared** (`tile.ts`). The core is the pixels with alpha >= 250. A master is a tile when the
+  core's bounding box is at least 16 px, near-square (sides within 3%), fills 90% of the box, is opaque at the centre of
+  all four edges and transparent at all four box corners. A disc (fill 0.785), an already square opaque image and a glyph
+  on transparency are no tile, so their outputs are exactly the pre-tile ones (the golden test).
+- **A tile bleeds, or takes the caller's colour.** The three opaque targets from a tile master are the tile cropped at
+  its core plus 2 px, every pixel under alpha 250 filled with the mean of the nearest opaque pixel in its row and in its
+  column, alpha 255: no transparent corner, no inner edge, gradients continue. An explicit `background` flattens the crop
+  on that colour instead; a colour other than the tile's leaves visible corners, the caller chose it.
+- **The maskable safe zone is measured on the art.** Art is what differs from the tile's edge colour by more than 40
+  (RGB distance, 4% rim ignored, measured at 256 px). If its half-extent exceeds the 409 px box, the tile square is scaled
+  down and extended to 512 by edge replication, so no tile edge shows on a flat tile.
+- **The icns sits on the macOS grid for a tile master only:** the original rounded tile at 824/1024 of every size,
+  centred (100 px margin at 1024), over a soft shadow (black at 35% of the tile's alpha, sigma 1% of the size, 1.2% down).
+  Without a tile the icns keeps its 10% padding and no shadow.
+- **A light glyph gets a dark backing on the small targets.** A master (or `flat` source) with real transparency and an
+  alpha-weighted mean luminance of at least 0.85 vanishes on a light browser tab: it is scaled to 70% on a rounded square
+  (radius 22.5%) that fills the canvas, in the explicit `background` if that is darker than 0.4, else `#111827`. It drives
+  the ico frames and the vectorize input, so `favicon.svg` has the backing too. A tile never gets it; the golden source
+  (0.767) does not trigger it.
+- **The card is free and uses system fonts.** `og-image.png` is built in `render` from SVG text (Helvetica, Arial,
+  sans-serif) composited with sharp: no model, no network. Background is `background`, else the tile's edge colour, else
+  white; text is white below luminance 0.5, else `#111827`. Lines wrap by a character-width estimate (title 64 px, 2 lines;
+  line 32 px, 3 lines) and end in an ellipsis when cut.
 - **The poll deadline is per capability.** Replicate predictions are polled for 60 s by default; `image.upscale` waits
   up to 180 s because real-esrgan 4x/8x can run longer than a cutout.
 - **The Replicate models are routes** in the route table (`image.upscale`, `image.vectorize`, `image.cutout.*`;
@@ -112,7 +142,7 @@ The scorer (`scorer.ts`, deterministic, reads the listed files) scores 0 or 1 ea
 order, on disk, size and mime), `dimensions` (48, 192, 512, 512, 180, 1024 from the listing and the PNG headers, ICO/ICNS/SVG
 magic), `manifest` (its icons name listed PNGs of the stated size and type; `manifest.webmanifest` and `head.html` match;
 the svg link only with a `favicon.svg`), `svg` (`never` leaves no file, reason or call; `auto` called vectorize and has the
-file or the reason, not both), `background` (`apple-touch-icon.png` flattened on the input colour) and `cost` (known, the
+file or the reason, not both), `background` (`apple-touch-icon.png` flattened on the input colour, white without one; only opaque for a tile master without one; `og-image.png` is in the spec exactly when a card was asked for, 1200x630) and `cost` (known, the
 sum of the steps). With a case's reference also `steps` (the model steps that ran, in order) and `alpha` (is the ground gone
 at the content corner of `icon-512.png`: the cutout worked, or the source had none). The scorer also runs on drift for
 production runs, without a reference, while their artifacts still exist.

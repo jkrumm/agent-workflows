@@ -110,7 +110,8 @@ Two limits, both observed:
 
 - **Metallic or gradient art gets no usable SVG.** `image-icon` vectorizes the master and drops an SVG over 64 KB, so
   a favicon from such a master has PNG/ICO only. Make a flat derivative of the winner (an edit: "flat colour fills, no
-  gradient, no sheen; keep the shape") and run `image-icon` on that.
+  gradient, no sheen; keep the shape") and pass it as `--flat`: it drives `favicon.ico` and `favicon.svg`, while the
+  metallic master keeps the PNG set and the icns.
 - **A generated image can have the wrong subject count** ("three stars" with four). The playbook asks for the count; it
   cannot guarantee it. Look at every image before it goes on the sheet, and again after each edit.
 

@@ -5,6 +5,7 @@ import { defineWorkflow, type StepScope, WorkflowError } from '@agent-workflows/
 import { type ArtifactOptions, artifactDir } from '../../artifacts.ts'
 import type { HostWorkflow } from '../../operations.ts'
 import type { HostRegistry } from '../index.ts'
+import { CARD_HEIGHT, CARD_WIDTH, renderCard } from './card.ts'
 import {
   assertCutoutReachable,
   buildMaster,
@@ -22,6 +23,7 @@ import {
   vectorizeInput,
 } from './pipeline.ts'
 import { imageIconScorer } from './scorer.ts'
+import { detectTile } from './tile.ts'
 import {
   type IconFileValue,
   ImageIconInput,
@@ -31,7 +33,7 @@ import {
   MAX_SOURCE_BYTES,
 } from './schema.ts'
 
-const IMAGE_ICON_VERSION = '2026-11-03.1'
+const IMAGE_ICON_VERSION = '2026-11-09.1'
 
 /** The registry the workflow calls: the host's, typed by the image capabilities it holds. */
 export type ImageIconCaller = Pick<HostRegistry, 'call'>
@@ -39,10 +41,17 @@ export type ImageIconCaller = Pick<HostRegistry, 'call'>
 type Cost = { usd: number | null; source: 'provider' | 'rate' | 'unknown' }
 type ModelStep = { model: string; cost: Cost; latencyMs: number }
 
-type PrepareResult = { scale: number | null; sourcePath: string }
+type PrepareResult = { scale: number | null; sourcePath: string; flatPath?: string }
 type UpscaleResult = ModelStep & { path: string }
 type CutoutResult = { ran: false; path: string } | ({ ran: true; path: string } & ModelStep)
-type RenderResult = { masterPath: string; assets: IconFileValue[] }
+type RenderResult = {
+  masterPath: string
+  /** The flat source's master, when `flat` was given: it drives the ico and the vectorize input. */
+  smallPath?: string
+  tile: boolean
+  assets: IconFileValue[]
+  card?: IconFileValue
+}
 type VectorizeResult = ModelStep & ({ file: IconFileValue } | { skippedReason: string })
 
 type Billed = { step: string; usd: number | null }
@@ -134,12 +143,18 @@ const listing = (
 })
 
 async function prepareStep({ input, workDir }: IconRun): Promise<PrepareResult> {
+  if (input.cardLine !== undefined && input.cardTitle === undefined) {
+    throw new WorkflowError('invalid_input', 'cardLine needs a cardTitle')
+  }
   const rgba = await decodeRgba(await readSource(input.file))
   const scale = upscaleScale(input.upscale, rgba)
   assertCutoutReachable({ rgba, scale, cutout: input.cutout })
   const sourcePath = join(workDir(), 'source.png')
   await writeFile(sourcePath, await encodePng(rgba))
-  return { scale, sourcePath }
+  if (!input.flat) return { scale, sourcePath }
+  const flatPath = join(workDir(), 'flat-source.png')
+  await writeFile(flatPath, await encodePng(await decodeRgba(await readSource(input.flat))))
+  return { scale, sourcePath, flatPath }
 }
 
 async function upscaleStep(
@@ -175,26 +190,50 @@ async function cutoutStep(
   return { ran: true, path, model: out.model, cost: out.cost, latencyMs: out.latencyMs }
 }
 
-function renderStep(run: IconRun, finalImage: string, billed: Billed[]): Promise<RenderResult> {
+function renderStep(
+  run: IconRun,
+  source: { finalImage: string; flatPath?: string },
+  billed: Billed[],
+): Promise<RenderResult> {
   return afterBilled(billed, async () => {
-    const master = await buildMaster(await decodeRgba(await Bun.file(finalImage).bytes()))
+    const { background, cardTitle, cardLine } = run.input
+    const master = await buildMaster(await decodeRgba(await Bun.file(source.finalImage).bytes()))
     const masterPath = join(run.workDir(), 'master.png')
     await writeFile(masterPath, master)
-    const assets = await renderRasters(master, run.input.background)
+    const small = source.flatPath
+      ? await buildMaster(await decodeRgba(await Bun.file(source.flatPath).bytes()))
+      : undefined
+    const smallPath = small ? join(run.workDir(), 'small-master.png') : undefined
+    if (small && smallPath) await writeFile(smallPath, small)
+
+    const tile = await detectTile(master)
+    const assets = [...(await renderRasters(master, background, small ? { small } : {}))]
+    if (cardTitle) {
+      const bytes = await renderCard({ master, tile, background, title: cardTitle, line: cardLine })
+      assets.push({ name: 'og-image.png', mime: 'image/png', width: CARD_WIDTH, height: CARD_HEIGHT, bytes })
+    }
     await Promise.all(assets.map((asset) => writeFile(join(run.dir(), asset.name), asset.bytes)))
-    return { masterPath, assets: assets.map((asset) => listing(run, asset)) }
+    const listed = assets.map((asset) => listing(run, asset))
+    const card = cardTitle ? listed.pop() : undefined
+    return {
+      masterPath,
+      ...(smallPath ? { smallPath } : {}),
+      tile: tile !== null,
+      assets: listed,
+      ...(card ? { card } : {}),
+    }
   })
 }
 
 async function vectorizeStep(
   run: IconRun,
   { callContext }: StepScope,
-  masterPath: string,
+  sourcePath: string,
   billed: Billed[],
 ): Promise<VectorizeResult> {
   const inputPath = join(run.workDir(), 'vectorize-input.png')
   await afterBilled(billed, async () =>
-    writeFile(inputPath, await vectorizeInput(Buffer.from(await Bun.file(masterPath).bytes()))),
+    writeFile(inputPath, await vectorizeInput(Buffer.from(await Bun.file(sourcePath).bytes()), run.input.background)),
   )
   const out = await afterBilled(billed, () => run.registry.call('image.vectorize', { file: inputPath }, callContext))
   const step = { model: out.model, cost: out.cost, latencyMs: out.latencyMs }
@@ -233,10 +272,14 @@ const ranSteps = ({ upscaled, cutOut, vectorized }: Results) => [
   ...(vectorized ? [{ step: 'vectorize' as const, result: vectorized }] : []),
 ]
 
-/** The icon files in listing order: the ico, then the svg when there is one, then the rasters. */
-function listFiles(assets: IconFileValue[], svgFile: IconFileValue | undefined): IconFileValue[] {
+/** The icon files in listing order: the ico, then the svg when there is one, then the rasters and the card when made. */
+function listFiles(
+  assets: IconFileValue[],
+  svgFile: IconFileValue | undefined,
+  card: IconFileValue | undefined,
+): IconFileValue[] {
   const [ico, ...rasters] = assets
-  return [...(ico ? [ico] : []), ...(svgFile ? [svgFile] : []), ...rasters]
+  return [...(ico ? [ico] : []), ...(svgFile ? [svgFile] : []), ...rasters, ...(card ? [card] : [])]
 }
 
 /** Final assembly: deterministic from the journaled results of the steps. */
@@ -244,8 +287,12 @@ async function assemble(run: IconRun, started: number, results: Results): Promis
   const { rendered, vectorized } = results
   const { dir } = run
   const svgFile = vectorized && 'file' in vectorized ? vectorized.file : undefined
-  const files = listFiles(rendered.assets, svgFile)
-  const html = iconsHtml(svgFile !== undefined)
+  const { cardTitle, cardLine } = run.input
+  const files = listFiles(rendered.assets, svgFile, rendered.card)
+  const html = iconsHtml(
+    svgFile !== undefined,
+    rendered.card && cardTitle ? { title: cardTitle, ...(cardLine ? { line: cardLine } : {}) } : undefined,
+  )
   const htmlPath = join(dir(), 'head.html')
   const manifestPath = join(dir(), 'manifest.webmanifest')
   await writeFile(htmlPath, `${html}\n`)
@@ -262,6 +309,7 @@ async function assemble(run: IconRun, started: number, results: Results): Promis
     htmlPath,
     manifest: ICONS_MANIFEST,
     manifestPath,
+    tile: rendered.tile,
     steps: ran.map(({ step, result }) => ({
       step,
       model: result.model,
@@ -317,11 +365,15 @@ export function createImageIconWorkflows(
       )
 
       const billed = billedSoFar(upscaled, cutOut)
-      const rendered = await ctx.step('render', () => renderStep(run, cutOut.path, billed))
+      const rendered = await ctx.step('render', () =>
+        renderStep(run, { finalImage: cutOut.path, flatPath: prepared.flatPath }, billed),
+      )
 
       const vectorized =
         input.svg === 'auto'
-          ? await ctx.step('vectorize', (scope: StepScope) => vectorizeStep(run, scope, rendered.masterPath, billed))
+          ? await ctx.step('vectorize', (scope: StepScope) =>
+              vectorizeStep(run, scope, rendered.smallPath ?? rendered.masterPath, billed),
+            )
           : undefined
 
       return assemble(run, started, { rendered, upscaled, cutOut, vectorized })
@@ -332,7 +384,7 @@ export function createImageIconWorkflows(
     {
       workflow: imageIcon,
       summary:
-        'Build a full icon set (favicon.ico and .svg, PWA, maskable, apple-touch, 1024 and AppIcon.icns, head tags and manifest) from one master image; upscales, cuts out and vectorizes with Replicate where the image needs it, and lists the files in the artifact store',
+        'Build a full icon set (favicon.ico and .svg, PWA, maskable, apple-touch, 1024 and AppIcon.icns, head tags and manifest) from one master image, and optionally a social card (og-image.png); a master on a rounded tile runs full bleed with the icns on the macOS grid, --flat takes a flat derivative for the favicon; upscales, cuts out and vectorizes with Replicate where the image needs it, and lists the files in the artifact store',
       cli: { positional: ['file'], defaultFormat: 'json' },
     },
   ]
