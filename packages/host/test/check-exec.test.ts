@@ -128,6 +128,23 @@ describe('credentials', () => {
     const kept = Object.keys(commandEnv(env, '/work')).sort()
     expect(kept).toEqual(['HOME', 'LANG', 'OTEL_EXPORTER_OTLP_ENDPOINT', 'PATH', 'PWD'])
   })
+
+  test('commandEnv drops the GIT_CONFIG_COUNT/KEY_n/VALUE_n family together and keeps the path variables', async () => {
+    const gitConfig = {
+      PATH: process.env.PATH ?? '/usr/bin',
+      GIT_CONFIG_COUNT: '2',
+      GIT_CONFIG_KEY_0: 'http.extraHeader',
+      GIT_CONFIG_VALUE_0: 'Authorization: bearer x',
+      GIT_CONFIG_KEY_1: 'safe.directory',
+      GIT_CONFIG_VALUE_1: '*',
+      GIT_CONFIG_GLOBAL: '/nonexistent/gitconfig',
+    }
+    expect(Object.keys(commandEnv(gitConfig, '/work')).sort()).toEqual(['GIT_CONFIG_GLOBAL', 'PATH', 'PWD'])
+    // A half-stripped family makes git exit 128 ("missing config key"); a command through the real exec must run.
+    const result = await createBunExec({ env: gitConfig }).run({ argv: ['git', 'config', '--list'], cwd })
+    expect(result.output).not.toContain('missing config key')
+    expect(result.exitCode).not.toBe(128)
+  })
 })
 
 describe('make recursion state', () => {
