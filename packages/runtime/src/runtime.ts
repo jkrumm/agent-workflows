@@ -79,11 +79,18 @@ export type RuntimeOptions = {
    */
   maxDrives?: number
   /**
-   * A run of a workflow no process registers (not in `workflows`, not in `foreign`: a deploy renamed or removed it)
-   * whose lease is free and that nobody touched for this long ends: `failed` (`infra`), or `cancelled` when a cancel
-   * was requested. Every process on a journal must list the others' workflows in `foreign`. Default 10 min.
+   * A run of a workflow no process serves (not in `workflows`, not in `foreign`, not registered by any named process:
+   * a deploy renamed or removed it) whose lease is free and that nobody touched for this long ends: `failed`
+   * (`infra`), or `cancelled` when a cancel was requested. Default 10 min.
    */
   unknownWorkflowGraceMs?: number
+  /**
+   * This process's name on a shared journal. It records its `workflows` under the name on every sweep, replacing what
+   * its previous version served, so another process knows them: a process that is down keeps its row and its runs
+   * wait, a workflow a deploy dropped leaves the row and its runs end. Unset: this process registers nothing, and
+   * other processes see its workflows only if they list them in `foreign`.
+   */
+  processName?: string
   /** Failed `runPost` deliveries (a hook threw) before the run is marked delivered anyway, logged. Default 5. */
   maxPostHookAttempts?: number
   /**
@@ -541,6 +548,8 @@ export class Runtime {
     const now = Date.now()
     if (now - this.lastUnknownSweepAt < Math.min(30_000, graceMs)) return
     this.lastUnknownSweepAt = now
+    if (this.options.processName)
+      await this.journal.registerProcess(this.options.processName, [...this.registry.keys()])
     const known = [...this.registry.keys(), ...this.foreign.keys()]
     const ended = await this.journal.endUnknownWorkflowRuns(known, graceMs)
     if (ended.length > 0) this.logger.warn('ended runs of unregistered workflows', { runIds: ended })

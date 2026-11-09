@@ -128,6 +128,44 @@ describe('runs of an unregistered workflow (F6)', () => {
     }
   })
 
+  test('a named process that is down keeps its workflows; a redeploy that drops one releases its runs', async () => {
+    const kept = gated('recov.named-kept')
+    const dropped = gated('recov.named-dropped')
+    const audio = testRuntime({
+      schema: db.schema,
+      workflows: [kept.workflow, dropped.workflow],
+      processName: 'audio',
+      unknownWorkflowGraceMs: 300,
+    })
+    await audio.open()
+    const keptRun = (await audio.start(kept.workflow, {}, { purpose: 'test' })).runId
+    const droppedRun = (await audio.start(dropped.workflow, {}, { purpose: 'test' })).runId
+    await until(() => kept.state.entered === 1 && dropped.state.entered === 1, 'both in their step')
+    await until(async () => (await sql.pool.query(`select 1 from "${db.schema}".process_workflows`)).rowCount, 'row')
+    await audio.close() // the audio process is down; the host knows nothing of its workflows
+
+    const host = testRuntime({ schema: db.schema, workflows: [], processName: 'host', unknownWorkflowGraceMs: 300 })
+    await host.open()
+    try {
+      await Bun.sleep(900)
+      expect((await sql.run(keptRun))?.status).toBe('running')
+      expect((await sql.run(droppedRun))?.status).toBe('running')
+
+      // The new audio version no longer serves `dropped`.
+      const next = testRuntime({ schema: db.schema, workflows: [kept.workflow], processName: 'audio' })
+      await next.open()
+      await until(async () => {
+        const { rows } = await sql.pool.query(`select workflows from "${db.schema}".process_workflows`)
+        return rows.some((r) => r.workflows.length === 1 && r.workflows[0] === kept.workflow.id)
+      }, 'the new version registers its workflows')
+      await next.close()
+      expect((await host.wait(droppedRun, { pollMs: 20 })).status).toBe('failed')
+      expect((await sql.run(keptRun))?.status).toBe('running')
+    } finally {
+      await host.close()
+    }
+  })
+
   test('a cancel of such a run ends it cancelled after the grace period', async () => {
     const gone = gated('recov.gone-cancel')
     const owner = testRuntime({ schema: db.schema, workflows: [gone.workflow] })

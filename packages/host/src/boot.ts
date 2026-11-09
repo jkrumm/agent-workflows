@@ -375,11 +375,14 @@ export async function bootProcess(
     })
     // Recovery, leases, post-hook redelivery and drift sampling only ever touch runs of the workflows given here
     // (`Journal.claimable`, `postHooksPending`, `driftCandidates` filter by them): processes on one journal never take
-    // over each other's runs, and a run whose process is down waits for it.
+    // over each other's runs, and a run whose process is down waits for it. The unknown-workflow sweep ends a run only
+    // when no process serves its workflow: each named process records what it serves (`processName`), so a down
+    // process keeps its runs and a deploy that drops a workflow releases them after the grace period.
     const runtime = new Runtime({
       connectionString: config.pgUrl,
       schema: config.schema,
       workflows: [...workflows.map((entry) => entry.workflow), ...capabilityWorkflows.values()],
+      processName: name,
       foreign: [...(definition.foreign?.() ?? [])],
       host: agentHost,
       // Active learned facts follow the task message, never AGENTS.md, whose prefix stays cacheable.

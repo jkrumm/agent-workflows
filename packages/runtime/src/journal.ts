@@ -272,11 +272,20 @@ export class Journal {
     await this.query(`update ${this.runs} set lease_held = false where id = $1 and lease_token = $2`, [id, token])
   }
 
+  /** Records the workflows a named process serves now, replacing what its previous version served. */
+  async registerProcess(process: string, workflows: string[]): Promise<void> {
+    await this.query(
+      `insert into "${this.schema}".process_workflows (process, workflows) values ($1, $2)
+       on conflict (process) do update set workflows = excluded.workflows, updated_at = now()`,
+      [process, workflows],
+    )
+  }
+
   /**
-   * Ends unfinished drivable runs of a workflow outside `known` (no process registers it any more: renamed or
-   * removed by a deploy) whose lease is free and that nobody touched for `graceMs`, with their unfinished
-   * descendants and running steps: `cancelled` when a cancel was requested, else `failed` (`infra`). Returns the
-   * ended run ids.
+   * Ends unfinished drivable runs of a workflow outside `known` and outside every named process's registration (no
+   * process serves it any more: renamed or removed by a deploy) whose lease is free and that nobody touched for
+   * `graceMs`, with their unfinished descendants and running steps: `cancelled` when a cancel was requested, else
+   * `failed` (`infra`). Returns the ended run ids.
    */
   async endUnknownWorkflowRuns(known: string[], graceMs: number): Promise<string[]> {
     const { rows } = await this.query<{ id: string }>(
@@ -286,6 +295,7 @@ export class Journal {
          where ${DRIVABLE} and status in ('pending', 'running') and not (workflow = any($1))
            and updated_at < now() - $2 * interval '1 millisecond'
            and not exists (select 1 from held where held.k = r.lock_key)
+           and not exists (select 1 from "${this.schema}".process_workflows p where r.workflow = any(p.workflows))
          union all
          select c.id, tree.cancelled from ${this.runs} c join tree on c.parent_id = tree.id
          where c.status in ('pending', 'running')

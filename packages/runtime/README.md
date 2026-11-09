@@ -189,11 +189,13 @@ defineWorkflow({ id: 'research.report', scorer: draftScorer, async run(ctx, inpu
   fails as `crash_loop` instead of taking every new process down with it. `runs.lease_held` is set when a process takes
   the lease and cleared when it lets go cleanly (a finished drive, a graceful shutdown, an infra-backoff exit), so
   deploy handoffs and infra retries never count.
-- **Runs of a vanished workflow:** a run of a workflow no process registers (not in `workflows`, not in `foreign`;
-  a deploy renamed or removed it) whose lease is free and that nobody touched for `unknownWorkflowGraceMs` (10 min)
-  ends with the next recovery sweep: `failed` (`infra`), or `cancelled` if a cancel was requested, with its
-  unfinished descendants and running steps. Agent sessions it left are not aborted (no host knows the workflow).
-  Every process sharing a journal must list the others' workflows in `foreign`.
+- **Runs of a vanished workflow:** a run of a workflow no process serves (not in `workflows`, not in `foreign`, not
+  recorded by any named process; a deploy renamed or removed it) whose lease is free and that nobody touched for
+  `unknownWorkflowGraceMs` (10 min) ends with the next sweep: `failed` (`infra`), or `cancelled` if a cancel was
+  requested, with its unfinished descendants and running steps. Agent sessions it left are not aborted (no host knows
+  the workflow). A runtime with a `processName` rewrites its row in `process_workflows` on every sweep, so a process
+  that is down keeps its runs waiting and a workflow its new version dropped is released. Unnamed runtimes register
+  nothing: others see their workflows only through `foreign`.
 - **Re-attach order:** open the session, journal the handle, prompt, journal `prompted`. On resume a prompted
   handle waits, an unprompted one prompts, none opens a new session. The prompt is sent before `prompted` is
   journaled, so a crash between the two re-sends it on resume: exactly-once delivery relies on
