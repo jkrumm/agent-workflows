@@ -1,4 +1,4 @@
-import { parseJsonLoose } from '@agent-workflows/capabilities'
+import { cleanUrl, parseJsonLoose } from '@agent-workflows/capabilities'
 import { type Ctx, defineWorkflow, type Json, type Logger, WorkflowError } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
@@ -82,7 +82,8 @@ export function assemble(draft: Draft, ev: z.input<typeof Evidence>, earlier?: r
     const key = normalizeUrl(url)
     return retrieved.has(key) || seen.has(key) || before.has(key)
   }
-  const kept = draft.citations.filter((c) => known(c.url))
+  // A bot-challenge redirect's URL (Reddit's `js_challenge`) is the clean permalink in everything handed back.
+  const kept = draft.citations.filter((c) => known(c.url)).map((c) => ({ ...c, url: cleanUrl(c.url) }))
   const dropped = draft.citations.filter((c) => !known(c.url))
   const warnings: string[] = []
   if (dropped.length) warnings.push(`${dropped.length} citation(s) dropped: their URL was ${never}`)
@@ -94,16 +95,23 @@ export function assemble(draft: Draft, ev: z.input<typeof Evidence>, earlier?: r
   else if (nothingNew && earlier) warnings.push('no new pages were read for this follow-up')
   const partial =
     noPages || (draft.citations.length > 0 && dropped.length / draft.citations.length >= PARTIAL_DROP_SHARE)
-  const sources = [...new Set([...draft.sources.filter(known), ...ev.retrieved])]
+  // One entry per page: the agent's own spelling first, then the pages the tools retrieved.
+  const sources: string[] = []
+  const listed = new Set<string>()
+  for (const url of [...draft.sources.filter(known).map(cleanUrl), ...ev.retrieved]) {
+    if (listed.has(normalizeUrl(url))) continue
+    listed.add(normalizeUrl(url))
+    sources.push(url)
+  }
   return {
     report: draft.report,
     citations: kept,
     sources,
     unverified: [
-      ...draft.unverified,
+      ...draft.unverified.map((u) => (u.url === null ? u : { ...u, url: cleanUrl(u.url) })),
       ...dropped.map((c) => ({
         topic: c.claim,
-        url: c.url,
+        url: cleanUrl(c.url),
         reason: `cited, but the page was ${never}`,
       })),
     ],

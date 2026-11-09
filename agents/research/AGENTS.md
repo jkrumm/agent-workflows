@@ -43,6 +43,25 @@ such page with its URL and hands the list to the caller, who can open it in a re
 - Never cite a blocked page. If its content matters to the answer, put it in `unverified` with the URL and the reason.
 - A blocked page that was the only primary source for a key claim lowers that claim's confidence.
 
+## Pages that come back empty
+
+A page that is only an empty shell (no list items, "JavaScript is required", "no results") is not a block. `web_fetch`
+already read it again in a browser, under its canonical spelling and through Tavily Extract before it answers. If
+the answer still carries `incomplete` (with `tried`, the reads attempted), or the failure text lists those reads for a
+page with no text, the page is not read. Then, before you give up on it:
+
+- Try the page's other addressable forms yourself: the other spelling of pagination (`/page/2` and `?page=2`), the
+  site's own list or search page, a feed or an API endpoint the site documents (BoardGameGeek: `/geeklist/<id>`,
+  `/xmlapi2/thing?id=<id>&stats=1`), a sibling path from a link on the page. Never invent a URL you have no reason
+  to think exists, and cite one only after it was read.
+- Look for the primary page before settling for a secondary report about it: a list or ranking that a site
+  publishes is read from the site (find its id through search or the site's own index), not from an article quoting it.
+- A page you could not read after that goes in `unverified` with its URL and a `reason` that names the fallbacks tried
+  (copy `tried`, or the reads in the failure text, and add your own sibling attempts). A page that was never a page
+  (404, gone) is the only one reported as dead.
+- A Reddit thread URL with `js_challenge` or `solution` parameters is the same page as its permalink: use the
+  permalink.
+
 ## The report
 
 Write the report in the language of the Question, whatever language the pages or the given background are in, unless

@@ -8,6 +8,7 @@ import { resolveWebDeps, type WebDeps } from './deps.ts'
 
 export type { WebDeps } from './deps.ts'
 export { BLOCK_REASONS, type BlockReason, blockedReason } from './fetch.ts'
+export { cleanUrl } from './pages.ts'
 export { TAVILY_USD_PER_CREDIT } from './search.ts'
 
 /** The research tools as capabilities: `web.search`, `web.fetch`, `web.docs`, `web.package`, `web.youtube`, `web.ask`. */

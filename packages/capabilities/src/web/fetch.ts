@@ -9,6 +9,7 @@ import { type Pin, type ResolvedWebDeps, requireKey, webUsage, within } from './
 import { extractPdfPages, PdfTimeout } from './pdf.ts'
 import { TAVILY_USD_PER_CREDIT } from './search.ts'
 import { assertPublicUrl, HostUnresolved, publicOnlyPolicy } from './ssrf.ts'
+import { alternateUrls, cleanUrl, incompleteReason } from './pages.ts'
 import { cut, parseHtml } from './text.ts'
 
 const MAX_CHARS_CEILING = 200_000
@@ -42,6 +43,18 @@ export const fetchOutput = z.object({
   via: z.enum(['direct', 'browser', 'tavily-extract']),
   cached: z.boolean().describe('Served from the 6-hour read cache of this process, not read again'),
   fetchedAt: z.string().describe('ISO time the page was read'),
+  incomplete: z
+    .string()
+    .optional()
+    .describe(
+      'Set when every read came back as an empty shell (no list items, a JavaScript-required notice): why, and `text` is the fullest of them. The page is not verified; `tried` names what was attempted',
+    ),
+  tried: z
+    .array(z.string())
+    .optional()
+    .describe(
+      'With `incomplete`: the reads attempted, in order (the browser, other spellings of the URL, Tavily Extract)',
+    ),
 })
 
 const HOP_TIMEOUT_MS = 10_000
@@ -52,7 +65,7 @@ const MAX_BODY_BYTES = 2_000_000
 const MAX_PDF_BYTES = 10_000_000
 /** Pages whose text is extracted; the rest are left out and the read says it was cut. */
 const MAX_PDF_PAGES = 200
-/** An HTML page with less text than this, a script tag, and text under a tenth of its markup is taken for a JS app shell, and Tavily Extract gets a turn. A short page is just short. */
+/** An HTML page with less text than this, a script tag, and text under a tenth of its markup is taken for a JS app shell, and the browser, other spellings of the URL and Tavily Extract get a turn. A short page is just short. */
 const THIN_CHARS = 200
 /** Tavily Extract, basic: every 5 successful URLs cost 1 credit (docs.tavily.com/documentation/api-credits, checked 2026-10-28). */
 const TAVILY_EXTRACT_CREDITS_PER_URL = 1 / 5
@@ -169,8 +182,8 @@ interface Read {
   finalUrl: string
   title?: string
   text: string
-  /** Almost no text in a lot of script-carrying markup: the signature of a client-rendered shell. */
-  shell?: boolean
+  /** Why this read is the shell of the page and not the page: almost no text in a lot of script-carrying markup, a JavaScript-required notice, a list without its items. */
+  incomplete?: string
   /** The body was longer than the read cap, so the text is a prefix of the page. */
   capped?: boolean
 }
@@ -353,12 +366,16 @@ async function direct(deps: ResolvedWebDeps, startUrl: string, signal: AbortSign
     }
     const { title, text } = page
     if (text === '') throw new DirectFailure('no text on the page', false, undefined, 'no-text')
+    const scriptShell = text.length < THIN_CHARS && text.length * 10 < body.length && /<script\b/i.test(body)
+    const incomplete = scriptShell
+      ? `only ${text.length} characters of text from a script-built page`
+      : incompleteReason(current, text)
     return {
       finalUrl: current,
       ...(title ? { title } : {}),
       text,
       ...(capped ? { capped } : {}),
-      ...(text.length < THIN_CHARS && text.length * 10 < body.length && /<script\b/i.test(body) ? { shell: true } : {}),
+      ...(incomplete ? { incomplete } : {}),
     }
   }
 }
@@ -475,7 +492,7 @@ export const createFetch = (deps: ResolvedWebDeps) => {
         try {
           const found = await until(flight, ctx.signal)
           ctx.addUsage(webUsage('cache', 0))
-          return shape(url, found.read, found.via, maxChars, { cached: true, at: found.at })
+          return shape(url, found.read, found.via, maxChars, { cached: true, at: found.at }, found.tried)
         } catch (error) {
           // The leader's cancel is its own: a joiner whose signal is live reads for itself (or joins whoever took over).
           if (ctx.signal.aborted) throw fail('CANCELLED', 'cancelled')
@@ -491,8 +508,10 @@ export const createFetch = (deps: ResolvedWebDeps) => {
       const lead = async (): Promise<Found> => {
         // `direct` checks the URL before it sends anything, so a refused URL never reaches Tavily either.
         const failures: string[] = []
-        let sparse: Read | undefined
-        let sparseAt = 0
+        // The fullest read that was only the shell of the page: returned, marked `incomplete`, when nothing better comes.
+        const kept: { found?: Found } = {}
+        // The reads attempted beyond the first plain one, named in the answer of a page that stays incomplete.
+        const tried: string[] = []
         // The page's own client error (401, 403, 429, a paywall): carried in `data.status` when no read succeeds.
         let pageStatus: number | undefined
         // Why the page turned the direct read away, when it did: the failure says `blocked (<reason>)` up front.
@@ -502,26 +521,73 @@ export const createFetch = (deps: ResolvedWebDeps) => {
         const free = () => ctx.addUsage(webUsage('direct', 0))
         const browser = deps.browser(publicOnlyPolicy(deps, 'web.fetch'))
         // A PDF is no page a browser reads as text: it goes the plain way even when a rendered read was asked for.
-        const rendered = render && browser !== undefined && !/\.pdf(?:$|[?#])/i.test(url)
-        /** The plain read; a complete page is the answer, anything else is recorded for the legs behind it. */
-        const plain = async () => {
+        const isPdf = /\.pdf(?:$|[?#])/i.test(url)
+        const rendered = render && browser !== undefined && !isPdf
+        const keep = (read: Read, via: CachedRead['via'], why: string) => {
+          if (kept.found && kept.found.read.text.length >= read.text.length) return
+          kept.found = { read: { ...read, incomplete: why }, via, at: Date.now() }
+        }
+        /** Names `target` in a failure line when it is not the URL as asked. */
+        const where = (leg: string, target: string) => (target === url ? leg : `${leg} ${target}`)
+        /** The plain read of `target`; a complete page is the answer, anything else is recorded for the legs behind it. */
+        const plain = async (target = url) => {
+          if (target !== url) tried.push(where('direct', target))
           try {
-            const read = await direct(deps, url, ctx.signal)
+            const read = await direct(deps, target, ctx.signal)
             free()
-            if (!read.shell) return done(read, 'direct')
-            sparse = read
-            sparseAt = Date.now()
-            failures.push(`direct: only ${read.text.length} characters of text from a script-built page`)
+            if (!read.incomplete) return done(read, 'direct')
+            keep(read, 'direct', read.incomplete)
+            failures.push(`${where('direct', target)}: ${read.incomplete}`)
           } catch (error) {
             if (!(error instanceof DirectFailure)) throw error
             free()
-            // A page that is definitively gone is not worth a paid second opinion.
-            if (error.missing)
+            // A page that is definitively gone is not worth a paid second opinion; another spelling of it may be missing alone.
+            if (error.missing && target === url)
               throw fail('UPSTREAM_ERROR', `web.fetch: ${error.message}`, { status: error.status ?? 404 })
-            if (error.status !== undefined && error.status >= 400 && error.status < 500) pageStatus = error.status
+            if (target === url && error.status !== undefined && error.status >= 400 && error.status < 500)
+              pageStatus = error.status
             // The browser leg's verdict that a person has to pass the wall stands over the plain read's reading of it.
-            if (blocked !== 'needs-human') blocked = error.blocked
-            failures.push(`direct: ${error.message}`)
+            if (target === url && blocked !== 'needs-human') blocked = error.blocked
+            failures.push(`${where('direct', target)}: ${error.message}`)
+          }
+          return undefined
+        }
+        /** The browser's read of `target`: a complete page is the answer, a shell is kept, a failure is one more line. */
+        const browsed = async (target = url) => {
+          if (!browser) return undefined
+          if (target !== url || kept.found || rendered) tried.push(where('browser', target))
+          try {
+            const page = await browser(target, ctx.signal)
+            ctx.addUsage(webUsage('browser', 0))
+            if (page.challenge) {
+              // Still a wall after the settle time: a person has to pass it once (the profile keeps the cookie). The page's
+              // own title is not repeated: it is untrusted text.
+              blocked = 'needs-human'
+              failures.push(`${where('browser', target)}: challenge not cleared`)
+            } else if (page.text === '') {
+              failures.push(`${where('browser', target)}: no text on the page`)
+            } else {
+              // Every request was vetted as it went out; where the browser ended is checked once more.
+              try {
+                await assertPublicUrl(deps, 'web.fetch', page.finalUrl)
+              } catch (error) {
+                // A final address that does not resolve is one more reason the chain goes on; a private one is a refusal.
+                if (!(error instanceof HostUnresolved)) throw error
+                throw new BrowserFailure(error.message)
+              }
+              const read = { finalUrl: page.finalUrl, ...(page.title ? { title: page.title } : {}), text: page.text }
+              const why = incompleteReason(page.finalUrl, page.text)
+              if (!why) return done(read, 'browser')
+              keep(read, 'browser', why)
+              failures.push(`${where('browser', target)}: ${why}`)
+            }
+          } catch (error) {
+            if (ctx.signal.aborted) throw fail('CANCELLED', 'cancelled')
+            if (error instanceof BrowserRefused) throw fail('URL_REFUSED', `web.fetch: ${error.message}`)
+            if (!(error instanceof BrowserFailure)) throw error
+            // The browser being down is worth a line in the log: the paid Tavily read below may quietly cover for it.
+            deps.warn(`web.fetch: the browser fallback failed: ${error.message}`)
+            failures.push(`${where('browser', target)}: ${error.message}`)
           }
           return undefined
         }
@@ -532,41 +598,11 @@ export const createFetch = (deps: ResolvedWebDeps) => {
           if (page) return page
         }
 
-        // A page that turned the plain client away, or is only a script shell, gets a real browser's turn when one is
+        // A page that turned the plain client away, or is only a shell, gets a real browser's turn when one is
         // configured: free, and it passes what a bot wall lets a person through. A PDF is not a page a browser reads as text.
-        if (browser && (rendered || sparse || (blocked && blocked !== 'unsupported-type'))) {
-          try {
-            const page = await browser(url, ctx.signal)
-            ctx.addUsage(webUsage('browser', 0))
-            if (page.challenge) {
-              // Still a wall after the settle time: a person has to pass it once (the profile keeps the cookie). The page's
-              // own title is not repeated: it is untrusted text.
-              blocked = 'needs-human'
-              failures.push('browser: challenge not cleared')
-            } else if (page.text === '') {
-              failures.push('browser: no text on the page')
-            } else {
-              // Every request was vetted as it went out; where the browser ended is checked once more.
-              try {
-                await assertPublicUrl(deps, 'web.fetch', page.finalUrl)
-              } catch (error) {
-                // A final address that does not resolve is one more reason the chain goes on; a private one is a refusal.
-                if (!(error instanceof HostUnresolved)) throw error
-                throw new BrowserFailure(error.message)
-              }
-              return done(
-                { finalUrl: page.finalUrl, ...(page.title ? { title: page.title } : {}), text: page.text },
-                'browser',
-              )
-            }
-          } catch (error) {
-            if (ctx.signal.aborted) throw fail('CANCELLED', 'cancelled')
-            if (error instanceof BrowserRefused) throw fail('URL_REFUSED', `web.fetch: ${error.message}`)
-            if (!(error instanceof BrowserFailure)) throw error
-            // The browser being down is worth a line in the log: the paid Tavily read below may quietly cover for it.
-            deps.warn(`web.fetch: the browser fallback failed: ${error.message}`)
-            failures.push(`browser: ${error.message}`)
-          }
+        if (browser && (rendered || kept.found || (blocked && blocked !== 'unsupported-type'))) {
+          const page = await browsed()
+          if (page) return page
         }
 
         if (rendered) {
@@ -574,16 +610,35 @@ export const createFetch = (deps: ResolvedWebDeps) => {
           if (page) return page
         }
 
+        // A shell that no read got past may be the spelling of the URL: the same page under its canonical form (the
+        // pagination, the slug, the address the redirect ended at) is read plain and then in the browser.
+        if (!isPdf && (kept.found || blocked === 'no-text')) {
+          const finalUrl = kept.found?.read.finalUrl
+          const others = [
+            ...alternateUrls(url),
+            ...(finalUrl && finalUrl !== url ? [finalUrl, ...alternateUrls(finalUrl)] : []),
+          ].filter((candidate, i, all) => candidate !== url && all.indexOf(candidate) === i)
+          for (const alternate of others) {
+            const page = (await plain(alternate)) ?? (await browsed(alternate))
+            if (page) return page
+          }
+        }
+
         try {
+          tried.push('tavily-extract')
           const read = await extract(deps, url, ctx.signal, ctx.addUsage)
-          return done({ ...read, ...(sparse?.title ? { title: sparse.title } : {}) }, 'tavily-extract')
+          const withTitle = { ...read, ...(kept.found?.read.title ? { title: kept.found.read.title } : {}) }
+          const why = incompleteReason(read.finalUrl, read.text)
+          if (!why) return done(withTitle, 'tavily-extract')
+          keep(withTitle, 'tavily-extract', why)
+          failures.push(`tavily-extract: ${why}`)
         } catch (error) {
           if (!(error instanceof DirectFailure)) throw error
           failures.push(error.message)
         }
 
         // A kept thin read is still a read: better than an error for a short page.
-        if (sparse && sparse.text.length > 0) return { read: sparse, via: 'direct', at: sparseAt }
+        if (kept.found && kept.found.read.text.length > 0) return { ...kept.found, tried }
         // Asked only once every leg has failed: a wall the Tavily read got past needs no person.
         if (blocked === 'needs-human' && (await askOnce(deps.handoff, new URL(url).hostname))) {
           failures.push('the owner was asked to solve it')
@@ -597,19 +652,19 @@ export const createFetch = (deps: ResolvedWebDeps) => {
       // A `fresh` read neither joins nor registers: it asked for a read of its own.
       if (fresh) {
         const found = await lead()
-        return shape(url, found.read, found.via, maxChars, { cached: false, at: found.at })
+        return shape(url, found.read, found.via, maxChars, { cached: false, at: found.at }, found.tried)
       }
       // Settled, success or failure, the entry goes: a failure is never kept for the next caller.
       const flight = lead().finally(() => inFlight.delete(flightKey))
       inFlight.set(flightKey, flight)
       const found = await flight
-      return shape(url, found.read, found.via, maxChars, { cached: false, at: found.at })
+      return shape(url, found.read, found.via, maxChars, { cached: false, at: found.at }, found.tried)
     },
   })
 }
 
 /** What a read chain resolved to: the complete read, how it was got, and when. Each caller shapes it for its own `maxChars`. */
-type Found = Pick<CachedRead, 'read' | 'via' | 'at'>
+type Found = Pick<CachedRead, 'read' | 'via' | 'at'> & { tried?: string[] }
 
 /** `promise`, unless `signal` aborts first: a joiner waiting on another caller's read can still be cancelled. */
 function until<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -627,17 +682,20 @@ function shape(
   via: 'direct' | 'browser' | 'tavily-extract',
   maxChars: number,
   when: { cached: boolean; at: number },
+  tried?: string[],
 ) {
   const { text, truncated } = cut(read.text, maxChars)
   // Cut at the caller's `maxChars`, or at the read cap before the text was even extracted: either way, not the whole page.
   return {
     url,
-    finalUrl: read.finalUrl,
+    // A challenge redirect's parameters are plumbing, not part of the page's address.
+    finalUrl: cleanUrl(read.finalUrl),
     ...(read.title ? { title: read.title } : {}),
     text,
     truncated: truncated || read.capped === true,
     via,
     cached: when.cached,
     fetchedAt: new Date(when.at).toISOString(),
+    ...(read.incomplete ? { incomplete: read.incomplete, tried: tried ?? [] } : {}),
   }
 }

@@ -33,6 +33,13 @@ agent's `tools` counts. `--depth` defaults to `standard`. A long run waits like 
   URL and reason on the call's ledger row (`research_tool_calls.blocked`, migration 0012), counted in code, never
   asserted by the agent. A page read on another try is not listed. The caller opens the list in a real browser and
   feeds the text back as `--context` ("Given background") on the next run. A 404 or 5xx is not a block.
+- **Empty pages** are not blocks. `web.fetch` reads an empty shell (no list items, a JavaScript-required or no-results
+  notice) again by itself: the browser, other spellings of the URL, Tavily Extract (`packages/capabilities/README.md`
+  §`web.fetch` chain). A page that stays a shell comes back with `incomplete` and `tried`; the agent (`agents/research`)
+  then tries the site's other addressable forms (pagination spelling, the list page, a documented API) and, if the page
+  stays unread, lists it in `unverified` with a `reason` naming the fallbacks tried. Only a page that is gone is reported dead.
+- **Clean URLs.** A bot-challenge redirect's parameters (Reddit's `solution`, `js_challenge`, `jsc_token`) are dropped by
+  `normalizeUrl`, in `web.fetch`'s `finalUrl` and in `assemble`'s `sources`, `citations` and `unverified`; a page appears once.
 - **Context runs** (`--context-runs '["<runId>", …]'`, at most 6): finished research runs on related questions, for
   parallel runs of one task that did not see each other. Each report (cut to 14,000 characters), citations and read
   pages enter the prompt as a fenced block of data under "Parallel research"; their pages are citable as for a

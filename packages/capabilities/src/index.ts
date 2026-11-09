@@ -231,6 +231,7 @@ export {
   BLOCK_REASONS,
   type BlockReason,
   blockedReason,
+  cleanUrl,
   createWebCapabilities,
   TAVILY_USD_PER_CREDIT,
   type WebDeps,

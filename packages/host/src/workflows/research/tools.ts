@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { blockedReason } from '@agent-workflows/capabilities'
+import { blockedReason, cleanUrl } from '@agent-workflows/capabilities'
 import type { Logger } from '@agent-workflows/runtime'
 import { canonicalJson } from '../../canonical.ts'
 import type { ToolCallRecord, ToolGrant } from '../../tool-gate/index.ts'
@@ -21,10 +21,10 @@ export const GATE_TOOLS = Object.keys(RESEARCH_TOOLS) as (keyof typeof RESEARCH_
 /** Ledger writes per call: a blip is retried, a lasting failure is logged and the call's answer stands. */
 const APPEND_ATTEMPTS = 3
 
-/** `https://Example.com/a/#x` and `https://example.com/a` are the same page for grounding. */
+/** `https://Example.com/a/#x` and `https://example.com/a` are the same page for grounding; a bot-challenge redirect's parameters (Reddit's `js_challenge`) are not part of the page's address. */
 export function normalizeUrl(raw: string): string {
   try {
-    const url = new URL(raw.trim())
+    const url = new URL(cleanUrl(raw.trim()))
     url.hash = ''
     const path = url.pathname.length > 1 ? url.pathname.replace(/\/+$/, '') : ''
     return `${url.protocol}//${url.host.toLowerCase()}${path}${url.search}`

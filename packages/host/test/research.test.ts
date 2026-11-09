@@ -595,6 +595,37 @@ describe('assemble', () => {
     expect(assemble({ ...base, citations: [] }, ev).status).toBe('ok')
   })
 
+  test('a Reddit js_challenge URL is the clean permalink in sources, citations and unverified, once', () => {
+    const permalink = 'https://www.reddit.com/r/boardgames/comments/abc123/best_two_player_games'
+    const challenged = `${permalink}/?solution=1.23&js_challenge=1&jsc_token=deadbeef`
+    const evidenceOfRun = evidence([
+      {
+        runId: 'r',
+        stepId: 'research',
+        tool: 'web_fetch',
+        argsDigest: 'd',
+        ok: true,
+        // The agent asked for the permalink; the fetch ended at the challenge redirect's URL.
+        retrieved: [`${permalink}/`, challenged],
+        seen: [],
+      },
+    ])
+    expect([...evidenceOfRun.retrieved]).toEqual([permalink])
+    const out = assemble(
+      {
+        report: 'r',
+        citations: [{ claim: 'c', url: challenged, confidence: 'high' as const }],
+        sources: [challenged],
+        unverified: [{ topic: 't', url: challenged, reason: 'x' }],
+      },
+      { ...ev, retrieved: [...evidenceOfRun.retrieved] },
+    )
+    expect(out.sources).toEqual([`${permalink}/`])
+    expect(out.citations.map((c) => c.url)).toEqual([`${permalink}/`])
+    expect(out.unverified.map((u) => u.url)).toEqual([`${permalink}/`])
+    expect(JSON.stringify(out)).not.toContain('js_challenge')
+  })
+
   test('earlier pages ground a citation but are not this run’s pages', () => {
     const out = assemble({ report: 'r', citations: [cite(PG_BLOG)], sources: [PG_BLOG], unverified: [] }, ev, [PG_BLOG])
     expect(out.status).toBe('ok')

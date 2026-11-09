@@ -12,6 +12,7 @@ import { BrowserFailure, browserFromEnv, readViaCdp, type RequestPolicy } from '
 import { pinnedFetch } from './pinned.ts'
 import { formatTranscript, videoIdOf } from './youtube.ts'
 import { isPrivateAddress } from './ssrf.ts'
+import { alternateUrls, cleanUrl, incompleteReason } from './pages.ts'
 import { parseHtml } from './text.ts'
 
 const GATEWAY = { AGW_API_SECRET: 'agw-token', AGW_GATEWAY_URL: 'http://127.0.0.1:7794' }
@@ -1854,7 +1855,7 @@ describe('web.fetch through a real browser', () => {
       }
     })
 
-    test('render reads in the browser without a plain read; without it the plain page is the answer', async () => {
+    test('render reads in the browser without a plain read; without it a no-results page falls back to the browser by itself', async () => {
       const browser = fakeBrowser([{ title: 'Shop', text: LISTING }])
       try {
         const n = net({ [plain]: shell })
@@ -1867,8 +1868,11 @@ describe('web.fetch through a real browser', () => {
         expect(rendered.text).toContain('Malabar Monsoon')
         expect(n.calls).toHaveLength(0)
         expect(usage.map((u) => u.model)).toEqual(['browser'])
-        const normal = (await call('web.fetch', { url: `${plain}other` })) as { via: string }
-        expect(normal.via).toBe('direct')
+        // The caller need not ask: a plain read that is only a no-results notice goes to the browser on its own.
+        const normal = (await call('web.fetch', { url: `${plain}other` })) as { via: string; text: string }
+        expect(normal.via).toBe('browser')
+        expect(normal.text).toContain('Malabar Monsoon')
+        expect(n.calls).toHaveLength(1)
       } finally {
         browser.stop()
       }
@@ -1877,7 +1881,7 @@ describe('web.fetch through a real browser', () => {
     test('a rendered read is not answered by a cached plain read of the same page', async () => {
       const browser = fakeBrowser([{ title: 'Shop', text: LISTING }])
       try {
-        const n = net({ [plain]: shell })
+        const n = net({ [plain]: html(`<html><body><p>${LISTING}</p></body></html>`) })
         const { call } = run({ ...n.deps, env: {}, browser: browser.read })
         expect(((await call('web.fetch', { url: `${plain}list` })) as { via: string }).via).toBe('direct')
         const again = (await call('web.fetch', { url: `${plain}list`, render: true })) as {
@@ -2655,5 +2659,156 @@ describe('web.youtube', () => {
         { startMs: 3_760_000, text: 'c' },
       ]),
     ).toBe('[1:02:05] a b\n[1:02:40] c')
+  })
+})
+
+describe('web.fetch: an empty shell falls back instead of ending as the answer', () => {
+  const GEEKLIST = 'https://boardgamegeek.com/geeklist/328691'
+  const APP_SHELL =
+    '<html><head><title>BGG</title></head><body><div id="app"></div><script src="/app.js"></script></body></html>'
+  const HEADER = 'Skip Navigation\n202 Items\nResults - Page 2\nof 9\n'.repeat(3)
+  const ITEMS = `${HEADER}8.0\n26. Viticulture Essential Edition\n@waxbottle\n#26  22\nWeight: Medium\n#27  18\nNumber of years in top 200: 5`
+  const seen = (urls: string[]) => async (url: string) => {
+    urls.push(url)
+    return { finalUrl: url, title: 'BGG', text: url === `${GEEKLIST}?page=2` ? ITEMS : HEADER, challenge: false }
+  }
+
+  test('case 1: a geeklist page whose items did not render is read again under its canonical ?page= form', async () => {
+    const asked: string[] = []
+    const n = net({
+      [GEEKLIST]: [
+        // /page/2 redirects to the slugged ?page=2 form, which serves the app shell like every other spelling.
+        (url) =>
+          url.includes('/page/2')
+            ? new Response(null, { status: 302, headers: { location: `${GEEKLIST}/2023-top?page=2` } })
+            : new Response(APP_SHELL, { headers: { 'content-type': 'text/html' } }),
+      ],
+    })
+    const { call, usage } = run({ ...n.deps, browser: seen(asked) })
+    const out = (await call('web.fetch', { url: `${GEEKLIST}/page/2` })) as Record<string, unknown>
+    expect(out).toMatchObject({ via: 'browser', finalUrl: `${GEEKLIST}?page=2` })
+    expect(String(out.text)).toContain('#26')
+    expect(out.incomplete).toBeUndefined()
+    // The browser saw the page as asked first (no items), then the canonical spelling.
+    expect(asked).toEqual([`${GEEKLIST}/page/2`, `${GEEKLIST}?page=2`])
+    expect(usage.every((u) => u.cost === 0)).toBe(true)
+  })
+
+  test('case 1: the same read needs no render flag, and a complete page is cached under the URL as asked', async () => {
+    const asked: string[] = []
+    const n = net({ [GEEKLIST]: html(APP_SHELL) })
+    const { call } = run({ ...n.deps, browser: seen(asked) })
+    await call('web.fetch', { url: `${GEEKLIST}?page=2` })
+    const again = (await call('web.fetch', { url: `${GEEKLIST}?page=2` })) as { cached: boolean; text: string }
+    expect(again.cached).toBe(true)
+    expect(again.text).toContain('#26')
+  })
+
+  test('case 2: a site that stays a shell in every read is returned as incomplete, naming what was tried', async () => {
+    const asked: string[] = []
+    const n = net({ 'https://couples.example.com/': html(APP_SHELL) })
+    const browser = async (url: string) => {
+      asked.push(url)
+      return { finalUrl: url, title: 'Couples', text: 'JavaScript is required to see the games.', challenge: false }
+    }
+    const { call } = run({ ...n.deps, browser })
+    const out = (await call('web.fetch', { url: 'https://couples.example.com/', render: true })) as {
+      text: string
+      incomplete?: string
+      tried?: string[]
+    }
+    expect(out.text).toContain('JavaScript is required')
+    expect(out.incomplete).toContain('JavaScript is required')
+    expect(out.tried).toEqual(['browser', 'tavily-extract'])
+  })
+
+  test('case 2: a shell nobody can improve fails with every fallback named when no read produced text', async () => {
+    const n = net({ 'https://couples.example.com/': html('<html><body><div></div></body></html>') })
+    const { call } = run({ ...n.deps, browser: async () => ({ finalUrl: '', title: '', text: '', challenge: false }) })
+    const error = await failure(call('web.fetch', { url: 'https://couples.example.com/x' }))
+    expect(error.message).toContain('direct:')
+    expect(error.message).toContain('browser: no text on the page')
+  })
+
+  test('case 3: a geeklist named with a slug is read by its id alone when the slug form is a shell', async () => {
+    const asked: string[] = []
+    const page = html(`<html><body><p>${ITEMS}</p></body></html>`)
+    const n = net({
+      [`${GEEKLIST}/2025-peoples-choice`]: html(APP_SHELL),
+      [GEEKLIST]: page,
+    })
+    const { call } = run({ ...n.deps, browser: seen(asked) })
+    const out = (await call('web.fetch', { url: `${GEEKLIST}/2025-peoples-choice` })) as Record<string, unknown>
+    expect(out).toMatchObject({ via: 'direct', finalUrl: GEEKLIST })
+    expect(out.incomplete).toBeUndefined()
+  })
+
+  test('case 3: the BGG XML API answers as a complete page, not a shell', async () => {
+    const xml = '<?xml version="1.0"?><geeklist id="328691"><item id="1" objectname="Viticulture"/></geeklist>'
+    const n = net({
+      'https://boardgamegeek.com/xmlapi2/geeklist/328691': () =>
+        new Response(xml, { headers: { 'content-type': 'text/xml; charset=utf-8' } }),
+    })
+    const { call } = run({ ...n.deps, browser: seen([]) })
+    const out = (await call('web.fetch', { url: 'https://boardgamegeek.com/xmlapi2/geeklist/328691' })) as Record<
+      string,
+      unknown
+    >
+    expect(out).toMatchObject({ via: 'direct', text: xml })
+    expect(out.incomplete).toBeUndefined()
+  })
+
+  test('case 4: a Reddit js_challenge redirect lands on the clean permalink', async () => {
+    const permalink = 'https://www.reddit.com/r/boardgames/comments/abc123/best_two_player_games/'
+    const n = net({
+      [permalink]: (url) =>
+        url.includes('js_challenge')
+          ? new Response(`<html><body><p>${'A comment about Jaipur and Patchwork. '.repeat(10)}</p></body></html>`, {
+              headers: { 'content-type': 'text/html' },
+            })
+          : new Response(null, {
+              status: 302,
+              headers: { location: `${permalink}?solution=1.23&js_challenge=1&jsc_token=deadbeef` },
+            }),
+    })
+    const { call } = run({ ...n.deps })
+    const out = (await call('web.fetch', { url: permalink })) as { finalUrl: string }
+    expect(out.finalUrl).toBe(permalink)
+  })
+})
+
+describe('page spellings and shells (pages.ts)', () => {
+  test('alternateUrls: pagination both ways and a geeklist by its id', () => {
+    expect(alternateUrls('https://boardgamegeek.com/geeklist/328691/page/2')).toEqual([
+      'https://boardgamegeek.com/geeklist/328691?page=2',
+    ])
+    expect(alternateUrls('https://boardgamegeek.com/geeklist/328691/some-slug?page=3')).toEqual([
+      'https://boardgamegeek.com/geeklist/328691/some-slug/page/3',
+      'https://boardgamegeek.com/geeklist/328691?page=3',
+    ])
+    expect(alternateUrls('https://example.com/forum/page-4/')).toEqual(['https://example.com/forum?page=4'])
+    expect(alternateUrls('https://example.com/about')).toEqual([])
+    expect(alternateUrls('not a url')).toEqual([])
+  })
+
+  test('cleanUrl drops only a js challenge redirect’s parameters', () => {
+    expect(cleanUrl('https://www.reddit.com/r/a/comments/x/t/?solution=1&js_challenge=1&jsc_token=z')).toBe(
+      'https://www.reddit.com/r/a/comments/x/t/',
+    )
+    expect(cleanUrl('https://www.reddit.com/r/a/comments/x/t/?sort=top&js_challenge=1&solution=1')).toBe(
+      'https://www.reddit.com/r/a/comments/x/t/?sort=top',
+    )
+    expect(cleanUrl('https://example.com/a?solution=42')).toBe('https://example.com/a?solution=42')
+  })
+
+  test('incompleteReason: notices in a short text and a geeklist without items; a long or ordinary page is complete', () => {
+    expect(incompleteReason('https://example.com/', 'Please enable JavaScript to continue.')).toContain('JavaScript')
+    expect(incompleteReason('https://example.com/', 'Keine Produkte gefunden!')).toBeDefined()
+    expect(incompleteReason('https://example.com/', `${'Plenty of real text. '.repeat(100)} no results found`)).toBe(
+      undefined,
+    )
+    expect(incompleteReason('https://boardgamegeek.com/geeklist/1/x', 'Results - Page 1\nof 3')).toContain('geeklist')
+    expect(incompleteReason('https://boardgamegeek.com/geeklist/1/x', 'Results\n#1  4\nCarcassonne')).toBeUndefined()
+    expect(incompleteReason('https://boardgamegeek.com/xmlapi2/geeklist/1', '<geeklist/>')).toBeUndefined()
   })
 })
