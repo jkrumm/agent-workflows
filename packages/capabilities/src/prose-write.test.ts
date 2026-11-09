@@ -145,7 +145,7 @@ describe('the writer’s fence', () => {
     const findings = Array.from({ length: MAX_BRIEF_FINDINGS + 7 }, (_, i) => ({
       rule: 'r',
       line: i + 1,
-      excerpt: `f${i}`,
+      excerpt: `finding-${i}-end`, // not a bare "f50": the fence nonce is random hex
     }))
     const notes = Array.from({ length: MAX_BRIEF_NOTES + 3 }, (_, i) => ({ criterion: 'clarity', note: `n${i}` }))
     const data = writerData({
@@ -160,8 +160,8 @@ describe('the writer’s fence', () => {
     })
     expect(data).toContain('- … and 7 more')
     expect(data).toContain('- … and 3 more')
-    expect(data).toContain('f49')
-    expect(data).not.toContain('f50')
+    expect(data).toContain('finding-49-end')
+    expect(data).not.toContain('finding-50-end')
   })
 
   test('the omitted count is added to the lines over the cap, and shows with a short list too', () => {
