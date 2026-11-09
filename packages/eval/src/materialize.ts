@@ -62,9 +62,19 @@ export async function materialize(input: MaterializeInput, options: MaterializeO
 
   if (input.patch?.trim()) {
     const patch = input.patch.endsWith('\n') ? input.patch : `${input.patch}\n`
-    // Intent-to-add: files the patch creates show in `git diff HEAD`, which a scope of uncommitted changes may read.
-    const applied = await git(['apply', '--intent-to-add', '--whitespace=nowarn', '-'], patch)
+    // `--apply --summary` applies the patch and lists what the patch created. Not `--intent-to-add`: git 2.43 marks
+    // modified files intent-to-add too (`DA` instead of `M`), so the diff a reviewer reads would depend on the git version.
+    const applied = await git(
+      ['-c', 'core.quotePath=false', 'apply', '--apply', '--summary', '--whitespace=nowarn', '-'],
+      patch,
+    )
     if (applied.code !== 0) return { ok: false, reason: 'apply_failed', detail: brief(applied.stderr), dir }
+    // Intent-to-add for created files only: they then show in `git diff HEAD`, which a scope of uncommitted changes may read.
+    const created = createdPaths(applied.stdout)
+    if (created.length) {
+      const added = await git(['add', '--intent-to-add', '--', ...created])
+      if (added.code !== 0) return { ok: false, reason: 'apply_failed', detail: brief(added.stderr), dir }
+    }
   }
 
   for (const step of options.setup ? setupSteps(dir) : []) {
@@ -74,6 +84,26 @@ export async function materialize(input: MaterializeInput, options: MaterializeO
     }
   }
   return { ok: true, dir }
+}
+
+/** The paths of `git apply --summary`'s ` create mode <mode> <path>` lines (a path git still quotes, one with a quote or control character, is unquoted). */
+export function createdPaths(summary: string): string[] {
+  const paths: string[] = []
+  for (const line of summary.split('\n')) {
+    const match = /^ create mode \d+ (.+)$/.exec(line)
+    if (!match?.[1]) continue
+    const path = match[1]
+    if (!path.startsWith('"')) {
+      paths.push(path)
+      continue
+    }
+    try {
+      paths.push(JSON.parse(path) as string)
+    } catch {
+      // C-style octal escapes are not JSON; such a path is left out of intent-to-add rather than guessed at
+    }
+  }
+  return paths
 }
 
 /**

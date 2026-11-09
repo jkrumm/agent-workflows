@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { exec } from '../src/exec.ts'
-import { cleanup, materialize, setupSteps } from '../src/materialize.ts'
+import { cleanup, createdPaths, materialize, setupSteps } from '../src/materialize.ts'
 import { bootstrapMedianCI, median } from '../src/stats.ts'
 import { BAD_DIFF, fixtureHome } from './support.ts'
 
@@ -38,14 +38,30 @@ describe('materialize', () => {
     const fx = fixtureHome()
     const added =
       'diff --git a/new.ts b/new.ts\nnew file mode 100644\n--- /dev/null\n+++ b/new.ts\n@@ -0,0 +1 @@\n+export const c = 4\n'
+    const accented =
+      'diff --git a/café.ts b/café.ts\nnew file mode 100644\n--- /dev/null\n+++ b/café.ts\n@@ -0,0 +1 @@\n+export const d = 5\n'
     const tree = await materialize(
-      { repo: 'SourceRoot/fixture', baseSha: fx.baseSha, patch: `${fx.diff}${added}` },
+      { repo: 'SourceRoot/fixture', baseSha: fx.baseSha, patch: `${fx.diff}${added}${accented}` },
       { exec, home: fx.home, setup: false },
     )
     if (!tree.ok) throw new Error(tree.detail)
-    const diff = Bun.spawnSync(['git', 'diff', 'HEAD', '--name-only'], { cwd: tree.dir }).stdout.toString()
-    expect(diff.trim().split('\n').sort()).toEqual(['app.ts', 'new.ts'])
+    const diff = Bun.spawnSync(['git', '-c', 'core.quotePath=false', 'diff', 'HEAD', '--name-only'], {
+      cwd: tree.dir,
+    }).stdout.toString()
+    expect(diff.trim().split('\n').sort()).toEqual(['app.ts', 'café.ts', 'new.ts'])
+    // only the created file is intent-to-add: git 2.43 marks a modified one `DA` when the patch is applied with `--intent-to-add`
+    const status = Bun.spawnSync(['git', '-c', 'core.quotePath=false', 'status', '--porcelain'], {
+      cwd: tree.dir,
+    }).stdout.toString()
+    expect(status.split('\n').filter(Boolean).sort()).toEqual([' A café.ts', ' A new.ts', ' M app.ts'])
     cleanup(tree.dir)
+  })
+
+  test('createdPaths reads the `create mode` lines of git apply --summary', () => {
+    const summary =
+      ' create mode 100644 new.ts\n delete mode 100644 old.ts\n create mode 100755 bin/run sh\n create mode 100644 "q\\"uote.ts"\n rename a.ts => b.ts (100%)\n'
+    expect(createdPaths(summary)).toEqual(['new.ts', 'bin/run sh', 'q"uote.ts'])
+    expect(createdPaths('')).toEqual([])
   })
 
   test('setup runs bun install only when the Makefile check does not install itself', () => {
