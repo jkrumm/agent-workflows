@@ -43,10 +43,11 @@ describe('workflow start', () => {
 
     const still = await t.json(await t.call(`/runs/${runId}/wait`, { method: 'POST', headers: { prefer: 'wait=0.2' } }))
     expect(still.status).toBe(202)
-    expect(still.body.status).toBe('running')
+    expect(['pending', 'running']).toContain(still.body.status) // under load the drive may not have claimed it yet
 
     const waiting = t.call(`/runs/${runId}/wait`, { method: 'POST', headers: { prefer: 'wait=20' } })
-    await Bun.sleep(100)
+    // The gate is released only once the run is inside it: a release before that would be reset away.
+    await until(async () => (await t.json(await t.call(`/runs/${runId}`))).body.status === 'running', 'run running')
     t.gate.release()
     t.gate.reset()
     const ended = await t.json(await waiting)

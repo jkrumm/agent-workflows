@@ -60,7 +60,8 @@ const status =
     new Response(body, { status: code })
 
 function run(deps: WebDeps) {
-  const caps = createWebCapabilities({ handoff: fakeHandoff(), ...deps })
+  // An empty env unless a test passes one: an ambient GITHUB_TOKEN or TAVILY_API_KEY must not reach the capabilities.
+  const caps = createWebCapabilities({ handoff: fakeHandoff(), env: {}, ...deps })
   const usage: Usage[] = []
   const call = async (
     id: 'web.search' | 'web.fetch' | 'web.docs' | 'web.package' | 'web.youtube' | 'web.ask',

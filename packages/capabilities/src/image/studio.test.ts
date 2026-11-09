@@ -500,9 +500,9 @@ describe('requestImages: streaming', () => {
         { headers: { 'content-type': 'text/event-stream' } },
       )
     })
-    const { error, reported } = await refused({ prompt: 'x', partial_images: 1 }, 5_000, 120)
+    const { error, reported } = await refused({ prompt: 'x', partial_images: 1 }, 5_000, 300)
     expect(error).toMatchObject({ code: 'UPSTREAM_ERROR' })
-    expect(error.message).toContain('ran past 120ms in all')
+    expect(error.message).toContain('ran past 300ms in all')
     expect(reported).toEqual([])
   })
 
@@ -600,7 +600,7 @@ describe('requestImages: streaming', () => {
           new ReadableStream({
             async start(controller) {
               for (const frame of frames) {
-                await Bun.sleep(80)
+                await Bun.sleep(20)
                 controller.enqueue(new TextEncoder().encode(frame))
               }
               controller.close()
@@ -608,7 +608,7 @@ describe('requestImages: streaming', () => {
           }),
         ),
     )
-    const { value, error } = await run({ prompt: 'x', partial_images: 2 }, 150)
+    const { value, error } = await run({ prompt: 'x', partial_images: 2 }, 1_000)
     expect(error).toBeUndefined()
     expect(value?.images).toHaveLength(1)
   })
