@@ -260,11 +260,16 @@ export type Ctx = {
    * (number, string, boolean, array, object or null): another type fails the run as `invalid_input`, naming the param.
    */
   param<T extends Json>(name: string, fallback: T): Widen<T>
-  /** Fan-out: one child run per input, driven by this step. A failing child yields `null`. */
+  /**
+   * Fan-out: one child run per input, driven by this step. A failing child yields `null`. All children start at once
+   * unless `concurrency` (a positive integer) caps how many run at the same time, in input order; use it for a wide
+   * fan-out, whose children otherwise queue on the journal pool.
+   */
   workflow<I extends z.ZodType, O extends z.ZodType>(
     id: string,
     workflow: Workflow<I, O>,
     inputs: z.input<I>[],
+    options?: { concurrency?: number },
   ): Promise<(z.output<O> | null)[]>
 }
 

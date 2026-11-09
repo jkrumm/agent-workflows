@@ -129,7 +129,7 @@ export class RunScope {
       score: (id, value) => this.score(id, value),
       continue: (id, from, prompt, options) => this.continueAgent(id, from, prompt, options),
       param: (name, fallback) => this.param(name, fallback),
-      workflow: (id, workflow, inputs) => this.fanOut(id, workflow, inputs),
+      workflow: (id, workflow, inputs, options) => this.fanOut(id, workflow, inputs, options?.concurrency),
     }
   }
 
@@ -583,15 +583,38 @@ export class RunScope {
     stepId: string,
     workflow: Workflow<I, O>,
     inputs: z.input<I>[],
+    concurrency?: number,
   ): Promise<(z.output<O> | null)[]> {
-    return this.journaled(stepId, 'workflow', {}, async () => {
-      // allSettled: an infra failure in one child must not leave its siblings running unobserved.
-      const settled = await Promise.allSettled(
-        inputs.map((input, i) => this.rt.runChild(this, `${this.run.id}/${stepId}/${i}`, workflow, input)),
+    if (concurrency !== undefined && (!Number.isInteger(concurrency) || concurrency < 1)) {
+      return Promise.reject(
+        new WorkflowError('error', `ctx.workflow ${stepId}: concurrency must be a positive integer`),
       )
-      const rejected = settled.find((s) => s.status === 'rejected')
-      if (rejected) throw rejected.reason
-      return settled.map((s) => (s.status === 'fulfilled' ? s.value : null))
+    }
+    return this.journaled(stepId, 'workflow', {}, async () => {
+      const limit = Math.min(concurrency ?? inputs.length, inputs.length)
+      const settled: PromiseSettledResult<Json | null>[] = new Array(inputs.length)
+      let next = 0
+      let failed = false
+      // Workers settle every child they start (an infra failure in one must not leave its siblings running
+      // unobserved); once one failed, no further child starts: the step throws and the tree is driven again.
+      const worker = async () => {
+        while (!failed && next < inputs.length) {
+          const i = next++
+          try {
+            settled[i] = {
+              status: 'fulfilled',
+              value: await this.rt.runChild(this, `${this.run.id}/${stepId}/${i}`, workflow, inputs[i]),
+            }
+          } catch (reason) {
+            failed = true
+            settled[i] = { status: 'rejected', reason }
+          }
+        }
+      }
+      await Promise.all(Array.from({ length: limit }, worker))
+      const rejected = settled.find((s) => s?.status === 'rejected')
+      if (rejected?.status === 'rejected') throw rejected.reason
+      return settled.map((s) => (s?.status === 'fulfilled' ? s.value : null))
     }) as Promise<(z.output<O> | null)[]>
   }
 

@@ -97,6 +97,10 @@ export class LeasePool {
       connectionString: this.connectionString,
       application_name: this.applicationName,
       keepAlive: true,
+      // A lease idles for a whole run: probe the socket so a NAT drops nothing, and opt out of a server-side
+      // `idle_session_timeout`, which would end the session (and release the advisory lock) mid-run.
+      keepAliveInitialDelayMillis: 30_000,
+      options: '-c idle_session_timeout=0',
       connectionTimeoutMillis: 30_000,
       query_timeout: 60_000,
       statement_timeout: 60_000,

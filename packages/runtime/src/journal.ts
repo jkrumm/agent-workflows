@@ -288,7 +288,7 @@ export class Journal {
       const res = await client.query<{ started_at: Date }>(
         `update ${this.runs} set status = 'running', started_at = coalesce(started_at, now()), drives = drives + 1,
            updated_at = now()
-         where id = $1 and status = 'pending' and ${this.fence(2, 3)}
+         where id = $1 and status = 'pending' and ${this.rowFence(id, fence)}
          returning started_at`,
         [id, fence.rootId, fence.token],
       )
@@ -311,7 +311,7 @@ export class Journal {
     await this.fenced(
       fence,
       `update ${this.runs} set admitted_at = now(), updated_at = now()
-       where id = $1 and status = 'running' and ${this.fence(2, 3)}`,
+       where id = $1 and status = 'running' and ${this.rowFence(id, fence)}`,
       [id, fence.rootId, fence.token],
     )
   }
@@ -353,7 +353,7 @@ export class Journal {
       fence,
       `update ${this.runs} set status = $4, output = $5, error = $6, error_kind = $7, version_finished = $8,
          finished_at = now(), updated_at = now()
-       where id = $1 and status in ('pending', 'running') and ${this.fence(2, 3)}`,
+       where id = $1 and status in ('pending', 'running') and ${this.rowFence(id, fence)}`,
       [
         id,
         fence.rootId,
@@ -557,7 +557,7 @@ export class Journal {
       `update ${this.runs} set scores = jsonb_set(coalesce(scores, '{}'), '{gates}',
            coalesce(scores->'gates', '{}') || jsonb_build_object($4::text, $5::jsonb)),
          updated_at = now()
-       where id = $1 and ${this.fence(2, 3)}`,
+       where id = $1 and ${this.rowFence(runId, fence)}`,
       [runId, fence.rootId, fence.token, stepId, JSON.stringify(verdict)],
     )
   }
@@ -771,6 +771,16 @@ export class Journal {
    */
   private fence(rootParam: number, tokenParam: number): string {
     return `exists (select 1 from ${this.runs} f where f.id = $${rootParam} and f.lease_token = $${tokenParam} for share)`
+  }
+
+  /**
+   * The fence of a write to the run row `id` (params `$1` = id, `$2` = root, `$3` = token). On the root row itself the
+   * token is checked in the update's own `where`: `for share` on the row the same statement then updates lets two
+   * concurrent writers each hold a share lock and wait for the other's (a deadlock). A takeover updating the root
+   * row blocks such a write until it commits, and the re-evaluated `where` then sees the new token and matches nothing.
+   */
+  private rowFence(id: string, fence: Fence): string {
+    return id === fence.rootId ? 'id = $2 and lease_token = $3' : this.fence(2, 3)
   }
 
   private async fenced(fence: Fence, sql: string, params: unknown[]): Promise<boolean> {

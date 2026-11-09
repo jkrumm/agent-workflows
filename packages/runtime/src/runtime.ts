@@ -83,6 +83,14 @@ export type RuntimeOptions = {
    * effect waits (from its last start) before running again. Default 30 s.
    */
   bodyGraceMs?: number
+  /**
+   * A hang guard on each `runPost` hook call (hooks are bookkeeping, never an agent run): a hook still running after it
+   * counts as a failed delivery, so a hung hook neither holds the drive and its lease nor blocks redelivery. `close()`
+   * abandons a running hook at once without counting it. Default 5 min.
+   */
+  postHookTimeoutMs?: number
+  /** The same guard on `host.abort` while a cancelled run is cleaned up; a timeout is logged like a failed abort. Default 30 s. */
+  hostAbortTimeoutMs?: number
   logger?: Logger
   /**
    * The capability caller a scorer gets as `judge` for an LLM-judged sub-score: regression and drift always, the
@@ -732,7 +740,10 @@ export class Runtime {
     const steps = await scope.j(() => this.journal.cancelRunningSteps(run.id, fence))
     for (const step of steps) {
       if (step.kind !== 'agent' || !step.handle || !this.host) continue
-      await this.host.abort(step.handle.handle).catch((err: unknown) => {
+      const host = this.host
+      const handle = step.handle.handle
+      const aborting = Promise.resolve().then(() => host.abort(handle))
+      await this.bounded(aborting, this.options.hostAbortTimeoutMs ?? 30_000).catch((err: unknown) => {
         this.logger.error('agent host abort failed', {
           runId: step.run_id,
           stepId: step.step_id,
@@ -755,6 +766,7 @@ export class Runtime {
   private async deliverPostHooks(args: RunPostArgs) {
     const runId = args.runId
     const delivered = await this.runPost(args)
+    if (delivered === null) return // closing: the next process delivers it, nothing is counted
     if (delivered) {
       await this.journal.postHooksDone(runId).catch((err: unknown) => {
         this.logger.warn('runPost done but not recorded; recovery delivers it again', {
@@ -863,14 +875,31 @@ export class Runtime {
     return null
   }
 
-  /** Every hook runs even after one threw; false when any threw (the delivery is retried). */
-  private async runPost(args: RunPostArgs): Promise<boolean> {
+  /**
+   * Settles with `work`, or rejects when `ms` pass (a `TimeoutError`) or the runtime closes (`Shutdown`). The work runs
+   * on detached: the hooks and the host take no signal, so a hung one is abandoned, not cancelled.
+   */
+  private bounded<T>(work: Promise<T>, ms: number): Promise<T> {
+    return raceAbort(work, AbortSignal.any([AbortSignal.timeout(ms), this.lifetime.signal]))
+  }
+
+  /**
+   * Every hook runs even after one threw or timed out; false when any did (the delivery is retried). Null when the
+   * runtime closed meanwhile: the rest is skipped and the delivery is left for the next process, uncounted.
+   */
+  private async runPost(args: RunPostArgs): Promise<boolean | null> {
     let delivered = true
+    const timeoutMs = this.options.postHookTimeoutMs ?? 300_000
     for (const m of this.middleware) {
       if (!m.runPost) continue
+      const hook = m.runPost
       try {
-        await m.runPost(args)
+        await this.bounded(
+          Promise.resolve().then(() => hook(args)),
+          timeoutMs,
+        )
       } catch (err) {
+        if (err instanceof Shutdown) return null
         delivered = false
         this.logger.error('runPost threw; outcome kept, delivery retried', {
           middleware: m.name,
