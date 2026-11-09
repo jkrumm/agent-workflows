@@ -1,6 +1,6 @@
 import sharp from 'sharp'
 import { hexRgb, luminance, type Rgb } from './color.ts'
-import { faviconIcon } from './pipeline.ts'
+import { faviconIcon, smallTargetMaster } from './pipeline.ts'
 import { type TileInfo, tileCrop } from './tile.ts'
 
 export const CARD_WIDTH = 1200
@@ -101,7 +101,7 @@ export async function renderCard(args: {
         .resize(ICON_SIZE, ICON_SIZE)
         .png()
         .toBuffer()
-    : await faviconIcon(master, ICON_SIZE)
+    : await faviconIcon(await smallTargetMaster(master, background), ICON_SIZE)
   const color = luminance(fill) < LIGHT_BACKGROUND_LUMINANCE ? LIGHT_TEXT : DARK_TEXT
   return sharp({
     create: { width: CARD_WIDTH, height: CARD_HEIGHT, channels: 3, background: { r: fill[0], g: fill[1], b: fill[2] } },

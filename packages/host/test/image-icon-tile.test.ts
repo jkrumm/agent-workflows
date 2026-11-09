@@ -242,6 +242,14 @@ describe('the social card', () => {
     expect(countDiffering(onWhite, [520, 100], [1104, 530], [255, 255, 255])).toBeGreaterThanOrEqual(200)
   })
 
+  test('a white glyph on transparency keeps its dark backing on the card, so it does not vanish on the white ground', async () => {
+    const white = await discMaster({ color: [255, 255, 255] })
+    const pixels = await rawPixels(await renderCard({ master: white, tile: null, title: 'Title' }))
+    expect(maxChannelDelta(pixelAt(pixels, 2, 2), [255, 255, 255])).toBeLessThanOrEqual(1)
+    expect(maxChannelDelta(pixelAt(pixels, 96 + 40, 315), [17, 24, 39])).toBeLessThanOrEqual(2)
+    expect(maxChannelDelta(pixelAt(pixels, 96 + 180, 315), [255, 255, 255])).toBeLessThanOrEqual(2)
+  })
+
   test('long text wraps within the line limits and ends in an ellipsis', () => {
     expect(wrapText('one two three four', 8, 5)).toEqual(['one two', 'three', 'four'])
     expect(wrapText('aaa bbb ccc ddd eee', 7, 2)).toEqual(['aaa bbb', 'ccc dd…'])
