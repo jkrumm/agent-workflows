@@ -52,7 +52,13 @@ const cacheFile = (box: Sandbox, url: string) =>
 async function agw(
   box: Sandbox,
   args: string[],
-  options: { stdin?: string; openStdin?: boolean; env?: Record<string, string> } = {},
+  options: {
+    stdin?: string
+    openStdin?: boolean
+    env?: Record<string, string>
+    /** Sends `signal` to the process once `when` holds. */
+    interrupt?: { signal: NodeJS.Signals; when: () => boolean }
+  } = {},
 ): Promise<Result> {
   const proc = Bun.spawn(['bun', BIN, ...args], {
     env: { ...box.env, ...options.env },
@@ -61,6 +67,13 @@ async function agw(
     stdout: 'pipe',
     stderr: 'pipe',
   })
+  const { interrupt } = options
+  if (interrupt) {
+    void (async () => {
+      while (!interrupt.when() && proc.exitCode === null) await Bun.sleep(25)
+      if (proc.exitCode === null) proc.kill(interrupt.signal)
+    })()
+  }
   const [stdout, stderr, code] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
@@ -1199,3 +1212,145 @@ liveDescribe(
     )
   },
 )
+
+describe('the wait loop on a host that fails mid-run', () => {
+  let host: FakeHost
+  const box = () => sandbox({ AGW_URL: host.url, AGW_API_SECRET: host.secret })
+  const runId = 'run-accepted'
+  const accepted = () => Response.json({ runId, workflowId: 'fixture.accepted', status: 'running' }, { status: 202 })
+  const errorLine = (status: number, code: string, headers: Record<string, string> = {}) =>
+    Response.json({ defined: false, code, status, message: `fixture ${status}` }, { status, headers })
+  const resume = `agw run wait ${runId}`
+  const short = { env: { AGW_WAIT_BUDGET_S: '2' } }
+
+  beforeAll(async () => {
+    host = await startFakeHost({
+      workflows: [
+        {
+          id: 'fixture.accepted',
+          summary: 'Answers 202 at once; the run itself is never stored',
+          input: { type: 'object', properties: {} },
+          outcome: () => ({ respond: accepted() }),
+        },
+        ...FIXTURE_WORKFLOWS.filter((w) => w.id === 'fixture.boom' || w.id === 'fixture.limited'),
+      ],
+    })
+  })
+  afterAll(async () => {
+    await host.stop()
+  })
+
+  const polls = () => host.requests.filter((q) => q.path === `/runs/${runId}/wait`)
+
+  const cases: [string, () => Response][] = [
+    ['a 503 (the runtime is not open yet)', () => errorLine(503, 'SERVICE_UNAVAILABLE')],
+    ['a 500', () => errorLine(500, 'INTERNAL_SERVER_ERROR')],
+    ['a 429', () => errorLine(429, 'RATE_LIMITED', { 'retry-after': '1' })],
+    ['a 412 (the contract keeps changing)', () => errorLine(412, 'CONTRACT_MISMATCH')],
+  ]
+  for (const [name, answer] of cases) {
+    test(`${name} on every poll: the budget runs out in exit 10 with the resume line`, async () => {
+      host.interceptRuns(() => answer())
+      try {
+        const r = await agw(box(), ['fixture', 'accepted'], short)
+        expect(r.code).toBe(EXIT.pending)
+        expect(r.error?.kind).toBe('pending')
+        expect(r.error?.hint).toBe(resume)
+        expect(r.json()).toMatchObject({ runId, status: 'running' })
+        expect(r.error?.details.lastError).toBe(`fixture ${answer().status}`)
+      } finally {
+        host.interceptRuns()
+      }
+    })
+  }
+
+  test('a refused connection on every poll: exit 10 with the resume line', async () => {
+    const down = await startFakeHost({
+      workflows: [
+        {
+          id: 'fixture.accepted',
+          summary: 'Answers 202 at once',
+          input: { type: 'object', properties: {} },
+          outcome: () => ({ respond: accepted() }),
+        },
+      ],
+    })
+    // The first poll still finds the run; the host is gone before the next one.
+    down.interceptRuns(() => {
+      setTimeout(() => void down.stop(), 50)
+      return accepted()
+    })
+    const b = sandbox({ AGW_URL: down.url, AGW_API_SECRET: down.secret })
+    const r = await agw(b, ['fixture', 'accepted'], { env: { AGW_WAIT_BUDGET_S: '4' } })
+    expect(r.code).toBe(EXIT.pending)
+    expect(r.error?.hint).toBe(resume)
+    expect(r.error?.details.lastError).toContain('unreachable')
+    await down.stop()
+  })
+
+  test('failures that clear: the loop keeps polling and the run ends normally', async () => {
+    let n = 0
+    host.interceptRuns(() => {
+      n++
+      if (n === 1) return errorLine(503, 'SERVICE_UNAVAILABLE')
+      if (n === 2) return errorLine(412, 'CONTRACT_MISMATCH')
+      return Response.json({ runId, workflowId: 'fixture.accepted', status: 'done', output: {} })
+    })
+    try {
+      const r = await agw(box(), ['fixture', 'accepted'], { env: { AGW_WAIT_BUDGET_S: '20' } })
+      expect(r.code).toBe(0)
+      expect(r.json()).toMatchObject({ runId, status: 'done' })
+      expect(n).toBe(3)
+    } finally {
+      host.interceptRuns()
+    }
+  })
+
+  test('a 404 on a poll is final: the run is gone, not pending', async () => {
+    host.interceptRuns(() => errorLine(404, 'NOT_FOUND'))
+    try {
+      const r = await agw(box(), ['fixture', 'accepted'], short)
+      expect(r.code).toBe(EXIT.not_found)
+    } finally {
+      host.interceptRuns()
+    }
+  })
+
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+    test(`${signal} during the wait: the state on stdout, the resume line, exit 10`, async () => {
+      host.interceptRuns(async () => {
+        await Bun.sleep(300)
+        return accepted()
+      })
+      try {
+        const before = polls().length
+        const r = await agw(box(), ['fixture', 'accepted'], {
+          env: { AGW_WAIT_BUDGET_S: '60' },
+          interrupt: { signal, when: () => polls().length > before },
+        })
+        expect(r.code).toBe(EXIT.pending)
+        expect(r.json()).toMatchObject({ runId, status: 'running' })
+        expect(r.error?.kind).toBe('pending')
+        expect(r.error?.hint).toBe(resume)
+        expect(r.error?.details.signal).toBe(signal)
+      } finally {
+        host.interceptRuns()
+      }
+    })
+  }
+
+  test('a 500 at the start: the run may have started, so the hint carries the idempotency key', async () => {
+    const r = await agw(box(), ['fixture', 'boom'])
+    expect(r.code).toBe(EXIT.general)
+    const key = host.requests.findLast((q) => q.path === '/workflows/fixture/boom')?.headers['idempotency-key']
+    expect(key).toBeTruthy()
+    expect(r.error?.hint).toBe(`the run may have started; retry with --idempotency-key ${key}`)
+    expect(r.error?.details).toMatchObject({ status: 500, idempotencyKey: key })
+  })
+
+  test('a 429 at the start is a 4xx: nothing ran, no idempotency hint', async () => {
+    const r = await agw(box(), ['fixture', 'limited'])
+    expect(r.code).toBe(EXIT.rate_limited)
+    expect(r.error?.hint).not.toContain('idempotency')
+  })
+})

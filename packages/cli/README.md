@@ -67,8 +67,8 @@ Every call sends `x-agw-caller`, and inside a git repo `x-agw-project` and `x-ag
 
 ### Workflows and runs
 
-- `kind: 'workflow'` commands `POST /workflows/…` with `Prefer: wait=<min(remaining, 240)>`. They forward `x-agw-purpose` (`AGW_PURPOSE`) and the caller headers below. A workflow start and every mutating call carry an `Idempotency-Key`: `--idempotency-key <k>`, else one generated before the first send. If the network fails on that send, the hint is `the run may have started; retry with --idempotency-key <k>`.
-- A `202` answer means the run is still going. The CLI loops on the command named by `x-cli.resume` (`run wait <runId>`) until the run ends or `AGW_WAIT_BUDGET_S` (default 110) is spent. A host that answers `202` at once is polled at most once a second.
+- `kind: 'workflow'` commands `POST /workflows/…` with `Prefer: wait=<min(remaining, 240)>`. They forward `x-agw-purpose` (`AGW_PURPOSE`) and the caller headers below. A workflow start and every mutating call carry an `Idempotency-Key`: `--idempotency-key <k>`, else one generated before the first send. If that send fails with a network error or any 5xx (the host can insert the run and then answer 500), the hint is `the run may have started; retry with --idempotency-key <k>` and `details.idempotencyKey` carries the key; a 4xx ran nothing and carries no such hint.
+- A `202` answer means the run is still going. The CLI loops on the command named by `x-cli.resume` (`run wait <runId>`) until the run ends or `AGW_WAIT_BUDGET_S` (default 110) is spent. A host that answers `202` at once is polled at most once a second. Once the run is accepted, the loop outlasts a host that is down, booting (503 `runtime not open`), failing (5xx), rate limiting (429, `Retry-After` honoured) or on another contract (412: that process's contract is fetched again): it retries with a backoff of 1 s doubling to 10 s and ends only at the budget, in `pending` (the last such failure is `details.lastError`). A 4xx other than 429 and 412 (auth, a run that is gone) is final. SIGINT or SIGTERM during the loop ends the wait, not the run: the state on stdout, the `pending` line with the resume command (`details.signal` names the signal) and exit 10. A signal before the first answer keeps the default exit (130/143).
 - **`done`** prints the state and exits 0. **`failed`/`cancelled`** prints the state and exits 1.
 - **Budget spent:** stdout carries the last state, the error line `kind: pending` with `hint: "agw run wait <runId>"`, and the CLI exits 10. That hint is exactly the command to run next.
 - **A `202` without the resume positional** (no `runId`), or a workflow without `x-cli.resume`, prints the state and exits 1 (`host returned no run id`). It never prints a resume command it cannot fill in.
@@ -96,7 +96,7 @@ Exactly one JSON line on stderr per failure:
 | 7 | network | host unreachable |
 | 8 | rate_limited | 429 |
 | 9 | contract_mismatch | 412, and the command does not parse against the new contract |
-| 10 | pending | budget spent, run still going; hint is the resume command |
+| 10 | pending | budget spent or wait interrupted by SIGINT/SIGTERM, run still going; hint is the resume command |
 
 The table lives in `src/exit.ts`. `agw schema --exit-codes` prints it, and changing it is a breaking change.
 

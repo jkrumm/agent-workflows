@@ -63,6 +63,26 @@ const wantsHelp = (argv: string[]) => {
   return (end < 0 ? argv : argv.slice(0, end)).some((word) => word === '-h' || word === '--help')
 }
 
+/** A 5xx answer (the boot-time 503 "runtime not open" included): the host failed, not the request. */
+const serverFailure = (error: AgwError) => typeof error.details.status === 'number' && error.details.status >= 500
+
+/** Waits `ms`, or until `signal` aborts. */
+const sleep = (ms: number, signal: AbortSignal) =>
+  new Promise<void>((resolve) => {
+    if (signal.aborted) return resolve()
+    const done = () => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', done)
+      resolve()
+    }
+    const timer = setTimeout(done, ms)
+    signal.addEventListener('abort', done, { once: true })
+  })
+
+/** First wait after a failed poll; it doubles per consecutive failure up to {@link MAX_BACKOFF_MS}. */
+const BACKOFF_MS = 1000
+const MAX_BACKOFF_MS = 10_000
+
 const shellWord = (word: string) => (/^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`)
 
 function dig(value: unknown, path: string): unknown {
@@ -262,10 +282,12 @@ class Runner {
     } catch (error) {
       if (!(error instanceof AgwError)) throw error
       if (error.kind === 'contract_mismatch') throw new StaleContract(error, this.platform.sentTo(error) ?? this.host)
-      if (error.kind === 'network' && startsWork) {
-        throw new AgwError('network', error.message, {
+      // Anything but a 4xx may have landed: the host can insert the run and then answer 500, or lose the answer.
+      if (startsWork && (error.kind === 'network' || serverFailure(error))) {
+        throw new AgwError(error.kind, error.message, {
+          code: error.code,
           hint: `the run may have started; retry with --idempotency-key ${this.#key}`,
-          details: { idempotencyKey: this.#key },
+          details: { ...error.details, idempotencyKey: this.#key },
         })
       }
       throw error
@@ -306,15 +328,47 @@ class Runner {
       ...(resume?.command ?? []),
       ...Object.values(resumeValues).map((v) => shellWord(String(v))),
     ].join(' ')
-    if (resumeCommand)
-      ({ reply, state } = await this.poll({ owner, reply, state, resumeCommand, resumeValues, resumeLine, deadline }))
+    let interrupted: string | undefined
+    let lastError: AgwError | undefined
+    if (resumeCommand) {
+      // After the first 202 the run lives on the host: a signal ends the wait, not the run, and still leaves its state.
+      const stop = new AbortController()
+      const handlers = (['SIGINT', 'SIGTERM'] as const).map((name) => {
+        const handler = () => {
+          interrupted ??= name
+          stop.abort()
+        }
+        process.on(name, handler)
+        return [name, handler] as const
+      })
+      try {
+        ;({ reply, state, lastError } = await this.poll({
+          owner,
+          reply,
+          state,
+          resumeCommand,
+          resumeValues,
+          deadline,
+          stop: stop.signal,
+        }))
+      } finally {
+        for (const [name, handler] of handlers) process.off(name, handler)
+      }
+    }
 
     emit(state)
     const status = String(state.status)
     if (reply.status === 202 || !TERMINAL.has(status)) {
-      throw new AgwError('pending', `run ${String(state.runId)} still ${status} after ${budgetS}s`, {
+      const why = interrupted ? `interrupted by ${interrupted}` : `after ${budgetS}s`
+      throw new AgwError('pending', `run ${String(state.runId)} still ${status} ${why}`, {
         hint: resumeLine,
-        details: { runId: state.runId, status, budgetS },
+        details: {
+          runId: state.runId,
+          status,
+          budgetS,
+          ...(interrupted ? { signal: interrupted } : {}),
+          ...(lastError ? { lastError: lastError.message } : {}),
+        },
       })
     }
     if (status === 'done') return EXIT.ok
@@ -324,39 +378,61 @@ class Runner {
     })
   }
 
-  /** Loops the resume command while the host answers 202, until the run ends or the deadline passes. */
+  /**
+   * Loops the resume command while the host answers 202, until the run ends, the deadline passes or `stop` aborts.
+   * The run keeps going server-side, so a host that is down, booting (503), failing (5xx), rate limiting (429) or on
+   * another contract (412: refreshed) is waited out with a backoff; only the deadline ends it, in a pending answer.
+   * A 4xx (auth, not found) is final and thrown.
+   */
   private async poll(loop: {
     owner: Host
     reply: Reply
     state: RunState
     resumeCommand: Command
     resumeValues: Record<string, unknown>
-    resumeLine: string
     deadline: number
-  }): Promise<{ reply: Reply; state: RunState }> {
-    let { reply, state } = loop
-    while (reply.status === 202) {
+    stop: AbortSignal
+  }): Promise<{ reply: Reply; state: RunState; lastError?: AgwError }> {
+    let { reply, state, resumeCommand } = loop
+    let lastError: AgwError | undefined
+    let failures = 0
+    while (reply.status === 202 && !loop.stop.aborted) {
       const leftS = Math.floor((loop.deadline - Date.now()) / 1000)
       if (leftS < 1) break
       const started = Date.now()
       try {
-        reply = await loop.owner.call(loop.resumeCommand, loop.resumeValues, { waitS: Math.min(leftS, MAX_WAIT_S) })
+        reply = await loop.owner.call(resumeCommand, loop.resumeValues, {
+          waitS: Math.min(leftS, MAX_WAIT_S),
+          signal: loop.stop,
+        })
       } catch (error) {
-        throw await this.resumable(error, loop.owner, loop.resumeLine)
+        if (loop.stop.aborted) break
+        if (!(error instanceof AgwError) || !(await this.transient(error, loop.owner))) throw error
+        lastError = error
+        // The contract may have changed the resume command too: take it from the fresh document.
+        resumeCommand =
+          loop.owner.commands.find((c) => c.words.join(' ') === resumeCommand.words.join(' ')) ?? resumeCommand
+        const backoff = Math.min(BACKOFF_MS * 2 ** failures++, MAX_BACKOFF_MS)
+        const retryAfter = typeof error.details.retryAfterS === 'number' ? error.details.retryAfterS * 1000 : 0
+        await sleep(Math.min(Math.max(backoff, retryAfter), Math.max(0, loop.deadline - Date.now())), loop.stop)
+        continue
       }
+      failures = 0
+      lastError = undefined
       state = (reply.body ?? {}) as RunState
       // A host that answers 202 at once must not be hammered.
-      if (reply.status === 202) await Bun.sleep(Math.max(0, 1000 - (Date.now() - started)))
+      if (reply.status === 202) await sleep(Math.max(0, 1000 - (Date.now() - started)), loop.stop)
     }
-    return { reply, state }
+    return { reply, state, lastError }
   }
 
-  /** A failure mid-wait: the run keeps going server-side, so the hint is the resume command. */
-  private async resumable(error: unknown, owner: Host, resumeLine: string): Promise<unknown> {
-    if (!(error instanceof AgwError) || !resumeLine) return error
-    if (error.kind === 'contract_mismatch') await owner.refresh().catch(() => undefined)
-    if (error.kind !== 'network' && error.kind !== 'contract_mismatch') return error
-    return new AgwError(error.kind, error.message, { code: error.code, hint: resumeLine, details: error.details })
+  /** A failure the wait outlasts: nothing about it says the run is gone. A 412 refreshes the owner's contract first. */
+  private async transient(error: AgwError, owner: Host): Promise<boolean> {
+    if (error.kind === 'contract_mismatch') {
+      await owner.refresh().catch(() => undefined)
+      return true
+    }
+    return error.kind === 'network' || error.kind === 'rate_limited' || serverFailure(error)
   }
 
   private async topHelp(): Promise<number> {

@@ -252,6 +252,8 @@ export interface FakeHost {
   serveDocument: (body: unknown) => void
   /** Delays every `GET /runs/{runId}` by this many ms. */
   slowStatus: (ms: number) => void
+  /** Answers every `/runs/...` request with this response instead (undefined from the function: serve it as usual). */
+  interceptRuns: (answer?: (request: Request) => Response | Promise<Response | undefined> | undefined) => void
   stop: () => Promise<void>
 }
 
@@ -271,6 +273,7 @@ export async function startFakeHost(options: FakeHostOptions = {}): Promise<Fake
   let version = 1
   let override: unknown
   let statusDelayMs = 0
+  let runIntercept: Parameters<FakeHost['interceptRuns']>[0]
 
   const build = (): Json => {
     const paths: Json = {}
@@ -375,6 +378,10 @@ export async function startFakeHost(options: FakeHostOptions = {}): Promise<Fake
       if (url.pathname === '/health') return Response.json({ status: 'ok', version: '0.0.0' })
       if (request.headers.get('authorization') !== `Bearer ${secret}`)
         return errorBody('UNAUTHORIZED', 401, 'Unauthorized')
+      if (runIntercept && url.pathname.startsWith('/runs/')) {
+        const answered = await runIntercept(request)
+        if (answered) return answered
+      }
       const client = request.headers.get('x-agw-contract')
       if (client !== null && client !== served())
         return errorBody('CONTRACT_MISMATCH', 412, 'Contract mismatch', { server: served(), client })
@@ -453,6 +460,9 @@ export async function startFakeHost(options: FakeHostOptions = {}): Promise<Fake
     },
     slowStatus: (ms) => {
       statusDelayMs = ms
+    },
+    interceptRuns: (answer) => {
+      runIntercept = answer
     },
     stop: () => server.stop(true),
   }

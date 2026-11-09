@@ -97,6 +97,8 @@ export interface Reply {
 export interface CallOptions {
   waitS?: number
   idempotencyKey?: string
+  /** Aborts the request in flight (the caller was interrupted); the failure is a `network` error. */
+  signal?: AbortSignal
 }
 
 interface ErrorBody {
@@ -284,7 +286,8 @@ export class Host {
     Object.assign(headers, this.#caller)
 
     const deadlineS = options.deadlineS ?? (waitS === undefined ? timeoutS(this.env) : waitS + SLACK_S)
-    const signal = AbortSignal.timeout(deadlineS * 1000)
+    const timeout = AbortSignal.timeout(deadlineS * 1000)
+    const signal = options.signal ? AbortSignal.any([timeout, options.signal]) : timeout
     let response: Response
     let text: string
     try {
@@ -298,7 +301,8 @@ export class Host {
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
       const hint = `is the ${this.label} up? ${BIN} schema works offline from the cache`
-      if (signal.aborted) throw new AgwError('network', `no answer from ${url} within ${deadlineS}s`, { hint })
+      if (options.signal?.aborted) throw new AgwError('network', `request to ${url} interrupted`, { hint })
+      if (timeout.aborted) throw new AgwError('network', `no answer from ${url} within ${deadlineS}s`, { hint })
       const message = `${this.label} unreachable at ${url}: ${reason}`
       const code = (error as { code?: unknown } | null)?.code
       if (typeof code === 'string' && NOTHING_SENT.has(code)) throw new Unreachable('network', message, { hint })

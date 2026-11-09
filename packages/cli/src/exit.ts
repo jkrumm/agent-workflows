@@ -30,7 +30,8 @@ export const EXIT_MEANING: Record<ExitKind, string> = {
   network: 'the host could not be reached',
   rate_limited: '429; retry after details.retryAfterS',
   contract_mismatch: 'the host serves another contract and the command does not parse against it',
-  pending: 'the run is still going when the wait budget ran out; stdout has its state, hint the resume command',
+  pending:
+    'the run is still going when the wait budget ran out or the wait was interrupted by SIGINT/SIGTERM; stdout has its state, hint the resume command',
 }
 
 export interface ErrorFields {
