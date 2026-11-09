@@ -37,6 +37,7 @@ describe('workflow start', () => {
   })
 
   test('202 after a short wait, then run wait → 200 once the run ends', async () => {
+    const enteredBefore = t.gate.entered
     const started = await t.json(await t.call('/workflows/hold/open', { body: {}, headers: { prefer: 'wait=0.2' } }))
     expect(started.status).toBe(202)
     const { runId } = started.body
@@ -46,8 +47,8 @@ describe('workflow start', () => {
     expect(['pending', 'running']).toContain(still.body.status) // under load the drive may not have claimed it yet
 
     const waiting = t.call(`/runs/${runId}/wait`, { method: 'POST', headers: { prefer: 'wait=20' } })
-    // The gate is released only once the run is inside it: a release before that would be reset away.
-    await until(async () => (await t.json(await t.call(`/runs/${runId}`))).body.status === 'running', 'run running')
+    // The gate is released only once the run's step waits on it: a release before that would be reset away.
+    await until(() => t.gate.entered > enteredBefore, 'hold step waiting on the gate')
     t.gate.release()
     t.gate.reset()
     const ended = await t.json(await waiting)

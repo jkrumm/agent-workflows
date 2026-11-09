@@ -592,15 +592,16 @@ describe('requestImages: streaming', () => {
   })
 
   test('a slow stream that keeps sending is never cut by the idle guard', async () => {
-    const frames = sse([partial(0), partial(1), completed()])
+    // Six chunks 100 ms apart run 600 ms: twice the 300 ms idle limit in all, yet no gap is near it.
+    const chunks = sse([partial(0), partial(1), completed()]).flatMap((frame) => [': keepalive\n', frame])
     fake.on(
       POST_GEN,
       () =>
         new Response(
           new ReadableStream({
             async start(controller) {
-              for (const frame of frames) {
-                await Bun.sleep(20)
+              for (const frame of chunks) {
+                await Bun.sleep(100)
                 controller.enqueue(new TextEncoder().encode(frame))
               }
               controller.close()
@@ -608,7 +609,7 @@ describe('requestImages: streaming', () => {
           }),
         ),
     )
-    const { value, error } = await run({ prompt: 'x', partial_images: 2 }, 1_000)
+    const { value, error } = await run({ prompt: 'x', partial_images: 2 }, 300)
     expect(error).toBeUndefined()
     expect(value?.images).toHaveLength(1)
   })

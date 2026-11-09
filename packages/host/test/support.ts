@@ -34,6 +34,8 @@ export function gate() {
   const g = {
     released: Promise.resolve(),
     release: () => {},
+    /** How many `hold` steps have read `released` and so wait on it: a test releases only once its step is among them. */
+    entered: 0,
     /** Closes the gate again: the next `hold.open` step waits. */
     reset() {
       g.released = new Promise<void>((resolve) => {
@@ -59,14 +61,16 @@ export function testWorkflows(g = gate()) {
     input: z.object({}),
     output: z.object({ done: z.boolean() }),
     async run(ctx) {
-      await ctx.step('hold', ({ signal }) =>
-        Promise.race([
+      await ctx.step('hold', ({ signal }) => {
+        const waiting = Promise.race([
           g.released,
           new Promise<never>((_, reject) =>
             signal.addEventListener('abort', () => reject(signal.reason), { once: true }),
           ),
-        ]).then(() => true),
-      )
+        ]).then(() => true)
+        g.entered++
+        return waiting
+      })
       return { done: true }
     },
   })
