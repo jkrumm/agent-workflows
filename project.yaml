@@ -9,7 +9,7 @@ deploy:
   migrations: []
 ship:
   - { paths: ['**'], via: push }
-leads: 1
+leads: 2
 signals:
   github:
     author: jkrumm
