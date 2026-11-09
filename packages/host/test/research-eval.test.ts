@@ -179,10 +179,18 @@ describe("the scorers' judge", () => {
       text: 'page text',
     })
     await judge()('web.fetch', { url: 'https://example.com/b' }, scope('drift'))
-    const { rows } = await jsql.pool.query(
-      `select purpose, status, cost from "${jdb.schema}".runs where workflow = 'cap.web.fetch' order by started_at`,
-    )
-    expect(rows.map((r) => [r.purpose, r.status, Number(r.cost)])).toEqual([
+    // A run's cost is rolled up after the call returns: wait for it rather than read the row at that instant.
+    const read = async () =>
+      (
+        await jsql.pool.query(
+          `select purpose, status, cost from "${jdb.schema}".runs where workflow = 'cap.web.fetch' order by started_at`,
+        )
+      ).rows.map((r) => [r.purpose, r.status, Number(r.cost)])
+    await until(async () => {
+      const rows = await read()
+      return rows.length === 2 && rows.every((r) => r[2] === 0.002)
+    }, 'both runs priced')
+    expect(await read()).toEqual([
       ['eval', 'done', 0.002],
       ['drift', 'done', 0.002],
     ])
