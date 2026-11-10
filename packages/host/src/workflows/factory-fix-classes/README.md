@@ -11,7 +11,7 @@ echo '{"repo":"example-app","classes":[{"key":"logic","meaning":"…"},{"key":"o
 | | |
 |-|-|
 | Input (stdin JSON) | `{repo, classes[{key, meaning}], commits[{sha, subject, scope\|null, body, files[]}]}`. 1 to 32 classes (unique keys, identifiers), 1 to 40 commits (unique shas), `body` at most 800 characters, `files` at most 20 paths. `subject`, `scope`, `body` and `files` are untrusted. The CLI reads it as the workflow's one `request` property, so the HTTP body is `{"request": {…}}` |
-| Output | the run envelope's `output`: `{answers: [{sha, class, reason}]}`; exactly one answer per input sha, `class` one of the input `classes[].key`, `reason` one sentence on one line (at most 300) |
+| Output | the run envelope's `output`: `{answers: [{sha, class, reason}]}`; exactly one answer per input sha, `class` one of the input `classes[].key`, `reason` one sentence on one line (at most 240, the factory's parser; a longer one from the model is clipped at a word boundary with `…`, never re-asked) |
 | Shape | one journaled step (`sort`), one tool-free call to the internal `factory.fixclasses` capability |
 | Fixture | `packages/host/test/fixtures/software-factory-fix-classes.json` (one request, one valid answer); software-factory mirrors it at `packages/contract/fixtures/fix-classes.json` |
 | Pending | exit 10 like every workflow (`agw run wait <runId>`) |

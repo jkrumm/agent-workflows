@@ -4,7 +4,7 @@ import type { HostRegistry } from '../index.ts'
 import { FactoryFixClassesInput, FactoryFixClassesOutput } from './schema.ts'
 
 const FACTORY_FIX_CLASSES_WORKFLOW_ID = 'factory-fix-classes'
-const FACTORY_FIX_CLASSES_VERSION = '2026-11-08.1'
+const FACTORY_FIX_CLASSES_VERSION = '2026-11-10.1'
 
 /** The one capability the workflow calls; any registry that has `factory.fixclasses` fits. */
 export type FixClassesCaller = Pick<HostRegistry, 'call'>

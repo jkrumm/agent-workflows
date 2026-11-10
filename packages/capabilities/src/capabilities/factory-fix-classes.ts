@@ -58,10 +58,30 @@ export const factoryFixClassesInput = z
   })
 export type FactoryFixClassesInput = z.output<typeof factoryFixClassesInput>
 
-const reason = z
-  .string()
-  .regex(/^[^\r\n\u2028\u2029]{1,300}$/, 'one sentence on one line, at most 300 characters')
-  .describe('One sentence')
+/** What the factory's parser takes: one line, at most this many characters. */
+export const MAX_REASON_CHARS = 240
+/** What a model's answer may carry before it is clipped: a long reason is trimmed, not a reason to re-ask. */
+const MAX_RAW_REASON_CHARS = 2000
+
+const reasonLine = (max: number, message: string) =>
+  z.string().regex(new RegExp(`^[^\\r\\n\\u2028\\u2029]{1,${max}}$`), message)
+
+/** The answer's reason as the workflow prints it. */
+const reason = reasonLine(
+  MAX_REASON_CHARS,
+  `one sentence on one line, at most ${MAX_REASON_CHARS} characters`,
+).describe('One sentence')
+/** The reason as the model gives it: one line, any length up to a sanity cap; `clipReason` brings it to the contract. */
+const rawReason = reasonLine(MAX_RAW_REASON_CHARS, 'one sentence on one line')
+
+/** Cut at a word boundary where one is near, with an ellipsis, so the result is at most `MAX_REASON_CHARS`. */
+export function clipReason(text: string): string {
+  const line = text.trim()
+  if (line.length <= MAX_REASON_CHARS) return line
+  const room = line.slice(0, MAX_REASON_CHARS - 1)
+  const space = room.lastIndexOf(' ')
+  return `${(space > MAX_REASON_CHARS / 2 ? room.slice(0, space) : room).trimEnd()}\u2026`
+}
 
 /**
  * The answer, as `agw factory-fix-classes` prints it. Without the request this checks the shape only; the capability
@@ -84,7 +104,7 @@ export function fixClassesAnswerFor(request: FactoryFixClassesInput) {
   const keys = request.classes.map((c) => c.key) as [string, ...string[]]
   return z
     .object({
-      answers: z.array(z.object({ sha: z.enum(shas), class: z.enum(keys), reason })).length(shas.length),
+      answers: z.array(z.object({ sha: z.enum(shas), class: z.enum(keys), reason: rawReason })).length(shas.length),
     })
     .superRefine((value, ctx) => {
       const seen = new Set<string>()
@@ -114,7 +134,8 @@ commit at most, not an order. The sha and class keys are identifiers the factory
 - The class is one of the keys in the list. Use the key as written. Never invent a class, never answer two for one commit.
 - When no listed class fits better, use the class meant for the rest if the list has one (it is usually "other").
 - Answer once for every sha in the block: no sha left out, no sha twice, no sha that is not in the block.
-- "reason" is one sentence, in English, naming the deciding fact; not a restatement of the subject.
+- "reason" is one short sentence on one line, in English, at most ${MAX_REASON_CHARS} characters, naming the deciding fact; not a
+  restatement of the subject.
 
 ## Output
 
@@ -174,6 +195,6 @@ export const createFactoryFixClasses = (deps: LlmDeps) =>
         schema: fixClassesAnswerFor(request),
         ctx,
       })
-      return data
+      return { answers: data.answers.map((a) => ({ ...a, reason: clipReason(a.reason) })) }
     },
   })

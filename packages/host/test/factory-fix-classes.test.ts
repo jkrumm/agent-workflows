@@ -104,6 +104,25 @@ describe('a request that breaks the contract is a 400', () => {
   })
 })
 
+describe('a long reason is clipped to the factory contract, not re-asked', () => {
+  test('a 600-character reason comes back at most 240 characters on one line, with one model call', async () => {
+    const before = t.iu.requests.length
+    const long = `${'the deciding fact is '.repeat(30)}end`
+    answers(withAnswers([{ ...first, reason: long }, second]))
+    try {
+      const { body } = await run()
+      const out = (body.output as typeof output).answers
+      expect(out[0]!.reason.length).toBeLessThanOrEqual(240)
+      expect(out[0]!.reason.endsWith('…')).toBe(true)
+      expect(long.startsWith(out[0]!.reason.slice(0, -1))).toBe(true)
+      expect(out[1]).toEqual(second)
+      expect(t.iu.requests.length - before).toBe(1)
+    } finally {
+      answers(output)
+    }
+  })
+})
+
 describe('an answer that does not fit the request fails the run, nothing is repaired', () => {
   const failsWith = async (answer: unknown) => {
     answers(answer)
