@@ -101,3 +101,26 @@ agw eval run factory-ask --yes --arm hard.json          # a patch of model, effo
 
 After this change the table's route is `hard`, so the unarmed run reads as the chosen route; arm `FAST` back with
 `{ "routes": { "factory.ask": { "model": "claude-haiku-5-5", "effort": "none" } } }` to compare.
+
+## Follow-up: the prompt rule for a default nothing can apply (Issue 742)
+
+The Cannot-decide case above is a prompt change, measured on the route as chosen (Sonnet medium). The rule, in the
+prompt's declared-default section: a default or option the facts show cannot be applied is never taken (verdict `owner`),
+and only two written signs show it: the facts say this same answer was recorded but not applied, or the option skips,
+waives or closes a check that fails for a cause the facts reserve to the owner.
+
+Three runs each (`--args {"rep":n}`), the same 34 cases, paired against the `hard` arm above by rep:
+
+| Score | `hard`, before | after the rule |
+|-|-|-|
+| Pass | 84 % | 84 % (28, 30, 30 of 34 across the three paired runs: 85, 82, 88 %) |
+| `noInapplicable` (6) | 67 % | 100 % |
+| `factsOverDefault` (5) | 80 % | 100 % |
+| `ownerKept` (16) | 73 % | 77 % |
+| `answered` (15) | 93 % | 91 % (13 to 14 of 15; `door-448` flaps) |
+
+`fpp-350-b` and `linewatch-367` both pass in the final runs. Two earlier wordings failed the check and were not kept: a
+third sign ("the facts name no actor") and "the same failure came back after it" turned the steward's repeated-stall holds
+(`steward-652-45`, `-70`) and `door-448` into `owner` three times of three; a closing line "holding is applicable"
+took the default on `legacy-app-record`, an action only the owner can perform. Still failing in every run, unchanged by
+the rule: `weatherorb-697`, `legacy-slack-off`, `legacy-admin-merge-allow`. Limits as above: one case is 3 points.
