@@ -5,6 +5,7 @@ import { type Anchoring, anchorFindings, anchorKey } from './anchor.ts'
 import type { ReviewContext } from './context.ts'
 import type { Finding, Job, NewFinding } from './ledger.ts'
 import { removeWorktree } from './prepare.ts'
+import type { FileChange } from './route.ts'
 import {
   type OutputFindingValue,
   type ReplyFindingValue,
@@ -59,10 +60,16 @@ export function summarize(findings: { tag: string }[]): string {
   return parts.length === 0 ? 'Nothing needs fixing.' : `${parts.join(', ')}.`
 }
 
-function filesProblem(expected: string[], echoed: string[]): string | null {
+/** A binary file has no diff lines to read: the reply may list it or leave it out. */
+function binaryPaths(route: Job['route']): Set<string> {
+  const changes = Array.isArray(route.changes) ? (route.changes as Partial<FileChange>[]) : []
+  return new Set(changes.flatMap((c) => (c.binary && c.path ? [c.path] : [])))
+}
+
+function filesProblem(expected: string[], echoed: string[], optional: Set<string>): string | null {
   const want = new Set(expected)
   const got = new Set(echoed)
-  const missing = [...want].filter((p) => !got.has(p))
+  const missing = [...want].filter((p) => !got.has(p) && !optional.has(p))
   const extra = [...got].filter((p) => !want.has(p))
   if (missing.length === 0 && extra.length === 0) return null
   return [
@@ -90,7 +97,7 @@ export async function submit(
   const stored = refuseState(known, input.attempt)
   if (stored) return stored
   const reply = parseReply(input.reply)
-  const problem = filesProblem(known.files, reply.files)
+  const problem = filesProblem(known.files, reply.files, binaryPaths(known.route))
   if (problem) throw new ReviewError(problem)
 
   const anchoring = await anchorFindings({ worktree: known.worktree, jobDir: known.jobDir, findings: reply.findings })
