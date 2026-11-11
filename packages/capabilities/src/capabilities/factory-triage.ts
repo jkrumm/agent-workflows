@@ -6,7 +6,7 @@ import { endOfData, fenceNonce, fencedBlock, fencePreamble, neutralizeFenceMarke
 
 // The seat behind `factory-triage`: software-factory's triage loop asks it two things when deterministic matching is
 // unsure. `amend`: does a signal belong to an open Issue? `settle`: which open Issues must an Issue wait for (its `after`
-// edges), and what kind and size is it. The factory never calls a model (SF2). Titles and texts are untrusted data; the
+// edges), and what kind and size is it, and does it owe a Spec first. The factory never calls a model (SF2). Titles and texts are untrusted data; the
 // candidates are the only Issues the answer may name, and the guard refuses any other.
 
 export const TRIAGE_MODES = ['amend', 'settle'] as const
@@ -83,6 +83,11 @@ export const factoryTriageOutput = z.object({
   after: z.array(identifier(64)).max(10).describe('settle mode: the open Issues the Issue must wait for'),
   kind: z.enum(TRIAGE_KINDS).nullable().describe('settle mode: the kind, when the shown one looks wrong; else null'),
   size: z.enum(TRIAGE_SIZES).nullable().describe('settle mode: a rough size, or null'),
+  checkpoint: z
+    .literal('spec')
+    .nullable()
+    .default(null)
+    .describe('settle mode: "spec" when the Issue owes a one-page Spec before it builds; else null'),
   reason: oneLine.describe('One line: the deciding fact'),
 })
 export type FactoryTriageOutput = z.output<typeof factoryTriageOutput>
@@ -93,13 +98,14 @@ const none = (reason: string): FactoryTriageOutput => ({
   after: [],
   kind: null,
   size: null,
+  checkpoint: null,
   reason: reason.slice(0, 240).replace(/[\r\n\u2028\u2029]+/g, ' ') || 'unavailable',
 })
 export { none as triageNone }
 
 /**
  * The code-side guard, applied by the workflow after the step: the answer names only Issues it was shown, only the field
- * of its mode, never the Issue itself and no Issue twice; `amend` and `settled` are never both set. Anything else is the
+ * of its mode (`checkpoint` is settle-only, like `kind` and `size`), never the Issue itself and no Issue twice; `amend` and `settled` are never both set. Anything else is the
  * empty answer (file anew, no edges): fails closed, never rewrites an answer.
  */
 export function guardTriage(answer: FactoryTriageOutput, input: FactoryTriageInput): FactoryTriageOutput {
@@ -110,7 +116,7 @@ export function guardTriage(answer: FactoryTriageOutput, input: FactoryTriageInp
     if (answer.settled !== null && !input.settled.some((s) => s.id === answer.settled))
       return none('guard: the settled Issue was not one of those shown')
     if (answer.amend !== null && answer.settled !== null) return none('guard: an answer amends or settles, not both')
-    return { ...answer, kind: null, size: null }
+    return { ...answer, kind: null, size: null, checkpoint: null }
   }
   if (answer.settled !== null) return none('guard: a settle answer settles nothing')
   if (answer.amend !== null) return none('guard: a settle answer amends nothing')
@@ -138,7 +144,7 @@ a reminder to that Issue), already settled by a recently closed Issue, or someth
   an alert for a subject it closed as a false alarm or fixed. A regression, a new symptom or a changed fact is NOT settled.
 - null in both: it is new work, or you are not sure. A duplicate costs a note; a lost request costs the work, so when
   unsure, null. Never set both amend and settled.
-Set "after" to [], "kind" and "size" to null.
+Set "after" to [], "kind", "size" and "checkpoint" to null.
 
 ## Mode settle
 
@@ -148,13 +154,18 @@ An Issue was just filed and must be chained before it is queued. Name the open I
   Most Issues wait for nothing: [] is the common, correct answer. Never more than three.
 - kind: only when the shown kind is clearly wrong (a feature that is a bug); else null.
 - size: small (an hour), medium (a session), large (several sessions); null when unclear.
+- checkpoint: "spec" only when the Issue is, or clearly will be, one of: a new public surface (an API route, a CLI verb, a
+  contract or schema others call or read); a data model or a migration that changes meaning; a dependency of weight; an
+  architecture or look-and-feel choice that later Issues build on; a UI screen the owner has not seen. Its lead then owes a
+  one-page Spec before it builds. null is the common answer (about 0.3 per 100 Issues); a bug fix, a chore, a docs change, or a
+  feature inside an existing surface is null. When unsure, null.
 Set "amend" and "settled" to null.
 
 ## Output
 
 Your entire final message is a single JSON object (optionally in one \`\`\`json fence), no text before or after:
 
-{"amend": null | "<issue id>", "settled": null | "<closed issue id>", "after": ["<issue id>"], "kind": null | "feature" | "bug" | "chore" | "docs" | "incident", "size": null | "small" | "medium" | "large", "reason": "one line"}`
+{"amend": null | "<issue id>", "settled": null | "<closed issue id>", "after": ["<issue id>"], "kind": null | "feature" | "bug" | "chore" | "docs" | "incident", "size": null | "small" | "medium" | "large", "checkpoint": null | "spec", "reason": "one line"}`
 
 export function buildFactoryTriagePrompt(input: FactoryTriageInput, nonce: string): string {
   const safe = neutralizeFenceMarkers

@@ -43,7 +43,7 @@ const run = async (request: Record<string, unknown>) => {
   )
 }
 const answers = (answer: unknown) => t.iu.on('messages', () => messageResponse(JSON.stringify(answer), tokens))
-const none = { amend: null, settled: null, after: [], kind: null, size: null }
+const none = { amend: null, settled: null, after: [], kind: null, size: null, checkpoint: null }
 
 describe('factory-triage workflow', () => {
   test('the module is registered under the workflow id', () => {
@@ -53,7 +53,7 @@ describe('factory-triage workflow', () => {
   test('amend: the fixture answer passes through, and the prompt lists the open Issues', async () => {
     const { status, body } = await run(amendInput)
     expect(status).toBe(200)
-    expect(body.output).toEqual(amendOutput)
+    expect(body.output).toEqual({ ...amendOutput, checkpoint: null })
     const sent = t.iu.requests.filter((r) =>
       String((r.body.messages as Body[])[0]?.content).includes('still wrong for coupons'),
     )
@@ -69,7 +69,30 @@ describe('factory-triage workflow', () => {
   test('settle: the fixture answer passes through', async () => {
     answers(settleOutput)
     const { body } = await run(settleInput)
-    expect(body.output).toEqual(settleOutput)
+    expect(body.output).toEqual({ ...settleOutput, checkpoint: null })
+    answers(amendOutput)
+  })
+
+  test('settle: a spec checkpoint passes through, and the prompt carries the rule', async () => {
+    answers({ ...settleOutput, after: [], checkpoint: 'spec' })
+    const { body } = await run(settleInput)
+    expect(body.output).toMatchObject({ checkpoint: 'spec' })
+    const prompt = promptOf(t.iu.requests.at(-1))
+    expect(prompt).toContain('checkpoint: "spec" only when')
+    expect(prompt).toContain('"checkpoint": null | "spec"')
+    answers(amendOutput)
+  })
+
+  test('amend: a checkpoint is forced to null, like kind and size', async () => {
+    answers({ ...amendOutput, kind: 'bug', size: 'large', checkpoint: 'spec' })
+    const { body } = await run(amendInput)
+    expect(body.output).toMatchObject({ amend: 'issue_12', kind: null, size: null, checkpoint: null })
+    answers(amendOutput)
+  })
+
+  test('a checkpoint other than spec is refused as an unusable answer', async () => {
+    answers({ ...settleOutput, checkpoint: 'concept' })
+    expect((await run(settleInput)).body.output).toMatchObject(none)
     answers(amendOutput)
   })
 
@@ -161,7 +184,7 @@ const diskInput = {
     { id: 'issue_327', title: 'Rotate the host logs', outcome: 'done', reason: null },
   ],
 }
-const quiet = { after: [], kind: null, size: null }
+const quiet = { after: [], kind: null, size: null, checkpoint: null }
 
 describe('amend: restated open Issue and settled closed Issue', () => {
   test('a request restating an open Issue in other words is amended into it', async () => {
