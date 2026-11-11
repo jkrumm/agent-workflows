@@ -22,7 +22,7 @@ CLI exits non-zero naming it.
 | `agw review dispose <jobId> <findingId> fixed\|wrong\|intentional\|irrelevant\|open [--reason]` | The answer to a finding of the job's thread; idempotent |
 | `agw review status [<jobId>] [--cwd]` | A job (a running review is `prepared`) with its `thread` id and `threadKey` (absent on jobs older than the key) and its thread's findings, or the 10 newest jobs of the repo at `--cwd` |
 | `agw review route --cwd --base --head [--min]` | `routeRange` alone; no ledger (HTTP `/review/route`) |
-| `agw review covered --cwd --range <a>..<b>` | Coverage of each first-parent commit; exit 0 either way, read `covered` |
+| `agw review covered --cwd --range <a>..<b>` | Coverage of each first-parent commit; exit 0 either way, read `covered` and `state` (`covered`, `uncovered`, `no-review`); each uncovered commit carries a `reason` (below) |
 | `agw review stats [--since <iso>] [--repo <id>] [--by tier\|rule\|prompt\|repo] [--bucket week]` | The ledger's quality numbers (below); read-only, JSON, no `--cwd` (HTTP `/review/stats`) |
 
 `prepare`, `cancel`, `submit` and `dispose` change state, so the CLI asks for `--commit` (non-TTY callers must pass it).
@@ -175,6 +175,23 @@ thread's max tier up to `J.round` ≥ required (round 2+ routes only its fix dif
 open`; `nit` and `pre-existing` never block). A fixed, wrong, intentional or irrelevant finding is settled and covers
 again; a `fixed` one re-reported is reopened by submit. A commit reviewed at its tier but blocked this way is uncovered
 with `reason: 'open-important'` and the blocking `findings` ids.
+
+**Why a commit is uncovered.** Every uncovered commit that needs a review carries a `reason`, and the answer a `state`, so a
+ship can tell a review that was never recorded from one that does not match. A *related* job is one of the last 30 days
+whose `base` ≤ `c^` and whose files include one of the commit's. `no-review`: no related job. `tier-too-low`: related
+jobs, none at the tier `c` needs (`related` names the newest three). `stale`: a related job at the tier exists, but its
+head is neither `c`'s tree, nor a descendant of `c`, nor the same patch, nor `c` plus changes that route none
+(`related` as above). `open-important`: above. `state` is `covered`, `no-review` (every uncovered commit is
+`no-review`) or `uncovered`. A range `covered` could not read is not an answer: the call fails (non-zero exit, a
+message naming the git or ledger read), never `covered: false`.
+
+**Cost.** `covered` is ledger and git only, and its price is git processes (the host runs it at load 30). One `git log`
+yields every commit's parent, tree and subject; one `git rev-list --parents` yields the commit graph of the range's head
+and the jobs' heads, from which every ancestry and "does the head exist" test is answered in process (generation numbers
+cut the walk); REVIEW.md of a revision is read once. The router runs once per commit, four commits at a time. The tests
+run cheapest first, each over every eligible job before the next (tree or history match; patch-id; none-tier delta), so a
+covered commit costs no git process per job, and the git-backed ones run only for a job whose files include one of the
+commit's. Measured on the live ledger, 8 commits at load 14: 41 s before, 2 s after, the same verdicts.
 
 **Patch-id match.** A lead reviews `--scope uncommitted`, fixes, rebases on a master that moved and squash-merges, so the
 merged commit's tree is never the reviewed tree. The fourth test covers that: `git patch-id --stable` of `c^..c` equals
