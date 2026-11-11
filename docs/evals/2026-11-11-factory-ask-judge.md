@@ -113,7 +113,7 @@ Three runs each (`--args {"rep":n}`), the same 34 cases, paired against the `har
 
 | Score | `hard`, before | after the rule |
 |-|-|-|
-| Pass | 84 % | 84 % (28, 30, 30 of 34 across the three paired runs: 85, 82, 88 %) |
+| Pass | 84 % | 85 % (29, 28, 30 of 34 per run) |
 | `noInapplicable` (6) | 67 % | 100 % |
 | `factsOverDefault` (5) | 80 % | 100 % |
 | `ownerKept` (16) | 73 % | 77 % |
