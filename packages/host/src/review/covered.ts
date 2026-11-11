@@ -62,10 +62,10 @@ export async function covered(ctx: ReviewContext, input: { cwd: string; range: s
     return hit
   }
   const samePatch = async (job: Job, parent: string, sha: string): Promise<boolean> => {
-    if (!(await exists(job.head))) return false
-    const wanted = await once(jobPatch, job.id, () => patchId(git, root, job.diffBase, job.head))
-    if (!wanted) return false
-    return wanted === (await once(commitPatch, sha, () => patchId(git, root, parent, sha)))
+    const mine = await once(commitPatch, sha, () => patchId(git, root, parent, sha))
+    if (!mine) return false // an empty or unreadable diff matches nothing, and no job's patch needs computing
+    // a job head that no longer exists fails the diff → null → no match
+    return mine === (await once(jobPatch, job.id, () => patchId(git, root, job.diffBase, job.head)))
   }
 
   const commits: CoveredOutputValue['commits'] = []
