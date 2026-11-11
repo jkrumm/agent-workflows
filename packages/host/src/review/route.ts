@@ -126,6 +126,8 @@ export interface FileChange {
   path: string
   added: number
   removed: number
+  /** numstat prints `-` for both counts: the diff has no lines to read (an image, an archive). */
+  binary?: true
 }
 export interface RouteFacts {
   files: number
@@ -243,6 +245,7 @@ function parseNumstat(out: string): FileChange[] {
         path: rest.join('\t'),
         added: added === '-' ? 0 : Number(added),
         removed: removed === '-' ? 0 : Number(removed),
+        ...(added === '-' && removed === '-' ? { binary: true as const } : {}),
       }
     })
 }

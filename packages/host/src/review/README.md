@@ -153,7 +153,7 @@ id with `stillOpen` and E back to `open` in the same transaction. Two reply find
 a new finding; a `stillOpen` with an unknown id matches by key or is new. Nits past
 REVIEW.md `nits` are dropped (counted). Code decides `outcome` (`clean` without important, `needs-human` from round 3,
 else `actionable`), `summary` (counts only), `stepBack` (the reply's, or a fixed default at round 3 with important left)
-and `tier` (the job's). The echoed `files` must equal the stat paths (the empty-diff guard); nothing is written otherwise.
+and `tier` (the job's). The echoed `files` must equal the stat paths (the empty-diff guard), except that a binary file (numstat `-	-`) may be listed or left out; nothing is written otherwise.
 
 ## Quota reading and deep cap
 

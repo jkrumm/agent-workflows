@@ -241,6 +241,27 @@ describe('submit', () => {
     expect(existsSync(job.worktree)).toBe(true)
   })
 
+  test('a binary file of the range may be listed in the reply or left out; a text file may not', async () => {
+    const job = async () => {
+      write(root, 'src/a.ts', lines(3 + ++n))
+      writeFileSync(join(root, 'logo.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2, 3]))
+      return ready(s.prepare({ cwd: root, thread: `binary-${crypto.randomUUID()}` }))
+    }
+    const first = await job()
+    expect(first.files).toContain('logo.png')
+    const listed = fakeReviewer(first.jobDir)
+    expect(JSON.parse(listed.slice(listed.indexOf('{'), listed.lastIndexOf('}') + 1)).files).toContain('logo.png')
+    await s.submit({ jobId: first.jobId, attempt: 1, reply: listed })
+
+    const second = await job()
+    const left = fakeReviewer(second.jobDir, [], { files: (second.files ?? []).filter((f) => f !== 'logo.png') })
+    expect(await s.submit({ jobId: second.jobId, attempt: 1, reply: left })).toMatchObject({ outcome: 'clean' })
+
+    const third = await job()
+    const text = fakeReviewer(third.jobDir, [], { files: ['logo.png'] })
+    await rejects(s.submit({ jobId: third.jobId, attempt: 1, reply: text }), /missing: src\/a\.ts/)
+  })
+
   test('code computes summary, outcome and tier; nits capped by REVIEW.md; same attempt idempotent, another refused', async () => {
     const job = await prepareChange()
     const reply = fakeReviewer(job.jobDir, [
