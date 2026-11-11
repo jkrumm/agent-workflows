@@ -32,6 +32,10 @@
     <string>__DATA_DIR__/door-tokens</string>
   </dict>
 
+  <!-- Without it launchd runs the host, and every git it spawns, at scheduling priority 20 (a login shell runs at 31): at
+       load 40 the factory's `agw review covered` took 15-40 s through the host and 2 s from a shell. -->
+  <key>ProcessType</key>
+  <string>Interactive</string>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
