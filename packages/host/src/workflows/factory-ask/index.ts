@@ -2,6 +2,7 @@ import { askOfJudge, factoryAskInput, guardAsk, guardJudge, isJudgeInput } from 
 import { Cancelled, defineWorkflow, InfraError, StepFailed } from '@agent-workflows/runtime'
 import type { HostWorkflow } from '../../operations.ts'
 import type { HostRegistry } from '../index.ts'
+import { factoryAskScorer } from './scorer.ts'
 import { FactoryAskInput, FactoryAskOutput, type FactoryAskOutputValue } from './schema.ts'
 
 const FACTORY_ASK_WORKFLOW_ID = 'factory-ask'
@@ -29,6 +30,7 @@ export function createFactoryAsk(deps: { registry: AskCaller }): HostWorkflow {
     version: FACTORY_ASK_VERSION,
     input: FactoryAskInput,
     output: FactoryAskOutput,
+    scorer: factoryAskScorer,
     async run(ctx, { ask: given }) {
       // The Decision is asked as today's ask (its options are the labels); the guard for what an ask cannot say follows.
       const ask = isJudgeInput(given) ? askOfJudge(given) : given

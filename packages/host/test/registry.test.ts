@@ -77,6 +77,7 @@ describe('workflow discovery', () => {
       'check',
       'diagram',
       'digest',
+      'factory-ask',
       'factory-classify',
       'factory-errand',
       'factory-screen',

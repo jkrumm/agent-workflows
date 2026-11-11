@@ -42,10 +42,15 @@ echo '{"question":"…","options":["…","…"],"default":"…","facts":"…","p
 ## Route
 
 `factory.ask` (`packages/routes/src/table/factory.ts`): the `FAST` tier, as `factory.classify`; the model lives only in the tier.
-software-factory's architecture names Haiku high (`EASY`) for the Judge; that is a one-line change (`...EASY.call`), left
-unmade because nothing here measures that it helps (no eval set, by decision).
+software-factory's architecture names Haiku high (`EASY`) for the Judge; moving it is a one-line change (`...EASY.call`),
+made only on the measurement of the eval below (`agw eval run factory-ask --arm <file>`).
 
 ## Eval
 
-None, by the owner's decision: the workflow has no eval set, no scorer and no suite. It learns from real asks through the run
-journal (every run keeps its input and verdict); no recording code was added for it.
+`agw eval run factory-ask [--arm <file>] [--yes]` replays `packages/eval/factory-ask/cases.jsonl` (34 cases): real Decisions of the
+factory's database, text as the lead wrote it, scrubbed of private names and hosts (the repo is public), plus a few written for
+the set. The reference is the answer that held (the owner's where he answered, otherwise what the Issue's outcome showed),
+never the Judge's own; each case's `basis` says which. The scorer is deterministic (`packages/eval/src/factory-ask.ts`,
+`scorer.ts`): `ownerKept` (what only the owner can answer reaches him), `noInapplicable` (no option nothing could apply),
+`factsOverDefault` (no fall back to the declared default when the facts rule it out), and the guards against an always-owner
+Judge, `answered`, `answerHeld`, `eitherOk`. Arms and the report: `docs/evals/`.

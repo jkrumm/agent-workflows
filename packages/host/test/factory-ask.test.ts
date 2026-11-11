@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { messageResponse, startFakeGateway } from '@agent-workflows/testing/gateway'
 import { createFactoryAsk } from '../src/workflows/factory-ask/index.ts'
 import askModule from '../src/workflows/factory-ask/module.ts'
+import { factoryAskScorer } from '../src/workflows/factory-ask/scorer.ts'
 import { type Body, startTestHost, type TestHost } from './support.ts'
 
 const ask = {
@@ -203,5 +204,36 @@ describe('fail closed', () => {
     } finally {
       broken = null
     }
+  })
+})
+
+describe('factory-ask eval suite', () => {
+  test('the module serves the committed cases: each input is a Decision the seat takes whole, and the scorer reads a reference', async () => {
+    const { askOfJudge, factoryAskInput, factoryJudgeInput } = await import('@agent-workflows/capabilities')
+    const { FACTORY_ASK_CASES_PATH, FactoryAskReference, PlainCase, readCases } = await import('@agent-workflows/eval')
+    const cases = readCases(FACTORY_ASK_CASES_PATH, PlainCase)
+    const suite = askModule.suite as { read(path: string): unknown[] }
+    expect(suite.read('').length).toBe(cases.length)
+    for (const c of cases) {
+      const judge = factoryJudgeInput.parse((c.input as { ask: unknown }).ask)
+      expect(factoryAskInput.safeParse(askOfJudge(judge)).success, c.id).toBe(true)
+      expect(FactoryAskReference.safeParse(c.reference).success, c.id).toBe(true)
+    }
+  })
+
+  test('the scorer reads the workflow output against the declared default of the Decision', async () => {
+    const reference = {
+      verdict: 'answer',
+      answer: 'B',
+      defaultContradicted: true,
+      basis: 'synthetic',
+      note: 'n',
+    } as const
+    const input = { ask: { noAnswer: { default: 'A' } } }
+    const verdict = (answer: string) => ({ verdict: 'answer', answer, reason: 'r', source: 'default' })
+    expect((await factoryAskScorer.score(input, verdict('A'), { reference } as never)).pass).toBe(false)
+    expect((await factoryAskScorer.score(input, verdict('B'), { reference } as never)).pass).toBe(true)
+    expect((await factoryAskScorer.score(input, null, { reference } as never)).scores.valid).toBe(0)
+    expect(await factoryAskScorer.score(input, verdict('B'), {} as never)).toEqual({ scores: { valid: 1 }, pass: true })
   })
 })

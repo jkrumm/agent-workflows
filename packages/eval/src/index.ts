@@ -68,3 +68,18 @@ export {
   seededShuffle,
   splitOf,
 } from './mine/index.ts'
+export {
+  type AskMetric,
+  type AskScore,
+  type AskVerdict,
+  ASK_METRICS,
+  FACTORY_ASK_CASES_PATH,
+  FACTORY_ASK_SCORER_VERSION,
+  FactoryAskBasis,
+  FactoryAskReference,
+  GATE_METRICS,
+  GUARD_METRICS,
+  type MetricRate,
+  scoreFactoryAsk,
+  summarizeFactoryAsk,
+} from './factory-ask.ts'

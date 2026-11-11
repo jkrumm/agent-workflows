@@ -18,6 +18,7 @@ A module's suite reads its cases from `$AGW_EVAL_DIR/<workflow>/cases.jsonl` unl
 | Workflow | Cases | Scorer measures |
 |-|-|-|
 | `digest`, `factory-classify` | committed | see their READMEs |
+| `factory-ask` | 34, committed in `packages/eval/factory-ask/` (real factory Decisions, scrubbed) | owner kept, no option nothing can apply, no fall back to the default when the facts decide; guards against escalating everything (`factory-ask/README.md` §Eval) |
 | `narrative` | 6, a `fixture` of commits, `polish: false` | `changed`, shape, must-mention terms, no removed mechanism as current, no hash or canary, length band, dated entries |
 | `prose-polish` | 8 drafts with planted lint issues | lint recomputed (honest, not worse, fixed), planted phrases gone, must-keep facts, length band |
 | `overview` | 6 fleets as a `fixture` | every agent once, answered, recommendation match |

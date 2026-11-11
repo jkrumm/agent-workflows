@@ -7,6 +7,11 @@ cases on, and the review ground truth (`gt*.ts`, `mine/`) below. The side-by-sid
 `ReviewCase` reader and the 138 legacy review cases went with review v1: the review is v4 host operations now, which
 `agw eval run` cannot replay (it is no workflow). The ground truth's replay arm (`agw eval recall`) was removed with the hidden review transport.
 
+`factory-ask` (`src/factory-ask.ts`, cases in `factory-ask/cases.jsonl`) is the eval of the factory's Judge: the case and
+reference schemas and the pure scorer behind `agw eval run factory-ask`. Its cases are the one set committed here: real
+factory Decisions scrubbed of private names, hosts and ids (the factory's questions name no code), guarded by
+`test/factory-ask.test.ts`.
+
 Cases and reports hold private code and findings, so they never enter this repo: they live under `$AGW_EVAL_DIR`
 (default `~/.local/share/agent-workflows/eval`). Only aggregate numbers are published.
 

@@ -6,7 +6,7 @@ const routes = {
   // The cheapest tier that passes the `factory-classify` eval (README §Route); the model is chosen once, in the tier.
   'factory.classify': { wire: 'anthropic', ...FAST.call },
   // Software-factory's check on a lead's `factory issue ask`: the owner's, or answerable from the plan or the declared
-  // default. The cheapest tier, as the classifier; it has no eval set (owner decision).
+  // default. Changed only on the `factory-ask` eval (`agw eval run factory-ask`, packages/eval/factory-ask).
   'factory.ask': { wire: 'anthropic', ...FAST.call },
   // Software-factory's steward: what a stalled Issue needs when the factory's own rules do not say (wake, requeue, or a
   // Decision). Haiku high, as the architecture names for the factory's judging loops; no eval set (owner decision).
