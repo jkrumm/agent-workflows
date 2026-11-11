@@ -448,7 +448,7 @@ describe('fallback', () => {
       rate: terraRate,
     }
     const terraMedium = { ...terraLow, effort: 'medium' }
-    for (const id of ['cheap.classify', 'cheap.title', 'factory.classify', 'factory.ask'] as const) {
+    for (const id of ['cheap.classify', 'cheap.title', 'factory.classify'] as const) {
       expect(resolveRoute(id, {})).toMatchObject({ wire: 'anthropic', model: 'claude-haiku-5-5', effort: 'none' })
       expect(resolveRoute(id, {}).fallback).toMatchObject(luna)
     }
@@ -476,6 +476,7 @@ describe('fallback', () => {
     }
     for (const id of [
       'narrative',
+      'factory.ask',
       'prose.write',
       'podcast.research',
       'podcast.editorial',

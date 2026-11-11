@@ -1,13 +1,14 @@
 import type { RouteEntry } from '../schema.ts'
-import { EASY, FAST } from './_shared.ts'
+import { EASY, FAST, HARD } from './_shared.ts'
 
 const routes = {
   // Software-factory's Classify station: project, kind, class, size, tier and effort of one Issue in one tool-free call.
   // The cheapest tier that passes the `factory-classify` eval (README §Route); the model is chosen once, in the tier.
   'factory.classify': { wire: 'anthropic', ...FAST.call },
   // Software-factory's check on a lead's `factory issue ask`: the owner's, or answerable from the plan or the declared
-  // default. Changed only on the `factory-ask` eval (`agw eval run factory-ask`, packages/eval/factory-ask).
-  'factory.ask': { wire: 'anthropic', ...FAST.call },
+  // default. Sonnet medium, the HARD tier: measured on the `factory-ask` eval (docs/evals/2026-11-11-factory-ask-judge.md), it keeps
+  // more of the owner's questions with the owner than Haiku (none or high); lead-raised Decisions are rare, so the cost is small.
+  'factory.ask': { wire: 'anthropic', ...HARD.call },
   // Software-factory's steward: what a stalled Issue needs when the factory's own rules do not say (wake, requeue, or a
   // Decision). Haiku high, as the architecture names for the factory's judging loops; no eval set (owner decision).
   'factory.steward': { wire: 'anthropic', ...EASY.call },

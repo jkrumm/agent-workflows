@@ -41,9 +41,10 @@ echo '{"question":"…","options":["…","…"],"default":"…","facts":"…","p
 
 ## Route
 
-`factory.ask` (`packages/routes/src/table/factory.ts`): the `FAST` tier, as `factory.classify`; the model lives only in the tier.
-software-factory's architecture names Haiku high (`EASY`) for the Judge; moving it is a one-line change (`...EASY.call`),
-made only on the measurement of the eval below (`agw eval run factory-ask --arm <file>`).
+`factory.ask` (`packages/routes/src/table/factory.ts`): the `HARD` tier, Sonnet 5.5 at effort medium; the model lives only in
+the tier. It ran on `FAST` (Haiku, effort none) until the eval below measured the tiers (`docs/evals/2026-11-11-factory-ask-judge.md`):
+Haiku with effort high scored exactly as Haiku none, Sonnet medium kept 73 % of the owner's questions with the owner against 58 %,
+at about $0.006 a call. Move it again only on a new measurement (`agw eval run factory-ask --arm <file>`).
 
 ## Eval
 
