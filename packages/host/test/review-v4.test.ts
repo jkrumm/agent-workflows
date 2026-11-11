@@ -588,6 +588,90 @@ describe('covered', () => {
     })
   })
 
+  describe('why a commit is uncovered', () => {
+    const base = { 'REVIEW.md': '---\nnone: [docs/**]\n---\n', 'src/a.ts': lines(2), 'src/b.ts': lines(2) }
+
+    test('no review recorded: state no-review, reason no-review', async () => {
+      const s = service()
+      const root = repo(base)
+      const start = git(root, 'rev-parse', 'HEAD')
+      const c1 = commit(root, { 'src/b.ts': lines(3) }, 'never reviewed')
+      const out = await s.covered({ cwd: root, range: `${start}..HEAD` })
+      expect(out).toMatchObject({ covered: false, state: 'no-review', uncovered: [c1] })
+      expect(out.commits[0]).toMatchObject({ reason: 'no-review' })
+      expect(out.commits[0]?.related).toBeUndefined()
+    })
+
+    test('a review of the same files that no longer matches: state uncovered, reason stale, naming the job', async () => {
+      const s = service()
+      const root = repo(base)
+      const start = git(root, 'rev-parse', 'HEAD')
+      write(root, 'src/a.ts', lines(3))
+      const job = await ready(s.prepare({ cwd: root }))
+      await s.submit({ jobId: job.jobId, attempt: 1, reply: fakeReviewer(job.jobDir) })
+      const c1 = commit(root, { 'src/a.ts': `${lines(3)}export const afterReview = 1\n` }, 'edited after review')
+      const out = await s.covered({ cwd: root, range: `${start}..HEAD` })
+      expect(out).toMatchObject({ covered: false, state: 'uncovered', uncovered: [c1] })
+      expect(out.commits[0]).toMatchObject({ reason: 'stale', related: [job.jobId] })
+    })
+
+    test('a review below the tier the commit needs: reason tier-too-low', async () => {
+      const s = service()
+      const root = repo(base)
+      const start = git(root, 'rev-parse', 'HEAD')
+      write(root, 'src/a.ts', lines(3))
+      const job = await ready(s.prepare({ cwd: root }))
+      await s.submit({ jobId: job.jobId, attempt: 1, reply: fakeReviewer(job.jobDir) })
+      git(root, 'checkout', '-q', 'src/a.ts')
+      const c1 = commit(root, { 'src/a.ts': lines(900) }, 'a deep change on the same file')
+      const out = await s.covered({ cwd: root, range: `${start}..HEAD` })
+      expect(out.commits[0]).toMatchObject({ sha: c1, required: 'deep', reason: 'tier-too-low', related: [job.jobId] })
+    })
+
+    test('a covered range says so', async () => {
+      const s = service()
+      const root = repo(base)
+      const start = git(root, 'rev-parse', 'HEAD')
+      write(root, 'src/a.ts', lines(3))
+      const job = await ready(s.prepare({ cwd: root }))
+      await s.submit({ jobId: job.jobId, attempt: 1, reply: fakeReviewer(job.jobDir) })
+      commit(root, {}, 'commit the reviewed tree')
+      expect((await s.covered({ cwd: root, range: `${start}..HEAD` })).state).toBe('covered')
+    })
+  })
+
+  test('a 20-commit range with 15 reviews of the same files costs a bounded number of git processes', async () => {
+    let spawned = 0
+    const counting = createReviewService({
+      pool,
+      schema: db.schema,
+      stateDir,
+      git: (cwd, args) => {
+        spawned++
+        return gitRunner(cwd, args)
+      },
+      env: process.env,
+    })
+    const s = service()
+    const root = repo({ 'REVIEW.md': '---\nnone: [docs/**]\n---\n', 'src/a.ts': lines(2) })
+    const start = git(root, 'rev-parse', 'HEAD')
+    for (let i = 0; i < 15; i++) {
+      write(root, 'src/a.ts', lines(3 + i))
+      const job = await ready(s.prepare({ cwd: root }))
+      await s.submit({ jobId: job.jobId, attempt: 1, reply: fakeReviewer(job.jobDir) })
+      commit(root, {}, `reviewed ${i}`)
+    }
+    for (let i = 0; i < 5; i++) commit(root, { 'src/a.ts': `${lines(18)}export const late${i} = ${i}\n` }, `late ${i}`)
+    spawned = 0
+    const out = await counting.covered({ cwd: root, range: `${start}..HEAD` })
+    expect(out.commits).toHaveLength(20)
+    expect(out.commits.slice(0, 15).every((c) => c.coveredBy !== null)).toBe(true)
+    expect(out.commits.slice(15).every((c) => c.reason === 'stale')).toBe(true)
+    // every job touches the file, the worst case. Before: ~4 processes per (commit, job) pair, 474 here; now the commit
+    // facts and the graph once, the router per commit, and git per pair only for the commits no free test covers
+    expect(spawned).toBeLessThan(300)
+  }, 120_000)
+
   test('route answers the decision alone', async () => {
     const root = repo({ 'src/a.ts': lines(2) })
     commit(root, { 'src/a.ts': lines(3) })

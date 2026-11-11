@@ -321,12 +321,21 @@ export const CoveredOutput = z.object({
       required: TIER,
       rule: z.string(),
       coveredBy: z.string().nullable(),
-      /** Set when a job reviewed the commit at its tier but its thread still has open important findings. */
-      reason: z.literal('open-important').optional(),
+      /**
+       * Why a commit that needs a review has none covering it. `no-review`: no submitted job of the last 30 days touched
+       * its files; `tier-too-low`: reviews touched them, all below the tier it needs; `stale`: a review at its tier
+       * exists, but its head is neither this commit, nor part of its history, nor the same patch; `open-important`:
+       * reviewed at its tier, but the thread still has open important findings (`findings`).
+       */
+      reason: z.enum(['open-important', 'no-review', 'stale', 'tier-too-low']).optional(),
       findings: z.array(z.string()).optional(),
+      /** `stale` and `tier-too-low`: the newest submitted jobs that touched the commit's files (`agw review status <id>`). */
+      related: z.array(z.string()).optional(),
     }),
   ),
   uncovered: z.array(z.string()),
+  /** `covered`; `no-review`: every uncovered commit has no review recorded; `uncovered`: a review exists but does not cover. */
+  state: z.enum(['covered', 'uncovered', 'no-review']),
 })
 export type CoveredOutputValue = z.output<typeof CoveredOutput>
 
