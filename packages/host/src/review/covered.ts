@@ -156,15 +156,25 @@ export async function covered(ctx: ReviewContext, input: { cwd: string; range: s
   const graphOf = memo<Graph>()
   const graph = () => graphOf('graph', () => commitGraph(git, root, tip, [...new Set(candidates.map((j) => j.head))]))
 
-  // The squash-merge of a reviewed change that was rebased: another tree, the same patch. Computed lazily, once per
-  // job and once per commit, and only for a job that touched the commit's files.
+  // A reviewed change that was rebased or replayed: another tree, the same patch. Two shapes land it: a squash-merge (one
+  // commit whose patch is the whole job's) and a rebase-merge (one commit per job commit, every SHA new, each patch
+  // unchanged). Computed lazily, once per job and once per commit, and only for a job that touched the commit's files.
   const jobPatch = memo<string | null>()
   const commitPatch = memo<string | null>()
+  const jobCommitPatches = memo<Set<string>>()
   const samePatch = async (job: Job, parent: string, sha: string): Promise<boolean> => {
     const mine = await commitPatch(sha, () => patchId(git, root, parent, sha))
     if (!mine) return false // an empty or unreadable diff matches nothing, and no job's patch needs computing
     // a job head that no longer exists fails the diff → null → no match
-    return mine === (await jobPatch(job.id, () => patchId(git, root, job.diffBase, job.head)))
+    if (mine === (await jobPatch(job.id, () => patchId(git, root, job.diffBase, job.head)))) return true
+    const each = await jobCommitPatches(job.id, async () => {
+      const listed = await tryGit(git, root, ['rev-list', '--reverse', '--no-merges', `${job.diffBase}..${job.head}`])
+      const commits = listed?.split('\n').filter(Boolean) ?? []
+      // a job commit's parent is `<sha>^`: no merges, so it is the one parent the commit has
+      const ids = await pooled(commits, CONCURRENCY, (c) => commitPatch(c, () => patchId(git, root, `${c}^`, c)))
+      return new Set(ids.filter((id): id is string => id !== null))
+    })
+    return each.has(mine)
   }
 
   const examine = async (fact: CommitFacts): Promise<CoveredOutputValue['commits'][number]> => {

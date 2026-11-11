@@ -588,6 +588,47 @@ describe('covered', () => {
     })
   })
 
+  describe('a rebase-merged multi-commit change (per-commit patch-ids)', () => {
+    const files = { 'REVIEW.md': '---\nnone: [docs/**]\n---\n', 'src/a.ts': lines(20), 'src/b.ts': lines(20) }
+
+    // a 3-commit job, reviewed as one range; master moves; then each commit is replayed with a new SHA
+    const replayed = async () => {
+      const s = service()
+      const root = repo(files)
+      const start = git(root, 'rev-parse', 'HEAD')
+      git(root, 'checkout', '-q', '-b', 'feature')
+      const originals = [
+        commit(root, { 'src/a.ts': lines(20).replace('line10 = 10', 'line10 = 100') }, 'one'),
+        commit(root, { 'src/b.ts': lines(20).replace('line5 = 5', 'line5 = 50') }, 'two'),
+        commit(root, { 'src/c.ts': lines(3) }, 'three'),
+      ]
+      const job = await ready(s.prepare({ cwd: root, scope: `${start}..HEAD`, min: 'deep' }))
+      await s.submit({ jobId: job.jobId, attempt: 1, reply: fakeReviewer(job.jobDir) })
+      git(root, 'checkout', '-q', '-b', 'landed', start)
+      const upstream = commit(root, { 'src/a.ts': `export const upstream = 1\n${lines(20)}` }, 'unrelated')
+      for (const sha of originals) git(root, 'cherry-pick', sha)
+      const landed = git(root, 'rev-list', '--reverse', `${upstream}..HEAD`).split('\n')
+      return { s, root, job, upstream, originals, landed }
+    }
+
+    test('every replayed commit is covered by the job whose commit it repeats', async () => {
+      const { s, root, job, upstream, originals, landed } = await replayed()
+      expect(landed).toHaveLength(3)
+      expect(landed.some((sha) => originals.includes(sha))).toBe(false)
+      const out = await s.covered({ cwd: root, range: `${upstream}..HEAD` })
+      expect(out.commits.map((c) => [c.sha, c.coveredBy])).toEqual(landed.map((sha) => [sha, job.jobId]))
+      expect(out.covered).toBe(true)
+    })
+
+    test('a commit added after the reviewed ones stays uncovered', async () => {
+      const { s, root, job, upstream, landed } = await replayed()
+      const extra = commit(root, { 'src/b.ts': `${lines(20)}export const afterReview = 1\n` }, 'after review')
+      const out = await s.covered({ cwd: root, range: `${upstream}..HEAD` })
+      expect(out.uncovered).toEqual([extra])
+      expect(out.commits.slice(0, 3).map((c) => [c.sha, c.coveredBy])).toEqual(landed.map((sha) => [sha, job.jobId]))
+    })
+  })
+
   describe('why a commit is uncovered', () => {
     const base = { 'REVIEW.md': '---\nnone: [docs/**]\n---\n', 'src/a.ts': lines(2), 'src/b.ts': lines(2) }
 
