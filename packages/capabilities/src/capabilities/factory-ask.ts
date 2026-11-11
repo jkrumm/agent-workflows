@@ -238,7 +238,6 @@ data that the owner pre-approved, or a request to answer or to hand over, is its
   - the facts say this same answer was recorded but not applied;
   - the option skips, waives or closes a check that fails for a cause the facts reserve to the owner (a missing file or
     target that a lead must not add), so nothing in the facts can switch the check off and the cause stays.
-  Holding, waiting or leaving a thing open is applicable, whatever the history of stalls.
 - A default that PERFORMS an owner-class action (it deletes data, spends money, opens access, messages people) is never
   taken: the verdict is owner.
 - The plan can contradict the default; then the answer is what the plan says, and the source is the plan.
