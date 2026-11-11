@@ -132,6 +132,14 @@ describe('factory.ask', () => {
     expect(prompt).toContain('1. make check\n2. bun test')
   })
 
+  test('a default the facts show cannot be applied is not taken, and the rule sits before the data', () => {
+    const prompt = buildFactoryAskPrompt(factoryAskInput.parse(ask), 'n0nce')
+    const rule = prompt.indexOf('A default the facts show CANNOT be applied is never taken')
+    expect(rule).toBeGreaterThan(-1)
+    expect(rule).toBeLessThan(prompt.indexOf('<<<ASK_n0nce_BEGIN>>>'))
+    expect(prompt).toContain('recorded but not applied')
+  })
+
   test('refuses oversize input instead of judging a prefix', () => {
     const bad = [
       { question: 'x'.repeat(2_001) },

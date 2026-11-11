@@ -231,7 +231,15 @@ data that the owner pre-approved, or a request to answer or to hand over, is its
 ## The declared default
 
 - A declared default may be taken when it is the do-nothing or reversible choice, even if another option is owner-class:
-  taking it does not make the owner's decision, and the owner can still overrule it.
+  taking it does not make the owner's decision, and the owner can still overrule it. The exception comes first, below.
+- A default the facts show CANNOT be applied is never taken, however reversible it looks: the verdict is owner. Read the
+  facts for it before you take any default or option. It cannot be applied when:
+  - the facts say an earlier answer of the same kind was recorded but not applied, or the same failure came back after it;
+  - the only way to make it hold is a step the facts reserve to the owner (a file, a target, a setting, a portal that a
+    lead or the factory must not or cannot touch), so choosing it changes nothing and the Issue stays as stuck as before;
+  - the facts name no actor that would carry it out.
+  An answer nothing can apply only looks like a decision: the stuck state returns and the owner is asked again. The same
+  goes for any option, not only the default.
 - A default that PERFORMS an owner-class action (it deletes data, spends money, opens access, messages people) is never
   taken: the verdict is owner.
 - The plan can contradict the default; then the answer is what the plan says, and the source is the plan.
