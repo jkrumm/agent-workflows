@@ -644,6 +644,25 @@ describe('cancel, thread keys and the submit account', () => {
     expect((await s.status({ cwd: root })).jobs?.[0]?.threadKey).toBeTruthy()
   })
 
+  test('the default thread key names the branch: two branches cut from one base are two threads', async () => {
+    const s = service()
+    const root = repo({ 'src/a.ts': lines(2) })
+    git(root, 'checkout', '-q', '-b', 'feature-a')
+    commit(root, { 'src/a.ts': lines(3) })
+    const a1 = await ready(s.prepare({ cwd: root, scope: 'master' }))
+    await s.cancel({ jobId: a1.jobId })
+    const a2 = await ready(s.prepare({ cwd: root, scope: 'master' }))
+    expect(a2.thread).toBe(a1.thread)
+    await s.cancel({ jobId: a2.jobId })
+
+    git(root, 'checkout', '-q', 'master')
+    git(root, 'checkout', '-q', '-b', 'feature-b')
+    commit(root, { 'src/a.ts': lines(4) })
+    const b = await ready(s.prepare({ cwd: root, scope: 'master' }))
+    expect(b.thread).not.toBe(a1.thread)
+    expect((await s.status({ jobId: b.jobId })).job?.threadKey).toMatch(/^base:[0-9a-f]{40}@feature-b$/)
+  })
+
   test('submit --account fills a job without one and leaves a set account alone', async () => {
     const s = service()
     const bare = await ready(s.prepare({ cwd: small(), scope: 'head' }))

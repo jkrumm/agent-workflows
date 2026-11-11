@@ -194,12 +194,14 @@ export async function resolveScope(
   const scope = request.scope ?? 'uncommitted'
   const problem = scopeProblem(scope)
   if (problem) throw new ReviewError(`invalid scope: ${problem}`)
+  // Two branches cut from the same base are two changes: the checked-out branch is part of the key (detached HEAD: base only).
+  const branchName = (await tryGit(git, root, ['symbolic-ref', '--short', '-q', 'HEAD']))?.trim()
   const at = (base: string, head: string, label: string, snap = false): ResolvedScope => ({
     gitDir: root,
     base,
     head,
     snapshot: snap,
-    key: `base:${base}`,
+    key: branchName ? `base:${base}@${branchName}` : `base:${base}`,
     label,
     clone: null,
   })

@@ -39,7 +39,7 @@ No change against HEAD is an empty diff (tier none). `head` = HEAD~1..HEAD, `<re
 and diff against the merge base with origin's default branch; that clone is the job's worktree. No path scopes.
 
 Repo identity: origin normalized to `host/owner/name`, else the realpath of the main worktree's toplevel, so worktrees
-share it. Thread: `sha256(repo \0 key)[:12]`, key `--thread` (or the 12-hex id of a thread the repo's ledger already holds, as `status` prints it: used as is), else `pr:<n>`, `branch:<b>` or `base:<base sha>`.
+share it. Thread: `sha256(repo \0 key)[:12]`, key `--thread` (or the 12-hex id of a thread the repo's ledger already holds, as `status` prints it: used as is), else `pr:<n>`, `branch:<b>` or `base:<base sha>@<checked-out branch>` (a detached HEAD: `base:<base sha>`), so two branches cut from one base get two threads.
 
 ## The job dir
 
