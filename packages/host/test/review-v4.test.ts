@@ -535,6 +535,59 @@ describe('covered', () => {
     })
   })
 
+  describe('a squash-merged, rebased change (patch-id)', () => {
+    const body = lines(20)
+    const edited = body.replace('line10 = 10', 'line10 = 100')
+    // master moves under the reviewed change: a line added on top shifts every line number of a.ts
+    const moved = (text: string) => `export const upstream = 1\n${text}`
+
+    const reviewed = async (findings: { tag: 'important' | 'nit'; file: string; message: string }[] = []) => {
+      const s = service()
+      const root = repo({ 'REVIEW.md': '---\nnone: [docs/**]\n---\n', 'src/a.ts': body })
+      write(root, 'src/a.ts', edited)
+      const job = await ready(s.prepare({ cwd: root }))
+      await s.submit({ jobId: job.jobId, attempt: 1, reply: fakeReviewer(job.jobDir, findings) })
+      git(root, 'checkout', '-q', 'src/a.ts') // the work tree goes back; the change is replayed after master moved
+      const upstream = commit(root, { 'src/a.ts': moved(body), 'src/other.ts': lines(2) }, 'unrelated')
+      return { s, root, job, upstream }
+    }
+
+    test('the replayed change is covered by the job whose patch it equals', async () => {
+      const { s, root, job, upstream } = await reviewed()
+      const squash = commit(root, { 'src/a.ts': moved(edited) }, 'squash')
+      const out = await s.covered({ cwd: root, range: `${upstream}..${squash}` })
+      expect(out.covered).toBe(true)
+      expect(out.commits[0]).toMatchObject({ sha: squash, coveredBy: job.jobId })
+    })
+
+    test('an edit after the last submitted round leaves it uncovered', async () => {
+      const { s, root, upstream } = await reviewed()
+      const squash = commit(root, { 'src/a.ts': `${moved(edited)}export const afterReview = 1\n` }, 'squash plus fix')
+      const out = await s.covered({ cwd: root, range: `${upstream}..${squash}` })
+      expect(out).toMatchObject({ covered: false, uncovered: [squash] })
+      expect(out.commits[0]?.coveredBy).toBeNull()
+    })
+
+    test('a conflict resolution that rewrites a changed line leaves it uncovered', async () => {
+      const { s, root, upstream } = await reviewed()
+      const resolved = moved(body).replace('line10 = 10', 'line10 = 101')
+      const squash = commit(root, { 'src/a.ts': resolved }, 'squash resolved')
+      const out = await s.covered({ cwd: root, range: `${upstream}..${squash}` })
+      expect(out).toMatchObject({ covered: false, uncovered: [squash] })
+    })
+
+    test('an open important finding still wins over the match', async () => {
+      const { s, root, job, upstream } = await reviewed([{ tag: 'important', file: 'src/a.ts', message: 'Leaks.' }])
+      const squash = commit(root, { 'src/a.ts': moved(edited) }, 'squash')
+      const out = await s.covered({ cwd: root, range: `${upstream}..${squash}` })
+      expect(out.commits[0]).toMatchObject({
+        coveredBy: null,
+        reason: 'open-important',
+        findings: [`${job.thread}-1`],
+      })
+    })
+  })
+
   test('route answers the decision alone', async () => {
     const root = repo({ 'src/a.ts': lines(2) })
     commit(root, { 'src/a.ts': lines(3) })

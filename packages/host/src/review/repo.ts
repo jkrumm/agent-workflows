@@ -25,6 +25,30 @@ export const tryGit = (git: GitRunner, cwd: string, args: string[]): Promise<str
 export const isAncestor = async (git: GitRunner, cwd: string, a: string, b: string): Promise<boolean> =>
   (await tryGit(git, cwd, ['merge-base', '--is-ancestor', a, b])) !== null
 
+/**
+ * The stable patch-id of `git diff base head`: equal for two diffs that add and remove the same lines, whatever the
+ * context or the line numbers around them. null for an empty diff or any failed git call (never an error).
+ */
+export async function patchId(git: GitRunner, cwd: string, base: string, head: string): Promise<string | null> {
+  const diff = await tryGit(git, cwd, ['diff', '--no-color', '--no-ext-diff', '--no-renames', base, head])
+  if (!diff?.trim()) return null
+  try {
+    const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')))
+    const proc = Bun.spawn(['git', 'patch-id', '--stable'], {
+      cwd,
+      env,
+      stdin: new TextEncoder().encode(diff),
+      stdout: 'pipe',
+      stderr: 'ignore',
+      timeout: GIT_TIMEOUT_MS, // a hang guard, as for every other git call; a kill exits non-zero → no match
+    })
+    const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited])
+    return code === 0 ? out.trim().split(/\s+/)[0] || null : null
+  } catch {
+    return null
+  }
+}
+
 const commitOf = async (git: GitRunner, cwd: string, ref: string): Promise<string> => {
   const out = await tryGit(git, cwd, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])
   if (!out?.trim()) throw new ReviewError(`"${ref}" is not a commit in ${cwd}`)

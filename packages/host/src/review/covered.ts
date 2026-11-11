@@ -2,7 +2,7 @@
 // The wave gate and the software factory read `covered`; the router is `routeRange`, never a second copy.
 import type { ReviewContext } from './context.ts'
 import type { Job } from './ledger.ts'
-import { isAncestor, repoIdentity, resolveRoot, tryGit } from './repo.ts'
+import { isAncestor, patchId, repoIdentity, resolveRoot, tryGit } from './repo.ts'
 import { atLeast, maxTier, routeRange, type Tier } from './route.ts'
 import { type CoveredOutputValue, ReviewError } from './schema.ts'
 import { scopeProblem, splitRange } from './scope.ts'
@@ -49,6 +49,25 @@ export async function covered(ctx: ReviewContext, input: { cwd: string; range: s
   }
   const exists = async (sha: string) => (await tryGit(git, root, ['cat-file', '-e', `${sha}^{commit}`])) !== null
 
+  // The squash-merge of a reviewed change that was rebased: another tree, the same patch. Computed lazily, once per
+  // job and once per commit, and only after the cheaper tests failed.
+  const jobPatch = new Map<string, Promise<string | null>>()
+  const commitPatch = new Map<string, Promise<string | null>>()
+  const once = (cache: Map<string, Promise<string | null>>, key: string, make: () => Promise<string | null>) => {
+    let hit = cache.get(key)
+    if (!hit) {
+      hit = make()
+      cache.set(key, hit)
+    }
+    return hit
+  }
+  const samePatch = async (job: Job, parent: string, sha: string): Promise<boolean> => {
+    if (!(await exists(job.head))) return false
+    const wanted = await once(jobPatch, job.id, () => patchId(git, root, job.diffBase, job.head))
+    if (!wanted) return false
+    return wanted === (await once(commitPatch, sha, () => patchId(git, root, parent, sha)))
+  }
+
   const commits: CoveredOutputValue['commits'] = []
   for (const sha of shas) {
     const parent = (await tryGit(git, root, ['rev-parse', '--verify', '--quiet', `${sha}^`]))?.trim() || null
@@ -67,7 +86,8 @@ export async function covered(ctx: ReviewContext, input: { cwd: string; range: s
         job.headTree === tree ||
         (await ancestor(sha, job.head)) ||
         ((await exists(job.head)) &&
-          (await routeRange({ git, repo: root, base: job.head, head: sha }).catch(() => null))?.tier === 'none')
+          (await routeRange({ git, repo: root, base: job.head, head: sha }).catch(() => null))?.tier === 'none') ||
+        (await samePatch(job, parent, sha))
       if (!headCovers) continue
       const open = openImportant.get(job.thread)
       if (open) {

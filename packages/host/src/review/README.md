@@ -170,8 +170,17 @@ held. Never downgraded. It is a runaway guard far above a busy day (15 deep revi
 
 For each first-parent commit `c` of the range: required = `routeRange(c^, c)` (none → nothing needed). Covered by a
 submitted job `J` of the repo from the last 30 days when `J.base` ≤ `c^`, `J.head` ≥ `c` or `J.head_tree == c^{tree}`
-(a snapshot later committed as is) or `routeRange(J.head, c)` is none, and the thread's max tier up to `J.round` ≥
-required (round 2+ routes only its fix diff), **and** the thread has no open `important` finding (`disposition =
+(a snapshot later committed as is) or `routeRange(J.head, c)` is none or `c`'s patch equals `J`'s (below), and the
+thread's max tier up to `J.round` ≥ required (round 2+ routes only its fix diff), **and** the thread has no open `important` finding (`disposition =
 open`; `nit` and `pre-existing` never block). A fixed, wrong, intentional or irrelevant finding is settled and covers
 again; a `fixed` one re-reported is reopened by submit. A commit reviewed at its tier but blocked this way is uncovered
 with `reason: 'open-important'` and the blocking `findings` ids.
+
+**Patch-id match.** A lead reviews `--scope uncommitted`, fixes, rebases on a master that moved and squash-merges, so the
+merged commit's tree is never the reviewed tree. The fourth test covers that: `git patch-id --stable` of `c^..c` equals
+that of `J.diff_base..J.head` (the snapshot commit stays in the caller's object store; gone → no match). The id ignores
+context lines and line numbers, so a rebase over lines the change does not touch keeps it; a conflict resolution that
+rewrites a `+`/`-` line, or a fix after the last submitted round, changes it. Of a multi-round thread only the round whose
+patch equals the merged one matches. Tier, `J.base` ≤ `c^` and the open-important block apply unchanged. Both ids are
+computed lazily (only after the cheaper tests failed) and once per job and per commit; an empty diff or a failed git call
+is no match, never an error.
