@@ -22,6 +22,12 @@ describe('a JSON flag', () => {
     expect(coerce(arm, path)).toEqual(content)
   })
 
+  test('a leading @ names the file, the curl form', () => {
+    const path = join(dir, 'at.json')
+    writeFileSync(path, '{"project":"app"}')
+    expect(coerce(arm, `@${path}`)).toEqual({ project: 'app' })
+  })
+
   test('a file that is not JSON names the flag and the file', () => {
     const path = join(dir, 'broken.json')
     writeFileSync(path, '{nope')

@@ -53,6 +53,16 @@ export {
   type FactoryStewardOutput,
 } from './capabilities/factory-steward.ts'
 export {
+  DIGEST_LIMITS,
+  digestIsEmpty,
+  digestQuiet,
+  factoryDigestInput,
+  factoryDigestOutput,
+  guardDigest,
+  type FactoryDigestInput,
+  type FactoryDigestOutput,
+} from './capabilities/factory-digest.ts'
+export {
   factoryQueueInput,
   factoryQueueOutput,
   guardQueue,
