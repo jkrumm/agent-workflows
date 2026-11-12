@@ -94,7 +94,7 @@ export function coerce(field: Field, raw: string, label = `--${field.flag}`): un
       try {
         return JSON.parse(raw)
       } catch {
-        const file = jsonFile(label, raw)
+        const file = jsonFile(label, raw.startsWith('@') ? raw.slice(1) : raw)
         if (file.found) return file.value
         throw bad('must be JSON or a JSON file')
       }
@@ -110,7 +110,8 @@ export function coerce(field: Field, raw: string, label = `--${field.flag}`): un
 
 /**
  * A JSON flag's value that is not JSON but names a file: the file's JSON (`agw eval run review --arm arm.json` sends the
- * arm, never the path). Not found when no such file exists; a file that is not JSON is a usage error naming the flag.
+ * arm, never the path); a leading `@` is the curl form of the same (`--input @fixture.json`). Not found when no such file
+ * exists; a file that is not JSON is a usage error naming the flag.
  */
 function jsonFile(label: string, path: string): { found: true; value: unknown } | { found: false } {
   let text: string

@@ -4,6 +4,7 @@ import { createDecide } from './decide.ts'
 import { createDigest } from './digest.ts'
 import { createFactoryAsk } from './factory-ask.ts'
 import { createFactoryClassify } from './factory-classify.ts'
+import { createFactoryDigest } from './factory-digest.ts'
 import { createFactoryErrand } from './factory-errand.ts'
 import { createFactoryFixClasses } from './factory-fix-classes.ts'
 import { createFactoryQueue } from './factory-queue.ts'
@@ -38,6 +39,7 @@ export function createLlmCapabilities(deps: LlmDeps) {
     createFactoryScreen(deps),
     createFactoryErrand(deps),
     createFactoryFixClasses(deps),
+    createFactoryDigest(deps),
     createDigest(deps),
   ] as const
 }

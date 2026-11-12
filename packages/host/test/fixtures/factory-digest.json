@@ -1,0 +1,241 @@
+{
+  "note": "A 30-Issue digest request and an answer that cites only its ids; the digest workflow tests parse and guard it.",
+  "input": {
+    "project": "example-app",
+    "window": {
+      "from": "2026-11-05T00:00:00Z",
+      "to": "2026-11-12T07:00:00Z"
+    },
+    "done": [
+      {
+        "id": "issue_100",
+        "title": "Rotate the refresh token on every use (Token refresh 0)",
+        "kind": "feature",
+        "closedAt": "2026-11-05T10:00:00Z",
+        "outcome": "done"
+      },
+      {
+        "id": "issue_101",
+        "title": "Fix refresh race on concurrent tabs (Token refresh 1)",
+        "kind": "bug",
+        "closedAt": "2026-11-06T10:00:00Z",
+        "outcome": "done"
+      },
+      {
+        "id": "issue_102",
+        "title": "Dark mode palette for the card component (Dark mode 2)",
+        "kind": "chore",
+        "closedAt": "2026-11-07T10:00:00Z",
+        "outcome": "done"
+      },
+      {
+        "id": "issue_103",
+        "title": "Dark mode toggle in settings (Dark mode 3)",
+        "kind": "feature",
+        "closedAt": "2026-11-08T10:00:00Z",
+        "outcome": "done"
+      },
+      {
+        "id": "issue_104",
+        "title": "Publish 2.4.0 to the registry (Release 4)",
+        "kind": "bug",
+        "closedAt": "2026-11-09T10:00:00Z",
+        "outcome": "done"
+      },
+      {
+        "id": "issue_105",
+        "title": "Changelog for 2.4.0 (Release 5)",
+        "kind": "chore",
+        "closedAt": "2026-11-10T10:00:00Z",
+        "outcome": "done"
+      },
+      {
+        "id": "issue_106",
+        "title": "Rotate the refresh token on every use (Token refresh 6)",
+        "kind": "feature",
+        "closedAt": "2026-11-11T10:00:00Z",
+        "outcome": "done"
+      },
+      {
+        "id": "issue_107",
+        "title": "Fix refresh race on concurrent tabs (Token refresh 7)",
+        "kind": "bug",
+        "closedAt": "2026-11-05T10:00:00Z",
+        "outcome": "done"
+      },
+      {
+        "id": "issue_108",
+        "title": "Dark mode palette for the card component (Dark mode 8)",
+        "kind": "chore",
+        "closedAt": "2026-11-06T10:00:00Z",
+        "outcome": "done"
+      },
+      {
+        "id": "issue_109",
+        "title": "Dark mode toggle in settings (Dark mode 9)",
+        "kind": "feature",
+        "closedAt": "2026-11-07T10:00:00Z",
+        "outcome": "done"
+      },
+      {
+        "id": "issue_110",
+        "title": "Publish 2.4.0 to the registry (Release 10)",
+        "kind": "bug",
+        "closedAt": "2026-11-08T10:00:00Z",
+        "outcome": "done"
+      },
+      {
+        "id": "issue_111",
+        "title": "Changelog for 2.4.0 (Release 11)",
+        "kind": "chore",
+        "closedAt": "2026-11-09T10:00:00Z",
+        "outcome": "done"
+      },
+      {
+        "id": "issue_112",
+        "title": "Rotate the refresh token on every use (Token refresh 12)",
+        "kind": "feature",
+        "closedAt": "2026-11-10T10:00:00Z",
+        "outcome": "done"
+      },
+      {
+        "id": "issue_113",
+        "title": "Fix refresh race on concurrent tabs (Token refresh 13)",
+        "kind": "bug",
+        "closedAt": "2026-11-11T10:00:00Z",
+        "outcome": "done"
+      },
+      {
+        "id": "issue_114",
+        "title": "Dark mode palette for the card component (Dark mode 14)",
+        "kind": "chore",
+        "closedAt": "2026-11-05T10:00:00Z",
+        "outcome": "done"
+      },
+      {
+        "id": "issue_115",
+        "title": "Dark mode toggle in settings (Dark mode 15)",
+        "kind": "feature",
+        "closedAt": "2026-11-06T10:00:00Z",
+        "outcome": "dropped"
+      }
+    ],
+    "working": [
+      {
+        "id": "issue_120",
+        "title": "Migrate the session store, step 1",
+        "kind": "feature",
+        "since": "2026-11-12T06:00:00Z"
+      },
+      {
+        "id": "issue_121",
+        "title": "Migrate the session store, step 2",
+        "kind": "feature",
+        "since": "2026-11-12T06:00:00Z"
+      },
+      {
+        "id": "issue_122",
+        "title": "Migrate the session store, step 3",
+        "kind": "feature",
+        "since": "2026-11-12T06:00:00Z"
+      },
+      {
+        "id": "issue_123",
+        "title": "Migrate the session store, step 4",
+        "kind": "feature",
+        "since": "2026-11-12T06:00:00Z"
+      }
+    ],
+    "queued": [
+      {
+        "id": "issue_130",
+        "title": "Queued work item 1"
+      },
+      {
+        "id": "issue_131",
+        "title": "Queued work item 2",
+        "after": ["issue_120"]
+      },
+      {
+        "id": "issue_132",
+        "title": "Queued work item 3",
+        "after": ["issue_120"]
+      },
+      {
+        "id": "issue_133",
+        "title": "Queued work item 4",
+        "after": ["issue_120"]
+      },
+      {
+        "id": "issue_134",
+        "title": "Queued work item 5",
+        "after": ["issue_120"]
+      },
+      {
+        "id": "issue_135",
+        "title": "Queued work item 6",
+        "after": ["issue_120"]
+      },
+      {
+        "id": "issue_136",
+        "title": "Queued work item 7",
+        "after": ["issue_120"]
+      }
+    ],
+    "waiting": [
+      {
+        "id": "issue_140",
+        "title": "Waiting item 1",
+        "reason": "a Decision on the session store backend, open for 3 days"
+      },
+      {
+        "id": "issue_141",
+        "title": "Waiting item 2",
+        "reason": "an Errand for a device"
+      },
+      {
+        "id": "issue_142",
+        "title": "Waiting item 3",
+        "reason": "an Errand for a device"
+      }
+    ],
+    "previous": {
+      "headline": "Auth hardening and the 2.4 release.",
+      "at": "2026-11-12T01:00:00Z"
+    }
+  },
+  "output": {
+    "headline": "Auth hardening is shipped and the 2.4 release is out; the session store migration is under way.",
+    "shipped": [
+      {
+        "text": "Refresh tokens rotate on every use and the concurrent-tab race is fixed.",
+        "ids": ["issue_100", "issue_101", "issue_106", "issue_107"]
+      },
+      {
+        "text": "Dark mode covers the card component and the settings toggle.",
+        "ids": ["issue_102", "issue_103"]
+      },
+      {
+        "text": "2.4.0 is published with its changelog.",
+        "ids": ["issue_104", "issue_105"]
+      }
+    ],
+    "next": [
+      {
+        "text": "The session store migration runs in four steps, first step in progress.",
+        "ids": ["issue_120", "issue_121", "issue_122", "issue_123"]
+      },
+      {
+        "text": "Six queued items wait behind the first migration step.",
+        "ids": ["issue_131", "issue_132", "issue_133", "issue_134", "issue_135", "issue_136"]
+      }
+    ],
+    "risks": [
+      {
+        "text": "The session store backend Decision has been open for three days and blocks one Issue.",
+        "ids": ["issue_140"]
+      }
+    ],
+    "themes": ["auth", "dark-mode", "release", "sessions"]
+  }
+}
