@@ -27,7 +27,12 @@ export const DIGEST_LIMITS = {
 
 const issueId = identifier(64).describe('An Issue id, e.g. issue_12; an identifier the factory supplies')
 const title = z.string().min(1).max(MAX_TITLE_CHARS).describe('Untrusted data')
-const instant = z.string().min(1).max(40).describe('An ISO-8601 instant')
+const instant = z
+  .string()
+  .regex(/^[0-9TZ:.+-]{1,40}$/, 'an ISO-8601 instant')
+  .describe('An ISO-8601 instant')
+// Short words the factory supplies, held to an identifier so no line of text reaches the prompt unfenced through them.
+const word = identifier(40)
 
 export const factoryDigestInput = z.object({
   project: identifier(200, '/').describe('The project (repo) the digest is about'),
@@ -37,15 +42,15 @@ export const factoryDigestInput = z.object({
       z.object({
         id: issueId,
         title,
-        kind: z.string().min(1).max(40),
+        kind: word,
         closedAt: instant,
-        outcome: z.string().min(1).max(40).describe("How it closed, e.g. 'done' or 'dropped'"),
+        outcome: word.describe("How it closed, e.g. 'done' or 'dropped'"),
       }),
     )
     .max(MAX_DONE)
     .describe('Issues closed in the window'),
   working: z
-    .array(z.object({ id: issueId, title, kind: z.string().min(1).max(40), since: instant.optional() }))
+    .array(z.object({ id: issueId, title, kind: word, since: instant.optional() }))
     .max(MAX_OPEN)
     .describe('Issues a lead is on now'),
   queued: z
