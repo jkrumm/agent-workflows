@@ -41,7 +41,7 @@ export {
   type FactoryAskOutput,
   type FactoryJudgeInput,
 } from './capabilities/factory-ask.ts'
-// The `factory-steward`, `factory-queue`, `factory-triage`, `factory-screen` and `factory-errand` workflows share their seats' vocabulary, input limits and guards.
+// The `factory-steward`, `factory-queue`, `factory-triage`, `factory-screen`, `factory-errand` and `factory-errand-needed` workflows share their seats' vocabulary, input limits and guards.
 export {
   factoryStewardInput,
   factoryStewardOutput,
@@ -79,6 +79,16 @@ export {
   type FactoryErrandInput,
   type FactoryErrandOutput,
 } from './capabilities/factory-errand.ts'
+export {
+  ERRAND_HOSTS,
+  ERRAND_NEEDED_VERDICTS,
+  factoryErrandNeededCall,
+  factoryErrandNeededInput,
+  factoryErrandNeededOutput,
+  guardErrandNeeded,
+  type FactoryErrandNeededInput,
+  type FactoryErrandNeededOutput,
+} from './capabilities/factory-errand-needed.ts'
 export {
   factoryFixClassesCall,
   factoryFixClassesInput,

@@ -6,6 +6,7 @@ import { createFactoryAsk } from './factory-ask.ts'
 import { createFactoryClassify } from './factory-classify.ts'
 import { createFactoryDigest } from './factory-digest.ts'
 import { createFactoryErrand } from './factory-errand.ts'
+import { createFactoryErrandNeeded } from './factory-errand-needed.ts'
 import { createFactoryFixClasses } from './factory-fix-classes.ts'
 import { createFactoryQueue } from './factory-queue.ts'
 import { createFactoryScreen } from './factory-screen.ts'
@@ -38,6 +39,7 @@ export function createLlmCapabilities(deps: LlmDeps) {
     createFactoryTriage(deps),
     createFactoryScreen(deps),
     createFactoryErrand(deps),
+    createFactoryErrandNeeded(deps),
     createFactoryFixClasses(deps),
     createFactoryDigest(deps),
     createDigest(deps),

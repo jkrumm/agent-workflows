@@ -20,6 +20,9 @@ const routes = {
   'factory.screen': { wire: 'anthropic', ...EASY.call },
   // Software-factory's screening of an Errand (a lead's "I need the owner's hands") before the owner is paged: pass or turn_away.
   'factory.errand': { wire: 'anthropic', ...EASY.call },
+  // Software-factory's daily look at an open request with no `check` command: still needed, not needed (closed only with a reason)
+  // or unsure. Evidence is the same source's other requests of 14 days; the guard turns a not_needed without evidence into unsure.
+  'factory.errandneeded': { wire: 'anthropic', ...EASY.call },
   // Software-factory's Improve screen: fix commits whose scope and subject do not settle the class, sorted into the classes the
   // caller sends, up to 40 per call. No eval set; the answer is checked against the request in the schema.
   'factory.fixclasses': { wire: 'anthropic', ...EASY.call },
