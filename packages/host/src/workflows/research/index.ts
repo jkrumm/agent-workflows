@@ -9,7 +9,7 @@ import { Blocked, Citation, Draft, ResearchInput, ResearchOutput, type ResearchR
 import { researchScorer } from './scorer.ts'
 import { evidence, normalizeUrl, researchGrant } from './tools.ts'
 
-export const RESEARCH_VERSION = '2026-10-29.1'
+export const RESEARCH_VERSION = '2026-11-13.1'
 
 /** The agent's definition (`agents/research`) allows exactly the gate's tools. */
 const AGENT = 'research'
@@ -93,8 +93,12 @@ export function assemble(draft: Draft, ev: z.input<typeof Evidence>, earlier?: r
   if (blocked.length) warnings.push(`${blocked.length} page(s) turned the reader away: see blocked`)
   if (noPages) warnings.push('nothing was retrieved this run')
   else if (nothingNew && earlier) warnings.push('no new pages were read for this follow-up')
+  // Pages were read and not one citation stands (none submitted, or every one dropped): the report rests on nothing a
+  // caller can check, so it is not `ok`.
+  const uncited = kept.length === 0 && (retrieved.size > 0 || seen.size > 0)
+  if (uncited) warnings.push('no citation survived: the report cites no page this run read')
   const partial =
-    noPages || (draft.citations.length > 0 && dropped.length / draft.citations.length >= PARTIAL_DROP_SHARE)
+    noPages || uncited || (draft.citations.length > 0 && dropped.length / draft.citations.length >= PARTIAL_DROP_SHARE)
   // One entry per page: the agent's own spelling first, then the pages the tools retrieved.
   const sources: string[] = []
   const listed = new Set<string>()
@@ -147,10 +151,23 @@ export function degrade(ev: z.input<typeof Evidence>, failure: unknown): Researc
   }
 }
 
-/** The draft from an agent's text answer, or null when it is not the JSON object. */
+/** A report that is a stand-in word, not a report: the schema's own `<markdown>`, `PLACEHOLDER`, `TBD`, `...`. */
+const PLACEHOLDER_REPORT = /^(placeholder|markdown|report|todo|tbd|text|none|null|n\/?a|empty|your report here)$/
+
+/** The report text with case, punctuation, markup and whitespace removed down to its words. */
+export function isPlaceholderReport(report: string): boolean {
+  const words = report
+    .toLowerCase()
+    .replace(/[^a-z/ ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return words === '' || PLACEHOLDER_REPORT.test(words)
+}
+
+/** The draft from an agent's text answer, or null when it is not the JSON object or its report is a placeholder. */
 function parseDraft(text: string): Draft | null {
   const parsed = Draft.safeParse(parseJsonLoose(text))
-  return parsed.success ? parsed.data : null
+  return parsed.success && !isPlaceholderReport(parsed.data.report) ? parsed.data : null
 }
 
 /** `done`, or the signal's reason once it aborts; the listener goes with it, and none is added when already aborted. */

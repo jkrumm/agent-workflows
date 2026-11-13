@@ -7,7 +7,13 @@ import { FakeAgentHost, type FakeSession } from '@agent-workflows/testing/agent-
 import type { HostRegistry } from '../src/workflows/index.ts'
 import { MAX_BODY_BYTES, ToolGate } from '../src/tool-gate/index.ts'
 import { matchExpect } from '../src/workflows/research/golden.ts'
-import { assemble, createResearchWorkflows, degrade, RESEARCH_VERSION } from '../src/workflows/research/index.ts'
+import {
+  assemble,
+  createResearchWorkflows,
+  degrade,
+  isPlaceholderReport,
+  RESEARCH_VERSION,
+} from '../src/workflows/research/index.ts'
 import { memoryToolLedger, pgToolLedger } from '../src/workflows/research/ledger.ts'
 import { ResearchInput, ResearchOutput, type ResearchResult } from '../src/workflows/research/schema.ts'
 import { researchScorer } from '../src/workflows/research/scorer.ts'
@@ -224,6 +230,28 @@ describe('research workflow on a fake host', () => {
     const never = await run(
       { query: 'Postgres port, never JSON?', depth: 'quick' },
       new FakeAgentHost(async () => ({ output: 'still prose' })),
+    )
+    expect(never.result.status).toBe('failed')
+    expect(never.result.error?.kind).toBe('invalid_output')
+  })
+
+  test('a placeholder report gets the re-ask like a non-JSON answer, and is invalid_output when it stays one', async () => {
+    const placeholder = JSON.stringify({ report: 'PLACEHOLDER', citations: [], sources: [], unverified: [] })
+    const host = new FakeAgentHost(async (s) => {
+      if (!s.turnOf) {
+        await callTool(s, 'web_fetch', { url: PG_DOCS })
+        return { output: placeholder }
+      }
+      return { output: draft([{ claim: 'default 5432', url: PG_DOCS }]) }
+    })
+    const { runId, result } = await run({ query: 'Placeholder then a report?', depth: 'quick' }, host)
+    expect(result.status).toBe('done')
+    expect(ResearchOutput.parse(result.output).report).toContain('5432')
+    expect((await sql.step(runId, 'research:reask'))?.status).toBe('done')
+
+    const never = await run(
+      { query: 'Placeholder twice?', depth: 'quick' },
+      new FakeAgentHost(async () => ({ output: placeholder })),
     )
     expect(never.result.status).toBe('failed')
     expect(never.result.error?.kind).toBe('invalid_output')
@@ -592,7 +620,24 @@ describe('assemble', () => {
     expect(nineOfTen.citations).toHaveLength(9)
     const clean = assemble({ ...base, citations: Array.from({ length: 10 }, () => cite(`${PG_DOCS}#a`)) }, ev)
     expect(clean.status).toBe('ok')
-    expect(assemble({ ...base, citations: [] }, ev).status).toBe('ok')
+  })
+
+  test('pages read but no citation standing is partial with a warning, never ok', () => {
+    const base = { report: 'r', sources: [], unverified: [] }
+    const none = assemble({ ...base, citations: [] }, ev)
+    expect(none.status).toBe('partial')
+    expect(none.warnings).toContain('no citation survived: the report cites no page this run read')
+    const allDropped = assemble({ ...base, citations: [cite(NEVER_READ)] }, ev)
+    expect(allDropped.status).toBe('partial')
+    expect(allDropped.warnings).toContain('no citation survived: the report cites no page this run read')
+    expect(assemble({ ...base, citations: [cite(PG_DOCS)] }, ev).warnings).toEqual([])
+  })
+
+  test('a placeholder report is no report', () => {
+    for (const text of ['PLACEHOLDER', 'placeholder.', '<markdown>', '  TBD ', '...', '**TODO**', 'N/A', ' '])
+      expect(isPlaceholderReport(text)).toBe(true)
+    for (const text of ['## Bottom line\nPort 5432.', 'The placeholder pattern in React is deprecated.'])
+      expect(isPlaceholderReport(text)).toBe(false)
   })
 
   test('a Reddit js_challenge URL is the clean permalink in sources, citations and unverified, once', () => {
@@ -688,11 +733,12 @@ describe('assemble', () => {
 
   test('assemble hands blocked pages over and says so in a warning', () => {
     const blocked = [{ url: 'https://shop.example.com/machine', reason: 'cloudflare-challenge' }]
-    const out = assemble({ report: 'r', citations: [], sources: [], unverified: [] }, { ...ev, blocked })
+    const cited = [{ claim: 'c', url: PG_DOCS, confidence: 'high' as const }]
+    const out = assemble({ report: 'r', citations: cited, sources: [], unverified: [] }, { ...ev, blocked })
     expect(out.blocked).toEqual(blocked)
     expect(out.warnings).toEqual(['1 page(s) turned the reader away: see blocked'])
     expect(out.status).toBe('ok')
-    expect(assemble({ report: 'r', citations: [], sources: [], unverified: [] }, ev).blocked).toEqual([])
+    expect(assemble({ report: 'r', citations: cited, sources: [], unverified: [] }, ev).blocked).toEqual([])
   })
 })
 

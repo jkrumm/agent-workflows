@@ -21,7 +21,9 @@ agent's `tools` counts. `--depth` defaults to `standard`. A long run waits like 
   target reads them.
 - **Grounding** (`assemble`, in code): a citation whose URL the run neither retrieved nor saw as a search result is
   dropped to `unverified`; dropping 10 % or more, or retrieving nothing at all, makes the report `partial`.
-  `grounding` counts before the drop.
+  `grounding` counts before the drop. A run that read pages and has no citation left (none submitted, or all dropped) is
+  `partial` with the warning `no citation survived`, never `ok`. A report that is only a stand-in word (`PLACEHOLDER`,
+  `<markdown>`, `TBD`, `...`) is not a draft: it gets the one re-ask like a non-JSON answer, then `invalid_output`.
 - **Degraded** (`degraded: "<reason>"` in the output): an agent that fails after its two attempts (or its re-ask) with
   at least one gate call on the ledger does not fail the run. The result is `status: partial` with the pages it
   retrieved as `sources`, the `blocked` list and the `tools` counts, no citations, and a `report` that says the agent
