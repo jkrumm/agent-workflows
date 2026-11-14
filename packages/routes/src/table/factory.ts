@@ -23,6 +23,9 @@ const routes = {
   // Software-factory's daily look at an open request with no `check` command: still needed, not needed (closed only with a reason)
   // or unsure. Evidence is the same source's other requests of 14 days; the guard turns a not_needed without evidence into unsure.
   'factory.errandneeded': { wire: 'anthropic', ...EASY.call },
+  // Software-factory's screen on a Spec before the owner reads it: his to read (pass) or its lead's (settle, with a reason the lead
+  // hears). The owner's marks on earlier Specs come as precedents; the guard turns a settle without a reason into a pass.
+  'factory.specscreen': { wire: 'anthropic', ...EASY.call },
   // Software-factory's Improve screen: fix commits whose scope and subject do not settle the class, sorted into the classes the
   // caller sends, up to 40 per call. No eval set; the answer is checked against the request in the schema.
   'factory.fixclasses': { wire: 'anthropic', ...EASY.call },
