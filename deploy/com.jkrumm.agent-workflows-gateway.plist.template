@@ -43,6 +43,10 @@
     <string>__HOME__/SourceRoot/dotfiles/config/claude-accounts.json</string>
   </dict>
 
+  <!-- Without it launchd runs the gateway at scheduling priority 20 with throttled CPU and I/O (a login shell runs at 31),
+       and every agw caller waits on it: at load 200 the request path starved first. Same key as the host's. -->
+  <key>ProcessType</key>
+  <string>Interactive</string>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>

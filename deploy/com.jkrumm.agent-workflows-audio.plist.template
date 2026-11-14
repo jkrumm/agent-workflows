@@ -33,6 +33,9 @@
     <string>__DATA_DIR__/door-tokens</string>
   </dict>
 
+  <!-- Same band as the host and the gateway: a door that callers wait on must not run at launchd's throttled default. -->
+  <key>ProcessType</key>
+  <string>Interactive</string>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>

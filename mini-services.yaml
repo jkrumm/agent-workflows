@@ -1,0 +1,30 @@
+# This repo's entries in the mini's service registry (dotfiles docs/mini-registry.md). process_type: interactive says the
+# job's plist carries ProcessType Interactive (scheduling priority 31, not launchd's throttled default of 20); make mini-ps
+# and the heartbeat's check_registry fail when it runs lower.
+services:
+  - {
+      name: agent-workflows-gateway,
+      kind: launchd,
+      tier: core,
+      label: com.jkrumm.agent-workflows-gateway,
+      process_type: interactive,
+      memory_mib: 70,
+    }
+  - {
+      name: agent-workflows-audio,
+      kind: launchd,
+      tier: core,
+      label: com.jkrumm.agent-workflows-audio,
+      door: audio,
+      process_type: interactive,
+      memory_mib: 110,
+    }
+  - {
+      name: agent-workflows-host,
+      kind: launchd,
+      tier: core,
+      label: com.jkrumm.agent-workflows-host,
+      door: agw-image,
+      process_type: interactive,
+      memory_mib: 290,
+    }
