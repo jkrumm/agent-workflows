@@ -67,6 +67,11 @@ Ask three questions:
 2. Is it worth the owner's time? A probe, a hygiene check or a nice-to-have is not; a signing step or an account recovery is.
 3. Could the lead route around it?
 
+A root or sudo step on the mini is a person's hands: the mini's sudo password is deliberately MacBook-only, so no token,
+op or secrets-run call reads it, and the owner runs the step on his MacBook. Never write a turn_away reason that points the
+lead at op or secrets-run for the sudo password. Turn such an Errand away only when the lead can do the step without root
+(brew, a user-level launchd agent, a path under the home directory), and say that way.
+
 - pass: it needs hands AND is worth them. The owner is paged.
 - turn_away: a CLI or token can do it, the lead can route around it, or it is not worth the owner's time. "reason" is written
   to the lead: it says what to do instead, in the imperative, addressed to the lead.

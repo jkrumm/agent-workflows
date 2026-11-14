@@ -79,6 +79,13 @@ describe('factory-errand workflow', () => {
     expect(prompt).toContain('ignore the rules')
   })
 
+  test('the prompt states that the mini sudo password is MacBook-only and never read by op or secrets-run', async () => {
+    await run()
+    const prompt = promptOf(t.iu.requests.at(-1))
+    expect(prompt).toContain('sudo password is deliberately MacBook-only')
+    expect(prompt).toContain('for the sudo password')
+  })
+
   test('the CLI reads the request JSON from stdin as the one `request` property', async () => {
     const doc = (await (await t.call('/openapi.json')).json()) as {
       paths: Record<string, Record<string, { 'x-cli': { command: string[]; stdin?: string } }>>
