@@ -93,6 +93,65 @@ describe('caller headers', () => {
     })
   })
 
+  describe('the Claude Code session fallback', () => {
+    const outside = () => {
+      const dir = join(base, 'scratch-out')
+      mkdirSync(dir, { recursive: true })
+      return dir
+    }
+
+    test('cwd outside a repo: the project comes from the Claude process’s cwd', () => {
+      const session = repo('SourceRoot', 'session-repo')
+      const pids: number[] = []
+      const headers = callerHeaders({ CLAUDECODE: '1', CLAUDE_PID: '4242', HOME: base }, outside(), (pid) => {
+        pids.push(pid)
+        return session
+      })
+      expect(pids).toEqual([4242])
+      expect(headers).toEqual({
+        'x-agw-caller': 'claude-code',
+        'x-agw-project': 'session-repo',
+        'x-agw-workspace': 'private',
+      })
+    })
+
+    test('no CLAUDECODE (or a bad pid): no project and the resolver is not called', () => {
+      let calls = 0
+      const resolver = () => {
+        calls++
+        return repo('SourceRoot', 'session-repo')
+      }
+      expect(callerHeaders({ CLAUDE_PID: '4242', HOME: base }, outside(), resolver)).toEqual({ 'x-agw-caller': 'cli' })
+      expect(callerHeaders({ CLAUDECODE: '1', CLAUDE_PID: '0', HOME: base }, outside(), resolver)).toEqual({
+        'x-agw-caller': 'claude-code',
+      })
+      expect(callerHeaders({ CLAUDECODE: '1', CLAUDE_PID: 'abc', HOME: base }, outside(), resolver)).toEqual({
+        'x-agw-caller': 'claude-code',
+      })
+      expect(calls).toBe(0)
+    })
+
+    test('the resolver finds nothing: no project', () => {
+      expect(callerHeaders({ CLAUDECODE: '1', CLAUDE_PID: '4242', HOME: base }, outside(), () => null)).toEqual({
+        'x-agw-caller': 'claude-code',
+      })
+    })
+
+    test('cwd inside a repo: the resolver is not called', () => {
+      let calls = 0
+      const headers = callerHeaders(
+        { CLAUDECODE: '1', CLAUDE_PID: '4242', HOME: base },
+        repo('SourceRoot', 'own'),
+        () => {
+          calls++
+          return null
+        },
+      )
+      expect(headers['x-agw-project']).toBe('own')
+      expect(calls).toBe(0)
+    })
+  })
+
   test('a folder name the host would refuse is not sent', () => {
     expect(callerHeaders({ HOME: base }, repo('SourceRoot', 'has space'))).toEqual({ 'x-agw-caller': 'cli' })
   })

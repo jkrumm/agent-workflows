@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readlinkSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { BIN } from './args.ts'
@@ -65,14 +65,44 @@ function repoOf(checkout: string, dotGit: string): { name: string; root: string 
   }
 }
 
+/** A process's working directory: `/proc` on Linux, else `lsof`; null on any failure, never throws. */
+function lsofCwd(pid: number): string | null {
+  try {
+    return readlinkSync(`/proc/${pid}/cwd`)
+  } catch {
+    // not Linux, or not readable: ask lsof
+  }
+  try {
+    const out = Bun.spawnSync(['lsof', '-a', '-p', String(pid), '-d', 'cwd', '-Fn'], {
+      stdout: 'pipe',
+      stderr: 'ignore',
+      timeout: 1000,
+    })
+    if (out.exitCode !== 0) return null
+    const line = out.stdout
+      .toString()
+      .split('\n')
+      .find((l) => l.startsWith('n'))
+    return line && line.length > 1 ? line.slice(1) : null
+  } catch {
+    return null
+  }
+}
+
 /**
  * Who this CLI call is for, sent as headers (the host trusts them only from the API secret): `x-agw-caller` from
  * `AGW_CALLER`, else `claude-code` inside a Claude Code session (`CLAUDECODE=1`), else `cli`; `x-agw-project` the name
  * of the git repo the cwd is in, and `x-agw-workspace` `work` or `private` from where that working copy lives
  * (`IuRoot` or `SourceRoot`; else none). Only the repo's name and that one word leave the
  * machine, never a path. Hermes sets no marker in its terminal environment, so it names itself with `AGW_CALLER`.
+ * When the cwd is outside any repo inside Claude Code (`CLAUDECODE=1`, `CLAUDE_PID` a positive integer), the project is
+ * taken from that process's cwd instead (the session's own directory), the only case that spawns a process.
  */
-export function callerHeaders(env: Env, cwd: string): Record<string, string> {
+export function callerHeaders(
+  env: Env,
+  cwd: string,
+  processCwd: (pid: number) => string | null = lsofCwd,
+): Record<string, string> {
   const declared = env.AGW_CALLER?.trim()
   if (declared && !CALLER_NAME.test(declared)) {
     throw new AgwError('usage', 'AGW_CALLER must match [a-z][a-z0-9-]{0,31}', { hint: 'e.g. AGW_CALLER=hermes' })
@@ -80,7 +110,12 @@ export function callerHeaders(env: Env, cwd: string): Record<string, string> {
   const headers: Record<string, string> = {
     'x-agw-caller': declared || (env.CLAUDECODE === '1' ? 'claude-code' : 'cli'),
   }
-  const project = gitProject(cwd, env.HOME?.trim() || homedir())
+  const home = env.HOME?.trim() || homedir()
+  let project = gitProject(cwd, home)
+  if (!project && env.CLAUDECODE === '1' && /^[1-9]\d*$/.test(env.CLAUDE_PID?.trim() ?? '')) {
+    const sessionCwd = processCwd(Number(env.CLAUDE_PID!.trim()))
+    if (sessionCwd) project = gitProject(sessionCwd, home)
+  }
   if (project && PROJECT_NAME.test(project.name)) {
     headers['x-agw-project'] = project.name
     const place = /(?:^|\/)(IuRoot|SourceRoot)\//.exec(`${project.root}/`)?.[1]
