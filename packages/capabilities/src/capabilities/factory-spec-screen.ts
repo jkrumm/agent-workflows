@@ -94,8 +94,14 @@ you. The ids, revision, source, format, repo, kind and each precedent's screened
 - pass: only what is the owner's. A UI screen or a look he has not seen; product direction; spend; security policy; other
   people or company data (work repos, colleagues, student or customer data); a change that cannot be undone; or open choices
   whose defaults lead to materially different work depending on the answer. "reason" names which of these it is.
+  - Security policy means who may be trusted or let in: credentials, secrets, authentication, exposure to people or services
+    outside the owner's own factory. A read-only view or route for the factory's own agents, in a caller class that already
+    exists, whose default keeps access narrow, is not security policy.
+  - Cannot be undone means data lost, something sent to people, money spent or a cutover with no way back. Behaviour the
+    factory runs by itself, which a revert and a redeploy undo, is undoable, above all when a guard in code stops it acting
+    on a guess.
 - settle: everything else. A constant or limit raised; a type or a port tightened; a new route, CLI verb or workflow inside a
-  pattern the repo already has; a Replan that only reorders or frees Issues; a choice whose default is plainly right and whose
+  pattern the repo already has (a sibling it copies file for file, a guard that fails safe); a Replan that only reorders or frees Issues; a choice whose default is plainly right and whose
   alternative costs little to change later. "reason" is a note the lead reads: say in one sentence why it can go ahead on its
   defaults.
 
