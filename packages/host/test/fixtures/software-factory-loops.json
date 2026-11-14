@@ -105,6 +105,17 @@
       "candidates": [
         { "id": "issue_12", "title": "Fix the checkout total", "kind": "bug", "state": "working" },
         { "id": "issue_15", "title": "Add a dark theme", "kind": "feature", "state": "queued" }
+      ],
+      "precedents": [
+        {
+          "title": "Raise the plan file limit",
+          "repo": "example-app",
+          "source": "triage",
+          "screened": "passed",
+          "needed": false,
+          "verdict": "looks_good",
+          "note": "A one-line limit raise: the lead could have decided it"
+        }
       ]
     },
     "settleOutput": {

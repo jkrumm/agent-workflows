@@ -1,8 +1,13 @@
+import { join } from 'node:path'
 import { defineWorkflowModule } from '../registry.ts'
+import { plainSuite } from '../suite.ts'
 import { createFactoryTriage } from './index.ts'
 
-/** No `suite`: `factory-triage` has no eval set (owner decision); it learns from real signals in the run journal. */
+/** The eval set is committed beside the module: every case is public placeholder material (example-app, issue_N). */
+export const CASES_PATH = join(import.meta.dir, 'eval', 'cases.jsonl')
+
 export default defineWorkflowModule({
   id: 'factory-triage',
   create: (deps) => [createFactoryTriage({ registry: deps.registry })],
+  suite: { read: () => plainSuite.read(CASES_PATH) },
 })

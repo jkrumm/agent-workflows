@@ -3,9 +3,10 @@ import { Cancelled, defineWorkflow, InfraError, StepFailed } from '@agent-workfl
 import type { HostWorkflow } from '../../operations.ts'
 import type { HostRegistry } from '../index.ts'
 import { FactoryTriageInput, FactoryTriageOutput } from './schema.ts'
+import { factoryTriageScorer } from './scorer.ts'
 
 const FACTORY_TRIAGE_WORKFLOW_ID = 'factory-triage'
-const FACTORY_TRIAGE_VERSION = '2026-11-07.1'
+const FACTORY_TRIAGE_VERSION = '2026-11-14.1'
 
 /** The one capability the workflow calls; any registry that has `factory.triage` fits. */
 export type TriageCaller = Pick<HostRegistry, 'call'>
@@ -22,6 +23,7 @@ export function createFactoryTriage(deps: { registry: TriageCaller }): HostWorkf
     version: FACTORY_TRIAGE_VERSION,
     input: FactoryTriageInput,
     output: FactoryTriageOutput,
+    scorer: factoryTriageScorer,
     async run(ctx, { request }) {
       try {
         const answer = await ctx.step('triage', ({ callContext }) =>

@@ -86,6 +86,7 @@ describe('workflow discovery', () => {
       'factory-errand',
       'factory-screen',
       'factory-spec-screen',
+      'factory-triage',
       'image-icon',
       'image',
       'narrative',
