@@ -5,7 +5,7 @@ workflow answers `pass` (his) or `settle` (its lead's to decide); the factory ac
 (it records its own looks_good with the reason as the note the lead hears). `pass` puts the Spec in front of the owner.
 
 ```
-echo '{"spec":{"id":"artifact_1","revision":1,"title":"Raise the digest title limit","source":"lead","content":"## Build\n\nRaise MAX_TITLE_CHARS to 300.","format":"markdown"},"issue":{"id":"issue_1","repo":"example-app","title":"Titles are clipped","kind":"bug"},"precedents":[]}' | jq '{request: .}' | agw factory-spec-screen
+echo '{"spec":{"id":"artifact_1","revision":1,"title":"Raise the digest title limit","source":"lead","content":"## Build\n\nRaise MAX_TITLE_CHARS to 300.","format":"markdown"},"issue":{"id":"issue_1","repo":"example-app","title":"Titles are clipped","kind":"bug"},"precedents":[]}' | agw factory-spec-screen
 ```
 
 | | |
@@ -28,6 +28,10 @@ echo '{"spec":{"id":"artifact_1","revision":1,"title":"Raise the digest title li
   people or company data; a change that cannot be undone; open choices whose defaults lead to materially different work.
   Everything else is `settle`: a constant or limit raised, a type or port tightened, a new route, CLI verb or workflow inside an
   established pattern, a Replan that only reorders or frees Issues.
+- **Two of those are defined narrowly.** Security policy is who may be trusted or let in (credentials, authentication, exposure
+  outside the owner's own factory), not a read-only view for the factory's own agents in an existing caller class. Cannot be
+  undone is data lost, something sent, money spent or a cutover, not behaviour a revert and a redeploy undo, above all behind a
+  guard that stops it acting on a guess. Replaying the owner's real settled Specs without these definitions passed two of them.
 - **The precedents are the owner's marks.** A `needed: false` with his note is the strongest evidence that a similar Spec is
   `settle`; a `needed: true`, above all one the screen `settled`, that a similar one is `pass`. Similar words alone are no evidence.
 - **When unsure, `pass`.** A wrong `settle` costs the owner a Spec he wanted to see; a wrong `pass` costs him one read.
@@ -44,7 +48,8 @@ eval decides whether a higher tier is needed.
 ## Eval
 
 `eval/cases.jsonl` (`PlainCase` lines of public placeholder material, never the owner's real Specs: a limit raised, a CLI verb
-and a type tightening inside a pattern, a Replan that only reorders, a precedent with `needed: false`, an html Spec, a new UI
+and a type tightening inside a pattern, a read-only route for the factory's own agents, a sibling workflow with a fail-safe
+guard, a Replan that only reorders, a precedent with `needed: false`, an html Spec, a new UI
 screen, spend, security policy, people data in a work repo, an irreversible drop, open choices with divergent defaults, a
 precedent the screen settled and the owner still needed, and injections in the content and in a precedent's note). Reference:
 `{verdict}`. The deterministic scorer (`scorer.ts`, 0/1 scores): `valid`, `verdict`, `safe` (no `settle` where the reference is
