@@ -44,6 +44,12 @@ const IU_CATALOG = /\/models(?:\/[A-Za-z0-9._:-]+)?$/
 const CALLER_PRICED_PREFIXES = ['/openai/v1/images/', '/openai/v1/audio/', '/gemini/v1beta/', '/replicate/v1/'] as const
 /** Statuses a credit org's balance refusal can carry; only these are read before they are answered. */
 const REFUSAL_STATUSES: ReadonlySet<number> = new Set([400, 402, 503])
+/**
+ * IU's LiteLLM answers every Anthropic 4xx as `503 text/plain`: `[Anthropic API StatusCode: <Name>] <the error JSON>`.
+ * Only the two a thread request can meet are unwrapped (`docs/gateway.md` §Message threads).
+ */
+const IU_WRAPPED_ERROR = /^\[Anthropic API StatusCode: (BadRequest|NotFound)\] (\{[\s\S]*\})\s*$/
+const IU_WRAPPED_STATUS = { BadRequest: 400, NotFound: 404 } as const
 /** A `Response` refuses a body on these. */
 const NULL_BODY_STATUSES: ReadonlySet<number> = new Set([101, 204, 205, 304])
 const HOP_BY_HOP: ReadonlySet<string> = new Set([
@@ -123,6 +129,8 @@ interface Exchange {
   model: string | null
   /** What an estimate needs of the request. */
   shape: RequestShape
+  /** `thread.type` of a message-threads request (`create` | `continue`), else null. */
+  thread: string | null
   system: string
   span: RequestSpan
   abort: AbortController
@@ -635,6 +643,39 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
     return { balance: isBalanceFailure({ status: upstream.status, text }), bytes }
   }
 
+  /**
+   * A thread request that IU answered with its wrapper: the error as Anthropic sent it, so the SDK's replay on
+   * `thread_not_found` fires (a 503 is retried and never replayed). Any other IU answer, and any request without a
+   * `thread`, is left alone: the wrapper is IU's behaviour for every caller, and callers classify it as it is.
+   */
+  const unwrapIuError = async (
+    x: Exchange,
+    upstream: Response,
+  ): Promise<{ upstream: Response; bytes: Uint8Array | null }> => {
+    const wrapped =
+      x.thread !== null &&
+      upstream.status === 503 &&
+      upstream.body !== null &&
+      (upstream.headers.get('content-type') ?? '').toLowerCase().startsWith('text/plain')
+    if (!wrapped) return { upstream, bytes: null }
+    x.guard.arm()
+    const bytes = new Uint8Array(await upstream.arrayBuffer())
+    x.guard.disarm()
+    let match: RegExpExecArray | null
+    try {
+      match = IU_WRAPPED_ERROR.exec(
+        new TextDecoder().decode(decodeBody(bytes, upstream.headers.get('content-encoding'))),
+      )
+    } catch {
+      return { upstream, bytes }
+    }
+    const status = match?.[1] === undefined ? undefined : IU_WRAPPED_STATUS[match[1] as keyof typeof IU_WRAPPED_STATUS]
+    const json = match?.[2]
+    if (status === undefined || json === undefined) return { upstream, bytes }
+    const headers = new Headers({ 'content-type': 'application/json' })
+    return { upstream: new Response(json, { status, headers }), bytes: null }
+  }
+
   const heldBody = (bytes: Uint8Array): ReadableStream<Uint8Array> =>
     new ReadableStream({
       start(controller) {
@@ -695,6 +736,11 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
       awaitingUpstream(x, label, record)
       try {
         upstream = await send(x, target)
+        if (pick.kind === 'iu') {
+          const unwrapped = await unwrapIuError(x, upstream)
+          upstream = unwrapped.upstream
+          held = unwrapped.bytes
+        }
         if (pick.kind === 'pool') {
           const refusal = await refusalOf(x, upstream)
           held = refusal.bytes
@@ -749,6 +795,7 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
       requestedModel: null,
       model: null,
       shape: { bytes: 0, maxTokens: null, streamed: false },
+      thread: null,
       system,
       span,
       abort,
@@ -801,10 +848,13 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
       maxTokens: typeof parsed?.max_tokens === 'number' ? parsed.max_tokens : null,
       streamed: parsed?.stream === true,
     }
+    x.thread =
+      anthropic && isRecord(parsed?.thread) && typeof parsed.thread.type === 'string' ? parsed.thread.type : null
     x.span.set({
       'gen_ai.system': x.system,
       'agw.gateway.caller': x.caller,
       'agw.gateway.request_id': x.requestId,
+      ...(x.thread === null ? {} : { 'agw.gateway.thread': x.thread }),
       ...(x.session === null ? {} : { 'agw.gateway.session': x.session }),
       ...(x.model === null ? {} : { 'gen_ai.request.model': x.model }),
     })

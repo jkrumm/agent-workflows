@@ -1270,6 +1270,121 @@ describe('x-agw-upstream: iu', () => {
   })
 })
 
+describe('message threads (beta message-threads-2026-08-12)', () => {
+  const HEADERS = { 'anthropic-beta': 'message-threads-2026-08-12', 'x-agw-session': 'loop' }
+  const NOT_FOUND = {
+    type: 'error',
+    error: {
+      type: 'not_found_error',
+      message: 'No thread state was found for the requested `previous_message_id`.',
+      details: { error_code: 'thread_not_found' },
+    },
+  }
+  const threaded = (thread: Record<string, unknown>, extra: Record<string, unknown> = {}): RequestInit => {
+    const init = jsonBody(request({ thread, ...extra }))
+    return { ...init, headers: { ...init.headers, ...HEADERS } }
+  }
+  const wrapped = (name: string, status: number, body: unknown): Response =>
+    new Response(`[Anthropic API StatusCode: ${name}] ${JSON.stringify(body)}`, {
+      status,
+      headers: { 'content-type': 'text/plain; charset=utf-8' },
+    })
+
+  /** Anthropic as the organizations see it: a thread belongs to the key that created it. */
+  const organizations = () => {
+    const owner = new Map<string, string>()
+    let refuse: string | null = null
+    anthropic.reply((seen) => {
+      const key = seen.headers.get('x-api-key') ?? ''
+      if (key === refuse) return refusalResponse()
+      const thread = (JSON.parse(new TextDecoder().decode(seen.body)) as { thread: { previous_message_id?: string } })
+        .thread
+      if (thread.previous_message_id !== undefined && owner.get(thread.previous_message_id) !== key) {
+        return Response.json(NOT_FOUND, { status: 404 })
+      }
+      const id = `msg_${owner.size}`
+      owner.set(id, key)
+      return Response.json({ id, ...message })
+    })
+    return { refuse: (key: string | null) => void (refuse = key) }
+  }
+
+  test('a continue still counts the whole conversation: the full cache read is priced and metered', async () => {
+    organizations()
+    const gw = start({ registry: [pool('a')], poolKey: (id) => `key-${id}` })
+    const first = (await (await gw.call(MESSAGES, threaded({ type: 'create' }))).json()) as { id: string }
+    await (await gw.call(MESSAGES, threaded({ type: 'continue', previous_message_id: first.id }))).text()
+    const rows = gw.rows().records.map(({ row }) => row)
+    expect(rows).toHaveLength(2)
+    expect(rows[1]).toMatchObject({ input_tokens: 1000, cache_read_tokens: 2000, outcome: 'ok' })
+    const expected = costFromUsage('anthropic', USAGE, claudeRate('haiku')).usd ?? 0
+    expect(expected).toBeGreaterThan(0)
+    expect(rows[1]?.cost_reported_usd).toBeCloseTo(expected, 12)
+    expect(gw.pools.status()[0]?.meterUsd).toBeCloseTo(2 * expected, 12)
+  })
+
+  test('a pool that drains mid-thread: the next pool answers thread_not_found itself, byte for byte', async () => {
+    const orgs = organizations()
+    const gw = start({ registry: [pool('a'), pool('b')], poolKey: (id) => `key-${id}` })
+    gw.pools.served('oc', 'loop', 'a')
+    const created = await gw.call(MESSAGES, threaded({ type: 'create' }))
+    const { id } = (await created.json()) as { id: string }
+    expect(created.headers.get('x-agw-pool')).toBe('a')
+    orgs.refuse('key-a')
+    const init = threaded({ type: 'continue', previous_message_id: id })
+    const response = await gw.call(MESSAGES, init)
+    expect(response.headers.get('x-agw-pool')).toBe('b')
+    expect(response.status).toBe(404)
+    expect(await response.json()).toMatchObject({ error: { details: { error_code: 'thread_not_found' } } })
+    expect(anthropic.seen.at(-1)?.headers.get('x-api-key')).toBe('key-b')
+    expect(new TextDecoder().decode(anthropic.seen.at(-1)?.body)).toBe(init.body as string)
+  })
+
+  test('a thread created on a pool, continued on IU: IU’s wrapped 404 is the clean 404 the SDK replays on', async () => {
+    organizations()
+    iu.reply(() => wrapped('NotFound', 503, NOT_FOUND))
+    const gw = start({ registry: [pool('a')], poolKey: (id) => `key-${id}` })
+    const { id } = (await (await gw.call(MESSAGES, threaded({ type: 'create' }))).json()) as { id: string }
+    const init = threaded({ type: 'continue', previous_message_id: id })
+    const forced = { ...init, headers: { ...init.headers, 'x-agw-upstream': 'iu' } }
+    const response = await gw.call(MESSAGES, forced)
+    expect(response.headers.get('x-agw-pool')).toBe('iu-api')
+    expect(response.status).toBe(404)
+    expect(response.headers.get('content-type')).toContain('application/json')
+    expect(await response.json()).toEqual(NOT_FOUND)
+    expect(iu.seen[0]?.body).toEqual(new TextEncoder().encode(init.body as string))
+    const row = gw.rows().records.at(-1)?.row
+    expect(row).toMatchObject({ outcome: 'error', input_tokens: 0, cost_reported_usd: null })
+    expect(row?.raw).toMatchObject({ status: 404 })
+  })
+
+  test('IU’s wrapped 400 on a create is unwrapped too', async () => {
+    const error = {
+      type: 'error',
+      error: { type: 'invalid_request_error', message: 'x', details: { error_code: 'thread_unsupported_request' } },
+    }
+    iu.reply(() => wrapped('BadRequest', 503, error))
+    const gw = start({ registry: [] })
+    const response = await gw.call(MESSAGES, threaded({ type: 'create' }))
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual(error)
+  })
+
+  test('IU’s wrapper stays as it is on a request without a thread, and on a wrapper that is not an error JSON', async () => {
+    const error = { type: 'error', error: { type: 'invalid_request_error', message: 'temperature: range: 0..1' } }
+    iu.reply(() => wrapped('BadRequest', 503, error))
+    const gw = start({ registry: [] })
+    const plain = await gw.call(MESSAGES, jsonBody(request()))
+    expect(plain.status).toBe(503)
+    expect(plain.headers.get('content-type')).toContain('text/plain')
+    expect(await plain.text()).toBe(`[Anthropic API StatusCode: BadRequest] ${JSON.stringify(error)}`)
+    iu.reply(() => new Response('upstream connect error', { status: 503, headers: { 'content-type': 'text/plain' } }))
+    const other = await gw.call(MESSAGES, threaded({ type: 'create' }))
+    expect(other.status).toBe(503)
+    expect(await other.text()).toBe('upstream connect error')
+  })
+})
+
 describe('credit pacing: purpose=eval', () => {
   // `evalReserveUsd` pins the reserve, so the real clock does not matter: 1000 is never reached, 0 is always cleared.
   const underReserve = (id: string) => pool(id, { evalReserveUsd: 1000 })

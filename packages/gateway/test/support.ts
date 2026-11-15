@@ -99,6 +99,8 @@ export function harness(input: {
   anthropic: Upstream
   iu: Upstream
   registry?: RegistryPool[]
+  /** The API key of a pool, one per organization; the same `POOL_KEY` for every pool when absent. */
+  poolKey?: (id: string) => string
   telemetry?: Telemetry
   /** A real flush loop against this database. */
   usage?: { connectionString: string; debounceMs: number }
@@ -110,7 +112,7 @@ export function harness(input: {
   const logger = silentLogger()
   const ledger = new Ledger(input.ledgerPath ?? join(dir.path, 'ledger.sqlite'))
   const registry = input.registry ?? []
-  const keys = new Map(registry.map((p) => [p.id, POOL_KEY]))
+  const keys = new Map(registry.map((p) => [p.id, input.poolKey?.(p.id) ?? POOL_KEY]))
   const pools = createPools({ registry, keys, meter: ledger })
   const telemetry = input.telemetry ?? createTelemetry({ env: {}, logger })
   const outbox =
