@@ -28,3 +28,14 @@ services:
       process_type: interactive,
       memory_mib: 290,
     }
+  - {
+      name: research-chrome,
+      kind: launchd,
+      tier: on-demand,
+      label: com.jkrumm.research-chrome,
+      memory_mib: 1024,
+      exception:
+        {
+          keepalive-poll: 'the loop supervises a GUI Chrome, not a schedule: Chrome hands a second launch on the same profile to the running instance and exits 0, so a plain KeepAlive agent would respawn and open a tab every ThrottleInterval while another Chrome holds 9222',
+        },
+    }
