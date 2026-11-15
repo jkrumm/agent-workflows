@@ -185,6 +185,73 @@ fall back onto GPT: that spends IU and replaces the arm's model with another, wh
 retry 409), so the same refusal would be asked again. A 403 is neither: a `permission_error` in Anthropic's body shape, whose message
 is fixed text that names the reason (`eval reserve`, or why an eval request is refused) and points at each pool's `evalAvailableUsd` on `/health`; building it reads no pool state, so the refusal path does no ledger read. `x-agw-pick-reason` says which. The body carries no balance wording.
 
+## Message threads
+
+Verdict (spike, 2026-11-15, Issue 1447): **supported, with one gateway change and no client adoption yet.** Anthropic's
+message threads (beta `message-threads-2026-08-12`, public since 2026-11-02; platform docs `build-with-claude/message-threads`)
+let a client send only the new messages after the first request: `thread: {type: create}`, then `{type: continue,
+previous_message_id}`, with `system` and `tools` left out of a continue. The server keeps the conversation 5 minutes after
+the last request (deleted within 1 h). Price, rate limits and the usage block are unchanged; the gain is time to first
+token on long conversations. Caching is still the caller's: a top-level `cache_control` on every request (at most 4
+breakpoints with a thread). A thread belongs to the organization and key that created it. Not with `count_tokens`
+(400, "thread: Extra inputs are not permitted"), Batches, compaction or context editing.
+
+**Probes** (live, through this gateway, `claude-haiku-5-5`, `x-agw-purpose: verify`):
+
+| Probe | Result |
+|-|-|
+| Credit pool (`iu`): create, then continue | 200, 200. Usage on a continue is the whole conversation: 47 input on the create, 60 on the continue |
+| Pool, `cache_control` on a 11.5k-token prompt | create wrote 11,520; continue read 11,520 and wrote 13; the next read 11,533. The row and the meter carry exactly these numbers |
+| IU leg (`x-agw-upstream: iu`): create, then continue | 200, 200. IU's LiteLLM passes `thread` and the beta header through |
+| IU id continued on a pool; a made-up id on a pool | 404 `not_found_error`, `error.details.error_code: thread_not_found`, Anthropic's own body |
+| Pool id continued on IU; a made-up id on IU | **503 `text/plain`** `[Anthropic API StatusCode: NotFound] {…the 404 body…}` |
+| Thread request on IU that Anthropic rejects with a 400 (5 breakpoints, a continue without `previous_message_id`, no beta header) | **503 `text/plain`** `[Anthropic API StatusCode: BadRequest] {…}`; on a pool the clean 400 |
+
+IU's wrapper is not specific to threads: every Anthropic 4xx on IU's `/anthropic` leg comes back as that 503 (a
+`temperature` out of range does too). A client takes a 503 for an outage and retries it; the SDK's replay on
+`thread_not_found` never fires. Also observed on IU, against the docs' 400: a second continue from the same response id
+and a continue that sends `system` both answered `thread_not_found`. Either way the answer is a replay.
+
+**The pool rule.** A thread lives in one organization, so a request that changes organization cannot continue it:
+
+- *Pool to pool* (the bound pool drains or expires, so the session is picked again): the new org answers 404
+  `thread_not_found` itself. **The gateway does not synthesize it**: the passthrough already guarantees it (a gateway-side
+  answer would need a message-id map and would add a failure mode for no gain), and a test proves the body arrives
+  byte for byte (`message threads`, `proxy.test.ts`).
+- *Pool to IU* (drain, no pool eligible, a Claude-Code-shaped or forced request): IU answers the wrapped 503 above. **The
+  gateway unwraps it, for a request that carries `thread` only:** a 503 `text/plain` from IU whose body is
+  `[Anthropic API StatusCode: NotFound|BadRequest] <json>` becomes that status with the JSON as the body
+  (`application/json`). Any other IU answer, and every request without `thread`, passes as before; IU's wrapper stays what
+  every other caller sees, so no existing classifier (`isBalanceFailure`, the transports' retry set) changes.
+- *IU to pool*: the pool answers 404 itself; nothing to do.
+
+The cost of a pool change is one 404 and a replay (a full create on the new upstream), no worse than the cache miss
+the move costs already (§What the credit is). An error row carries no tokens and no cost.
+
+**Callers must send a session header** (`x-agw-session` and its alternatives, §Picking a pool) on every request of a thread. Without
+one the session id falls back to a hash of the first user message, and a continue's first message is not the create's:
+the continue would be picked as a new session and may land on another pool, a 404 and a replay for nothing.
+
+**Meter.** Nothing changes. The tee reads `usage` from the response as for any request, and a continue's `usage` counts
+the full read (the thread rebuilds the conversation before the model runs), so the row, the cost and the meter are right
+without an estimate. The estimate for a cut request uses request bytes, which a continue makes small; a cut continue on
+a credit pool therefore under-counts input by the stored conversation until its stream's `message_start` arrives
+(usually the case). Accepted: it affects only a request that dies before any response byte. The span carries
+`agw.gateway.thread` (`create` / `continue`).
+
+**Who should adopt it.**
+
+| Caller | Verdict |
+|-|-|
+| agw's Anthropic wire (`packages/capabilities`, `anthropicWire`) | No: one non-streamed request per call, no loop |
+| agw agent steps (the host's OpenCode server, caller `agw-opencode`) | The long tool loops are here and are the real candidate. The change belongs to OpenCode's provider layer (its pinned build), not the gateway: **follow-up**, once a pinned build ships thread support; it must keep its own copy of the conversation and replay on `thread_not_found` |
+| Hermes | No: turns are human-paced, mostly more than 5 minutes apart; prompt caching alone covers them |
+| Claude Code | Not on the gateway |
+
+A client that adopts it must: send the beta header on every request of the thread; keep the whole conversation itself;
+treat `thread_not_found` (and `thread_already_continued`, `thread_continue_in_flight`) as "replay the full conversation as
+a new create"; continue only after `message_stop`; start a new thread after a `refusal` or a fallback model's reply.
+
 ## Callers and attribution
 
 Callers authenticate with a door token (`data/door-tokens`, one line per caller: `hermes`, `agw-opencode` (the OpenCode
