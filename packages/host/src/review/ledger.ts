@@ -218,6 +218,20 @@ export function reviewLedger(pool: ReviewPool, schema: string) {
       return rows[0] ? toJob(rows[0]) : null
     },
 
+    /**
+     * The fix-loop length of a thread: the submitted rounds since its last clean one (all of them when none was clean).
+     * A clean round ends the loop, so a re-review after a rebase on a settled thread starts a new one.
+     */
+    async fixLoopRounds(repo: string, thread: string, q: Query = pool): Promise<number> {
+      const { rows } = await q.query(
+        `select output->>'outcome' as outcome from ${jobs}
+          where repo = $1 and thread = $2 and state = 'submitted' order by round desc, submitted_at desc`,
+        [repo, thread],
+      )
+      const clean = (rows as { outcome: string | null }[]).findIndex((r) => r.outcome === 'clean')
+      return clean < 0 ? rows.length : clean
+    },
+
     /** The newest job of a thread of this repo, in any state: whether a thread id names a thread the ledger holds. */
     async threadJob(repo: string, thread: string): Promise<Job | null> {
       const { rows } = await pool.query(

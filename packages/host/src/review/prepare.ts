@@ -20,6 +20,7 @@ import { isAncestor, repoIdentity, type ResolvedScope, resolveRoot, resolveScope
 import { routeRange, type Seat, type Tier } from './route.ts'
 import type { PrepareInputValue, PrepareOutputValue } from './schema.ts'
 
+/** The cap is for a fix loop: submitted rounds in a row that ended with an open important finding. */
 export const MAX_ROUNDS = 3
 /** A runaway guard far above a busy day (~15 deep reviews per account); the quota reading is only recorded. */
 export const DEFAULT_DEEP_CAP = 60
@@ -267,7 +268,7 @@ async function prepareResolved(
   const last = await ledger.lastSubmitted(repo, thread)
   const round = last ? last.round + 1 : 1
   const common = { thread, round, base, head, account }
-  if (round > MAX_ROUNDS) {
+  if ((await ledger.fixLoopRounds(repo, thread)) >= MAX_ROUNDS) {
     return {
       status: 'needs-human',
       reason: `${MAX_ROUNDS} rounds on thread ${thread}: step back and reconsider the approach`,

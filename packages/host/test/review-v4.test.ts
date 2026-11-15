@@ -394,6 +394,44 @@ describe('convergence over rounds', () => {
   })
 })
 
+describe('the round cap is for a fix loop', () => {
+  test('clean rounds do not count: a fourth review on a thread that settled clean is prepared', async () => {
+    const s = service()
+    const root = repo({ 'src/a.ts': lines(2) })
+    let thread = ''
+    for (const n of [1, 2, 3, 4]) {
+      write(root, 'src/a.ts', `${lines(2)}export const round${n} = ${n}\n`)
+      const r = await ready(s.prepare({ cwd: root }))
+      expect(r.round).toBe(n)
+      thread = r.thread
+      const out = await s.submit({ jobId: r.jobId, attempt: 1, reply: fakeReviewer(r.jobDir, []) })
+      expect(out.outcome).toBe('clean')
+    }
+    write(root, 'src/a.ts', `${lines(2)}export const round5 = 5\n`)
+    expect(await s.prepare({ cwd: root })).toMatchObject({ status: 'ready', thread, round: 5 })
+  })
+
+  test('a clean round ends the loop: the cap counts only the rounds after it', async () => {
+    const s = service()
+    const root = repo({ 'src/a.ts': lines(2) })
+    const run = async (n: number, findings: { tag: 'important'; file: string; message: string }[]) => {
+      write(root, 'src/a.ts', `${lines(2)}export const round${n} = ${n}\n`)
+      const r = await ready(s.prepare({ cwd: root }))
+      const out = await s.submit({ jobId: r.jobId, attempt: 1, reply: fakeReviewer(r.jobDir, findings) })
+      return out
+    }
+    const finding = (message: string) => [{ tag: 'important' as const, file: 'src/a.ts', message }]
+    expect((await run(1, finding('First problem'))).outcome).toBe('actionable')
+    expect((await run(2, finding('Second problem'))).outcome).toBe('actionable')
+    expect((await run(3, [])).outcome).toBe('clean')
+    expect((await run(4, finding('Third problem'))).outcome).toBe('actionable')
+    expect((await run(5, finding('Fourth problem'))).outcome).toBe('actionable')
+    expect((await run(6, finding('Fifth problem'))).outcome).toBe('needs-human')
+    write(root, 'src/a.ts', `${lines(2)}export const round7 = 7\n`)
+    expect(await s.prepare({ cwd: root })).toMatchObject({ status: 'needs-human' })
+  })
+})
+
 describe('convergence by disposition', () => {
   const round1 = async (s: ReturnType<typeof service>, root: string, message: string) => {
     write(root, 'src/a.ts', `${lines(2)}export const roundOne = 1\n`)

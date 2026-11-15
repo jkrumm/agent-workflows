@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { type Anchoring, anchorFindings, anchorKey } from './anchor.ts'
 import type { ReviewContext } from './context.ts'
 import type { Finding, Job, NewFinding } from './ledger.ts'
-import { removeWorktree } from './prepare.ts'
+import { MAX_ROUNDS, removeWorktree } from './prepare.ts'
 import type { FileChange } from './route.ts'
 import {
   type OutputFindingValue,
@@ -109,7 +109,8 @@ export async function submit(
     if (again) return { output: again, fresh: false }
     const existing = await ledger.threadFindings(job.repo, job.thread, client)
     const account = job.account ?? input.account ?? null
-    const output = assemble({ ...job, account }, reply, existing, anchoring)
+    const priorFixRounds = await ledger.fixLoopRounds(job.repo, job.thread, client)
+    const output = assemble({ ...job, account }, reply, existing, anchoring, priorFixRounds)
     for (const f of output.newFindings) await ledger.insertFinding(client, f)
     for (const t of output.touched) await ledger.touchFinding(client, t.id, job.id, t.reopen)
     await ledger.markSubmitted(client, job.id, input.attempt, output.output, ctx.now(), account)
@@ -199,9 +200,12 @@ function reviewOutput(input: {
   reply: ReviewerReplyValue
   kept: OutputFindingValue[]
   dropped: { repeats: number; nits: number }
+  /** Submitted rounds in the thread's fix loop before this one. */
+  priorFixRounds: number
 }): ReviewOutputV4Value {
   const { job, reply, kept } = input
   const important = kept.some((f) => f.tag === 'important')
+  const stuck = important && input.priorFixRounds + 1 >= MAX_ROUNDS
   return {
     schemaVersion: REVIEW_OUTPUT_VERSION,
     jobId: job.id,
@@ -212,12 +216,12 @@ function reviewOutput(input: {
     rule: job.rule,
     account: job.account,
     intent: reply.intent,
-    outcome: !important ? 'clean' : job.round >= 3 ? 'needs-human' : 'actionable',
+    outcome: !important ? 'clean' : stuck ? 'needs-human' : 'actionable',
     summary: summarize(kept),
     findings: kept,
     checked: reply.checked,
     ...(reply.criteria?.length ? { criteria: reply.criteria } : {}),
-    stepBack: reply.stepBack?.trim() || (job.round >= 3 && important ? DEFAULT_STEP_BACK : null),
+    stepBack: reply.stepBack?.trim() || (stuck ? DEFAULT_STEP_BACK : null),
     files: job.files,
     dropped: input.dropped,
     base: job.base,
@@ -226,7 +230,13 @@ function reviewOutput(input: {
   }
 }
 
-function assemble(job: Job, reply: ReviewerReplyValue, existing: Finding[], anchoring: Map<string, Anchoring>) {
+function assemble(
+  job: Job,
+  reply: ReviewerReplyValue,
+  existing: Finding[],
+  anchoring: Map<string, Anchoring>,
+  priorFixRounds: number,
+) {
   const byId = new Map(existing.map((f) => [f.id, f]))
   const byKey = new Map<string, Finding>()
   for (const f of existing) if (!byKey.has(repeatKey(f))) byKey.set(repeatKey(f), f)
@@ -268,7 +278,7 @@ function assemble(job: Job, reply: ReviewerReplyValue, existing: Finding[], anch
   }
 
   return {
-    output: reviewOutput({ job, reply, kept, dropped }),
+    output: reviewOutput({ job, reply, kept, dropped, priorFixRounds }),
     newFindings: fresh.map((f) => newFinding(job, f)),
     touched,
   }
