@@ -16,7 +16,7 @@ CLI exits non-zero naming it.
 
 | Command | What |
 |-|-|
-| `agw review prepare --cwd <dir> [--scope uncommitted\|head\|<ref>\|<a>..<b> \| --pr N \| --branch B] [--context] [--min] [--thread] [--account]` | Thread, round, route, quota reading, deep cap, job dir. `status`: `ready` (run the agent with `prompt` on `seat`), `skipped` (tier none), `held` (the deep cap; wait, the tier is never lowered), `needs-human` (a 4th round) |
+| `agw review prepare --cwd <dir> [--scope uncommitted\|head\|<ref>\|<a>..<b> \| --pr N \| --branch B] [--context] [--min] [--thread] [--account]` | Thread, round, route, quota reading, deep cap, job dir. `status`: `ready` (run the agent with `prompt` on `seat`), `skipped` (tier none), `held` (the deep cap; wait, the tier is never lowered), `needs-human` (a 4th fix-loop round: three in a row ended with an important finding) |
 | `agw review cancel <jobId>` | A `prepared` job is abandoned and its tree removed → `{status: 'cancelled', jobId}`. A submitted or abandoned job is refused naming its state |
 | `agw review submit <jobId> --attempt <n> [--account <a>]` (reply on stdin) | REVIEW_OUTPUT v4. Idempotent per (job, attempt): the same attempt gets the stored output back, another attempt is refused naming the winner. `--account` sets the job's account only when it has none |
 | `agw review dispose <jobId> <findingId> fixed\|wrong\|intentional\|irrelevant\|open [--reason]` | The answer to a finding of the job's thread; idempotent |
@@ -144,15 +144,15 @@ that is 0; `anchoredShare` and `lineValidShare` over findings whose value is not
 ## Convergence
 
 Round = last submitted round of the thread + 1; a re-prepare abandons the thread's unsubmitted job (only when a new job
-is written: a held or skipped prepare leaves a running review alone). Round 4 is refused (`needs-human`). From round 2
+is written: a held or skipped prepare leaves a running review alone). The cap is for a fix loop: a prepare after three submitted rounds in a row that ended with an important finding is refused (`needs-human`); a clean round ends the loop, so a re-review of a settled thread (after a rebase) is not counted. From round 2
 the diff starts at the last reviewed head when it is an ancestor of the new head or the two share the base (two
 snapshots on one base), else at the base. Submit: a reply finding matches a thread finding E by `stillOpen` with E's id,
 else by file + class + normalized message, then by E's disposition: `wrong`, `intentional` or `irrelevant` is a dropped
 repeat (counted); `open` is kept under E's id with `stillOpen` (`last_job_id` moves); `fixed` is reopened, kept under E's
 id with `stillOpen` and E back to `open` in the same transaction. Two reply findings on one E keep the first. No match is
 a new finding; a `stillOpen` with an unknown id matches by key or is new. Nits past
-REVIEW.md `nits` are dropped (counted). Code decides `outcome` (`clean` without important, `needs-human` from round 3,
-else `actionable`), `summary` (counts only), `stepBack` (the reply's, or a fixed default at round 3 with important left)
+REVIEW.md `nits` are dropped (counted). Code decides `outcome` (`clean` without important, `needs-human` at the third fix-loop round in a row,
+else `actionable`), `summary` (counts only), `stepBack` (the reply's, or a fixed default at that round with important left)
 and `tier` (the job's). The echoed `files` must equal the stat paths (the empty-diff guard), except that a binary file (numstat `-	-`) may be listed or left out; nothing is written otherwise.
 
 ## Quota reading and deep cap
