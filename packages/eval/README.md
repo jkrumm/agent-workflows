@@ -78,19 +78,9 @@ The run output's `auto`: `{ state: labelled|target-reached|no-credit|iu-line, ta
 creditAvailableUsd, creditPerCandidateUsd, iuSpentUsd, iuLineUsd, iuPerCandidateUsd, planned }` (`null` without `--auto`;
 the credit and IU reads are `null` at the target).
 
-**The nightly job.** `make eval-mine-job` installs the LaunchAgent `com.jkrumm.agent-workflows-eval-mine` (04:30 daily,
-`scripts/eval-mine-daily.sh` of the live release). It runs `AGW_PURPOSE=eval agw eval mine review --auto --yes --commit
---format json --idempotency-key eval-mine-daily-<UTC date>` (a second trigger the same day adopts the run), follows an exit
-10 with `agw run wait` for up to 3 h (the run is never cancelled, only the waiting stops), and appends one line to
-`~/Library/Logs/agent-workflows-eval-mine.log`:
-
-```
-2026-11-04T04:41:07Z bug cases 61/200 (dev 33, test 28); labelled 40, accepted +18; credit available 3.21, run cost 2.76; IU eval 2.7 of 20 before the run; planned 40; state labelled; run <runId>
-```
-
-A failure logs `FAILED: <reason>` and exits non-zero. `run cost` is the run's total over both payers (the run record has no
-per-payer split); the IU eval spend after the run is the next night's `IU eval … before the run`. At `target-reached` the script logs
-it, removes its own plist and boots the label out, so it never runs again.
+**No nightly job.** The nightly labelling LaunchAgent (`com.jkrumm.agent-workflows-eval-mine`) is retired: bug-recall cases
+are no longer the target (`docs/waves/PLAN.md`), and its `make eval-mine-job` target, script and plist template are gone.
+`agw eval mine review --auto` still runs by hand.
 
 **Files**, all under `$AGW_EVAL_DIR/review-gt/` (dirs 0700, files 0600; cases name private repos):
 

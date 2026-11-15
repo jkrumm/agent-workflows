@@ -39,11 +39,3 @@ services:
           keepalive-poll: 'the loop supervises a GUI Chrome, not a schedule: Chrome hands a second launch on the same profile to the running instance and exits 0, so a plain KeepAlive agent would respawn and open a tab every ThrottleInterval while another Chrome holds 9222',
         },
     }
-  - {
-      name: agent-workflows-eval-mine,
-      kind: launchd,
-      tier: core,
-      label: com.jkrumm.agent-workflows-eval-mine,
-      memory_mib: 50,
-      note: '04:30 nightly review-ground-truth labelling (agw eval mine review --auto); installed by make eval-mine-job, removes itself at the bug-case target',
-    }
