@@ -2,7 +2,7 @@
 .PHONY: help check test-timings fmt deploy verify version live-routes install-opencode research-chrome eval-mine-job
 
 help:
-	@echo "make check   oxfmt check, oxlint type-aware, tsc, bun test --parallel (the merge gate; TEST_WORKERS=n sets the workers)"
+	@echo "make check   mini-registry lint (when the dotfiles checkout is present), oxfmt check, oxlint type-aware, tsc, bun test --parallel (the merge gate; TEST_WORKERS=n sets the workers)"
 	@echo "make test-timings  re-record .bun-test-timings.json (how long each test file takes, so the slowest start first); run it on an idle machine and commit the result"
 	@echo "make fmt     apply formatting"
 	@echo "make deploy  deploy origin/master on the mini: release, LaunchAgents host and audio, the gateway as a third (restarted only when its build changed), health, agw on PATH (DRY_RUN=1 prints the plan)"
@@ -32,6 +32,8 @@ BUN_TEST_FLAGS ?= --parallel=$(TEST_WORKERS) --timings=.bun-test-timings.json
 check:
 	@echo "==> install (bun install --frozen-lockfile)"
 	@bun install --frozen-lockfile
+	@echo "==> registry (mini-registry lint: this repo's mini-services.yaml against every other registry; skipped without the dotfiles checkout, as on CI)"
+	@[ ! -f "$$HOME/SourceRoot/dotfiles/scripts/mini-registry.ts" ] || bun "$$HOME/SourceRoot/dotfiles/scripts/mini-registry.ts" lint
 	@echo "==> format (oxfmt --check)"
 	@bunx --no-install oxfmt --check .
 	@echo "==> lint (oxlint --type-aware)"
