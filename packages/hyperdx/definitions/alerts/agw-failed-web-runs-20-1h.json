@@ -1,0 +1,11 @@
+{
+  "name": "agw failed web capability runs >= 20 per capability (1h)",
+  "dashboard": "agw",
+  "tile": "Failed root runs per web capability (alert: 20 or more per hour)",
+  "interval": "1h",
+  "threshold": 20,
+  "thresholdType": "above",
+  "message": "A web capability (cap.web.*) had 20 or more failed root runs in an hour: a burst, not the usual single 404s. The dashboard's \"Web capability failures by reason\" table names the cause. Definition: packages/hyperdx/README.md.",
+  "tags": ["agw"],
+  "channels": [{ "type": "webhook", "webhook": "Factory door" }]
+}

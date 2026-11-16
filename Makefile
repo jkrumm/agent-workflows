@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help check test-timings fmt deploy verify version live-routes install-opencode research-chrome
+.PHONY: help check test-timings fmt deploy verify version live-routes install-opencode research-chrome hyperdx-apply hyperdx-export
 
 help:
 	@echo "make check   mini-registry lint (when the dotfiles checkout is present), oxfmt check, oxlint type-aware, tsc, bun test --parallel (the merge gate; TEST_WORKERS=n sets the workers)"
@@ -9,6 +9,7 @@ help:
 	@echo "make install-opencode  install the pinned OpenCode build, link opencode and opencode-safe into ~/.local/bin from the main checkout (never restarts the host)"
 	@echo "make research-chrome  install and start the headed Chrome (LaunchAgent, DevTools on loopback) web.fetch reads bot-walled pages with"
 	@echo "make live-routes one real call per route (anthropic, opencode, iu-openai text; ROUTES='a b' narrows), proved by its gateway usage row and run row; costs cents"
+	@echo "make hyperdx-apply  upsert the HyperDX dashboard agw and its alerts from packages/hyperdx/definitions (ARGS='--dry-run' prints the plan); hyperdx-export writes the live ones back"
 	@echo "make version print the deployed commit sha (data/deployed-sha), one line, read-only"
 	@echo "make verify  prove the deployment: the pinned OpenCode present, the healths at the sha (the gateway at its build), agw smoke ping and audio ping with their journal rows, the door's auth, three real Haiku calls through the gateway with their usage rows"
 
@@ -68,6 +69,15 @@ verify:
 # The deployed commit sha, one line, read-only: what `make deploy` last left live (the factory checks a shipped commit against it).
 version:
 	@tr -d '[:space:]' < "$${AGW_ROOT:-$$HOME/.agent-workflows}/data/deployed-sha"; echo
+
+# The HyperDX dashboard `agw` and its alerts, upserted by name from packages/hyperdx/definitions through the `agw hdx` door
+# (the door holds the credentials). ARGS='--dry-run' validates and prints the plan; ARGS='--env local' targets the dev ClickStack.
+hyperdx-apply:
+	@bun packages/hyperdx/src/cli.ts apply $(ARGS)
+
+# The inverse: write the live dashboard and its agw-tagged alerts back into packages/hyperdx/definitions (capture a UI edit).
+hyperdx-export:
+	@bun packages/hyperdx/src/cli.ts export $(ARGS)
 
 # A live call per route through `agw smoke route`, each proved by its usage.records and agw.runs rows (scripts/live-routes.sh).
 live-routes:

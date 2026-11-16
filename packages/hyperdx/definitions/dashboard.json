@@ -1,0 +1,425 @@
+{
+  "name": "agw",
+  "tags": ["agw"],
+  "tiles": [
+    {
+      "name": "Gateway spans / 1 h (0 = the mini's telemetry is silent)",
+      "x": 0,
+      "y": 0,
+      "w": 6,
+      "h": 3,
+      "config": {
+        "displayType": "number",
+        "source": "Traces",
+        "select": [
+          {
+            "aggFn": "count",
+            "alias": "Gateway spans",
+            "valueExpression": "",
+            "where": "ServiceName = 'agw-gateway'",
+            "whereLanguage": "sql"
+          }
+        ],
+        "numberFormat": { "output": "number", "mantissa": 0, "thousandSeparated": true },
+        "color": "chart-green",
+        "colorRules": [{ "operator": "lt", "value": 1, "color": "chart-error", "label": "silent" }]
+      }
+    },
+    {
+      "name": "Failed root runs / 1 h (excl. verify and eval)",
+      "x": 6,
+      "y": 0,
+      "w": 6,
+      "h": 3,
+      "config": {
+        "displayType": "number",
+        "source": "Traces",
+        "select": [
+          {
+            "aggFn": "count",
+            "alias": "Failed runs",
+            "valueExpression": "",
+            "where": "ServiceName IN ('agw', 'agw-audio') AND SpanName LIKE 'agw.run %' AND SpanAttributes['agw.run.id'] = SpanAttributes['agw.run.root_id'] AND SpanAttributes['agw.purpose'] NOT IN ('verify', 'eval') AND StatusCode = 'Error'",
+            "whereLanguage": "sql"
+          }
+        ],
+        "numberFormat": { "output": "number", "mantissa": 0, "thousandSeparated": true },
+        "color": "chart-green",
+        "colorRules": [{ "operator": "gte", "value": 3, "color": "chart-error", "label": "failing" }]
+      }
+    },
+    {
+      "name": "Cost, rolling 24 h (USD, root runs)",
+      "x": 12,
+      "y": 0,
+      "w": 6,
+      "h": 3,
+      "config": {
+        "configType": "sql",
+        "displayType": "number",
+        "connection": "Local ClickHouse",
+        "source": "Traces",
+        "sqlTemplate": "SELECT round(sum(toFloat64OrZero(SpanAttributes['agw.cost.usd'])), 2) AS cost_usd FROM $__sourceTable WHERE Timestamp > fromUnixTimestamp64Milli({endDateMilliseconds:Int64}) - INTERVAL 24 HOUR AND Timestamp <= fromUnixTimestamp64Milli({endDateMilliseconds:Int64}) AND ServiceName IN ('agw', 'agw-audio') AND SpanName LIKE 'agw.run %' AND SpanAttributes['agw.run.id'] = SpanAttributes['agw.run.root_id']",
+        "numberFormat": { "output": "currency", "currencySymbol": "$", "mantissa": 2 },
+        "color": "chart-green",
+        "colorRules": [{ "operator": "gte", "value": 30, "color": "chart-error", "label": "over budget" }]
+      }
+    },
+    {
+      "name": "Error logs / 15 min (agw, agw-gateway, agw-audio)",
+      "x": 18,
+      "y": 0,
+      "w": 6,
+      "h": 3,
+      "config": {
+        "displayType": "number",
+        "source": "Logs",
+        "select": [
+          {
+            "aggFn": "count",
+            "alias": "Error logs",
+            "valueExpression": "",
+            "where": "ServiceName IN ('agw', 'agw-gateway', 'agw-audio') AND SeverityNumber >= 17",
+            "whereLanguage": "sql"
+          }
+        ],
+        "numberFormat": { "output": "number", "mantissa": 0, "thousandSeparated": true },
+        "color": "chart-green",
+        "colorRules": [{ "operator": "gte", "value": 3, "color": "chart-error", "label": "erroring" }]
+      }
+    },
+    {
+      "name": "Runs per workflow (root, excl. verify and eval)",
+      "x": 0,
+      "y": 3,
+      "w": 12,
+      "h": 6,
+      "config": {
+        "displayType": "stacked_bar",
+        "source": "Traces",
+        "select": [
+          {
+            "aggFn": "count",
+            "alias": "Runs",
+            "valueExpression": "",
+            "where": "ServiceName IN ('agw', 'agw-audio') AND SpanName LIKE 'agw.run %' AND SpanAttributes['agw.run.id'] = SpanAttributes['agw.run.root_id'] AND SpanAttributes['agw.purpose'] NOT IN ('verify', 'eval')",
+            "whereLanguage": "sql"
+          }
+        ],
+        "groupBy": "SpanAttributes['agw.workflow.id']",
+        "seriesLimit": 12,
+        "numberFormat": { "output": "number", "mantissa": 0, "thousandSeparated": true }
+      }
+    },
+    {
+      "name": "Failure rate per workflow (root runs)",
+      "x": 12,
+      "y": 3,
+      "w": 12,
+      "h": 6,
+      "config": {
+        "displayType": "line",
+        "source": "Traces",
+        "select": [
+          {
+            "aggFn": "count",
+            "alias": "Failed",
+            "valueExpression": "",
+            "where": "ServiceName IN ('agw', 'agw-audio') AND SpanName LIKE 'agw.run %' AND SpanAttributes['agw.run.id'] = SpanAttributes['agw.run.root_id'] AND SpanAttributes['agw.purpose'] NOT IN ('verify', 'eval') AND StatusCode = 'Error'",
+            "whereLanguage": "sql"
+          },
+          {
+            "aggFn": "count",
+            "alias": "Runs",
+            "valueExpression": "",
+            "where": "ServiceName IN ('agw', 'agw-audio') AND SpanName LIKE 'agw.run %' AND SpanAttributes['agw.run.id'] = SpanAttributes['agw.run.root_id'] AND SpanAttributes['agw.purpose'] NOT IN ('verify', 'eval')",
+            "whereLanguage": "sql"
+          }
+        ],
+        "asRatio": true,
+        "groupBy": "SpanAttributes['agw.workflow.id']",
+        "seriesLimit": 8,
+        "numberFormat": { "output": "percent", "mantissa": 1 }
+      }
+    },
+    {
+      "name": "Failed root runs per workflow (alert: 3 or more per hour, web capabilities excluded)",
+      "x": 0,
+      "y": 9,
+      "w": 12,
+      "h": 6,
+      "config": {
+        "displayType": "stacked_bar",
+        "source": "Traces",
+        "select": [
+          {
+            "aggFn": "count",
+            "alias": "Failed runs",
+            "valueExpression": "",
+            "where": "ServiceName IN ('agw', 'agw-audio') AND SpanName LIKE 'agw.run %' AND SpanAttributes['agw.run.id'] = SpanAttributes['agw.run.root_id'] AND SpanAttributes['agw.purpose'] NOT IN ('verify', 'eval') AND StatusCode = 'Error' AND SpanAttributes['agw.workflow.id'] NOT LIKE 'cap.web.%'",
+            "whereLanguage": "sql"
+          }
+        ],
+        "groupBy": "SpanAttributes['agw.workflow.id']",
+        "seriesLimit": 12,
+        "numberFormat": { "output": "number", "mantissa": 0, "thousandSeparated": true }
+      }
+    },
+    {
+      "name": "Failed root runs per web capability (alert: 20 or more per hour)",
+      "x": 12,
+      "y": 9,
+      "w": 12,
+      "h": 6,
+      "config": {
+        "displayType": "stacked_bar",
+        "source": "Traces",
+        "select": [
+          {
+            "aggFn": "count",
+            "alias": "Failed runs",
+            "valueExpression": "",
+            "where": "ServiceName IN ('agw', 'agw-audio') AND SpanName LIKE 'agw.run %' AND SpanAttributes['agw.run.id'] = SpanAttributes['agw.run.root_id'] AND SpanAttributes['agw.purpose'] NOT IN ('verify', 'eval') AND StatusCode = 'Error' AND SpanAttributes['agw.workflow.id'] LIKE 'cap.web.%'",
+            "whereLanguage": "sql"
+          }
+        ],
+        "groupBy": "SpanAttributes['agw.workflow.id']",
+        "seriesLimit": 12,
+        "numberFormat": { "output": "number", "mantissa": 0, "thousandSeparated": true }
+      }
+    },
+    {
+      "name": "p95 wall per workflow (root runs)",
+      "x": 0,
+      "y": 15,
+      "w": 12,
+      "h": 6,
+      "config": {
+        "displayType": "line",
+        "source": "Traces",
+        "select": [
+          {
+            "aggFn": "quantile",
+            "level": 0.95,
+            "alias": "p95 wall",
+            "valueExpression": "Duration",
+            "where": "ServiceName IN ('agw', 'agw-audio') AND SpanName LIKE 'agw.run %' AND SpanAttributes['agw.run.id'] = SpanAttributes['agw.run.root_id'] AND SpanAttributes['agw.purpose'] NOT IN ('verify', 'eval')",
+            "whereLanguage": "sql",
+            "numberFormat": { "output": "duration", "factor": 0.000000001 }
+          }
+        ],
+        "groupBy": "SpanAttributes['agw.workflow.id']",
+        "seriesLimit": 8
+      }
+    },
+    {
+      "name": "Cost per day (USD, root runs: sum of agw.cost.usd)",
+      "x": 12,
+      "y": 15,
+      "w": 12,
+      "h": 6,
+      "config": {
+        "configType": "sql",
+        "displayType": "stacked_bar",
+        "connection": "Local ClickHouse",
+        "source": "Traces",
+        "sqlTemplate": "SELECT toStartOfDay(Timestamp) AS ts, multiIf(SpanAttributes['agw.purpose'] = 'eval', 'eval', SpanAttributes['agw.purpose'] LIKE 'software-factory.%', 'factory', 'other') AS Kind, round(sum(toFloat64OrZero(SpanAttributes['agw.cost.usd'])), 2) AS cost_usd FROM $__sourceTable WHERE $__timeFilter(Timestamp) AND ServiceName IN ('agw', 'agw-audio') AND SpanName LIKE 'agw.run %' AND SpanAttributes['agw.run.id'] = SpanAttributes['agw.run.root_id'] GROUP BY ts, Kind ORDER BY ts LIMIT 2000"
+      }
+    },
+    {
+      "name": "Workflows with every run failed in 6 h (alert: 1 or more)",
+      "x": 0,
+      "y": 21,
+      "w": 6,
+      "h": 5,
+      "config": {
+        "configType": "sql",
+        "displayType": "number",
+        "connection": "Local ClickHouse",
+        "source": "Traces",
+        "sqlTemplate": "SELECT count() AS dead_workflows FROM (SELECT SpanAttributes['agw.workflow.id'] AS w, count() AS runs, countIf(StatusCode = 'Error') AS failed FROM $__sourceTable WHERE Timestamp > fromUnixTimestamp64Milli({endDateMilliseconds:Int64}) - INTERVAL 6 HOUR AND Timestamp <= fromUnixTimestamp64Milli({endDateMilliseconds:Int64}) AND ServiceName IN ('agw', 'agw-audio') AND SpanName LIKE 'agw.run %' AND SpanAttributes['agw.run.id'] = SpanAttributes['agw.run.root_id'] AND SpanAttributes['agw.purpose'] NOT IN ('verify', 'eval') GROUP BY w HAVING runs >= 3 AND failed = runs)",
+        "numberFormat": { "output": "number", "mantissa": 0 },
+        "color": "chart-green",
+        "colorRules": [{ "operator": "gte", "value": 1, "color": "chart-error", "label": "dead workflow" }]
+      }
+    },
+    {
+      "name": "Workflows by runs and failures, last 6 h (3 or more runs)",
+      "x": 6,
+      "y": 21,
+      "w": 18,
+      "h": 5,
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "connection": "Local ClickHouse",
+        "source": "Traces",
+        "sqlTemplate": "SELECT SpanAttributes['agw.workflow.id'] AS Workflow, count() AS Runs, countIf(StatusCode = 'Error') AS Failed, round(Failed / Runs, 2) AS FailedShare FROM $__sourceTable WHERE Timestamp > fromUnixTimestamp64Milli({endDateMilliseconds:Int64}) - INTERVAL 6 HOUR AND Timestamp <= fromUnixTimestamp64Milli({endDateMilliseconds:Int64}) AND ServiceName IN ('agw', 'agw-audio') AND SpanName LIKE 'agw.run %' AND SpanAttributes['agw.run.id'] = SpanAttributes['agw.run.root_id'] AND SpanAttributes['agw.purpose'] NOT IN ('verify', 'eval') GROUP BY Workflow HAVING Runs >= 3 ORDER BY FailedShare DESC, Runs DESC LIMIT 30"
+      }
+    },
+    {
+      "name": "Gateway requests by route",
+      "x": 0,
+      "y": 26,
+      "w": 12,
+      "h": 6,
+      "config": {
+        "displayType": "stacked_bar",
+        "source": "Traces",
+        "select": [
+          {
+            "aggFn": "count",
+            "alias": "Requests",
+            "valueExpression": "",
+            "where": "ServiceName = 'agw-gateway' AND SpanAttributes['agw.gateway.caller'] != 'modelpick'",
+            "whereLanguage": "sql"
+          }
+        ],
+        "groupBy": "if(SpanAttributes['agw.gateway.route'] != '', SpanAttributes['agw.gateway.route'], 'unrouted')",
+        "seriesLimit": 12,
+        "numberFormat": { "output": "number", "mantissa": 0, "thousandSeparated": true }
+      }
+    },
+    {
+      "name": "Gateway error spans (alert: 5 or more per 15 min, modelpick probes excluded)",
+      "x": 12,
+      "y": 26,
+      "w": 12,
+      "h": 6,
+      "config": {
+        "displayType": "stacked_bar",
+        "source": "Traces",
+        "select": [
+          {
+            "aggFn": "count",
+            "alias": "Error spans",
+            "valueExpression": "",
+            "where": "ServiceName = 'agw-gateway' AND StatusCode = 'Error' AND SpanAttributes['agw.gateway.caller'] != 'modelpick'",
+            "whereLanguage": "sql"
+          }
+        ],
+        "numberFormat": { "output": "number", "mantissa": 0, "thousandSeparated": true }
+      }
+    },
+    {
+      "name": "Gateway errors by caller and status (modelpick excluded)",
+      "x": 0,
+      "y": 32,
+      "w": 12,
+      "h": 6,
+      "config": {
+        "displayType": "stacked_bar",
+        "source": "Traces",
+        "select": [
+          {
+            "aggFn": "count",
+            "alias": "Error spans",
+            "valueExpression": "",
+            "where": "ServiceName = 'agw-gateway' AND StatusCode = 'Error' AND SpanAttributes['agw.gateway.caller'] != 'modelpick'",
+            "whereLanguage": "sql"
+          }
+        ],
+        "groupBy": "concat(SpanAttributes['agw.gateway.caller'], ' ', SpanAttributes['agw.gateway.status'])",
+        "seriesLimit": 10,
+        "numberFormat": { "output": "number", "mantissa": 0, "thousandSeparated": true }
+      }
+    },
+    {
+      "name": "Gateway time to first token, p95 by route",
+      "x": 12,
+      "y": 32,
+      "w": 12,
+      "h": 6,
+      "config": {
+        "displayType": "line",
+        "source": "Traces",
+        "select": [
+          {
+            "aggFn": "quantile",
+            "level": 0.95,
+            "alias": "p95 TTFT",
+            "valueExpression": "toFloat64OrZero(SpanAttributes['agw.gateway.ttft_ms'])",
+            "where": "ServiceName = 'agw-gateway' AND SpanAttributes['agw.gateway.ttft_ms'] != '' AND SpanAttributes['agw.gateway.caller'] != 'modelpick'",
+            "whereLanguage": "sql",
+            "numberFormat": { "output": "duration", "factor": 0.001 }
+          }
+        ],
+        "groupBy": "if(SpanAttributes['agw.gateway.route'] != '', SpanAttributes['agw.gateway.route'], 'unrouted')",
+        "seriesLimit": 8
+      }
+    },
+    {
+      "name": "Web capability failures by reason",
+      "x": 0,
+      "y": 38,
+      "w": 12,
+      "h": 6,
+      "config": {
+        "configType": "sql",
+        "displayType": "table",
+        "connection": "Local ClickHouse",
+        "source": "Traces",
+        "sqlTemplate": "SELECT SpanAttributes['agw.workflow.id'] AS Workflow, substring(replaceOne(SpanAttributes['agw.error.message'], 'step \"call\" failed (error): ', ''), 1, 70) AS Reason, count() AS Runs FROM $__sourceTable WHERE $__timeFilter(Timestamp) AND ServiceName = 'agw' AND SpanName LIKE 'agw.run cap.web.%' AND SpanAttributes['agw.run.id'] = SpanAttributes['agw.run.root_id'] AND StatusCode = 'Error' AND SpanAttributes['agw.purpose'] NOT IN ('verify', 'eval') GROUP BY Workflow, Reason ORDER BY Runs DESC LIMIT 30"
+      }
+    },
+    {
+      "name": "Web fetch and read runs by leg (cached or not)",
+      "x": 12,
+      "y": 38,
+      "w": 12,
+      "h": 6,
+      "config": {
+        "displayType": "stacked_bar",
+        "source": "Traces",
+        "select": [
+          {
+            "aggFn": "count",
+            "alias": "Runs",
+            "valueExpression": "",
+            "where": "ServiceName = 'agw' AND SpanName IN ('agw.run cap.web.fetch', 'agw.run cap.web.read') AND SpanAttributes['agw.web.leg'] != ''",
+            "whereLanguage": "sql"
+          }
+        ],
+        "groupBy": "concat(SpanAttributes['agw.web.leg'], if(SpanAttributes['agw.web.cached'] = 'true', ' (cached)', ''))",
+        "seriesLimit": 10,
+        "numberFormat": { "output": "number", "mantissa": 0, "thousandSeparated": true }
+      }
+    },
+    {
+      "name": "Gateway spend per pool per day (USD; stands in for pool credit left)",
+      "x": 0,
+      "y": 44,
+      "w": 12,
+      "h": 6,
+      "config": {
+        "configType": "sql",
+        "displayType": "stacked_bar",
+        "connection": "Local ClickHouse",
+        "source": "Traces",
+        "sqlTemplate": "SELECT toStartOfDay(Timestamp) AS ts, SpanAttributes['agw.gateway.pool'] AS Pool, round(sum(toFloat64OrZero(SpanAttributes['agw.cost.usd'])), 2) AS spend_usd FROM $__sourceTable WHERE $__timeFilter(Timestamp) AND ServiceName = 'agw-gateway' GROUP BY ts, Pool ORDER BY ts LIMIT 2000"
+      }
+    },
+    {
+      "name": "Error logs by service",
+      "x": 12,
+      "y": 44,
+      "w": 12,
+      "h": 6,
+      "config": {
+        "displayType": "stacked_bar",
+        "source": "Logs",
+        "select": [
+          {
+            "aggFn": "count",
+            "alias": "Error logs",
+            "valueExpression": "",
+            "where": "ServiceName IN ('agw', 'agw-gateway', 'agw-audio') AND SeverityNumber >= 17",
+            "whereLanguage": "sql"
+          }
+        ],
+        "groupBy": "ServiceName",
+        "numberFormat": { "output": "number", "mantissa": 0, "thousandSeparated": true }
+      }
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "name": "agw cost > 30 USD per 24h",
+  "dashboard": "agw",
+  "tile": "Cost, rolling 24 h (USD, root runs)",
+  "interval": "1h",
+  "threshold": 30,
+  "thresholdType": "above_exclusive",
+  "message": "Root-run cost over the last 24 hours (sum of agw.cost.usd) is above 30 USD; a normal day is 2 to 20. The dashboard's \"Cost per day\" tile splits it by eval, factory and other. Definition: packages/hyperdx/README.md.",
+  "tags": ["agw"],
+  "channels": [{ "type": "webhook", "webhook": "Factory door" }]
+}

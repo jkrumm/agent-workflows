@@ -1,0 +1,11 @@
+{
+  "name": "agw error logs >= 3 (15m)",
+  "dashboard": "agw",
+  "tile": "Error logs / 15 min (agw, agw-gateway, agw-audio)",
+  "interval": "15m",
+  "threshold": 3,
+  "thresholdType": "above",
+  "message": "agw, agw-gateway or agw-audio logged 3 or more error-level lines in 15 minutes. Open the Logs source filtered to those services and SeverityNumber >= 17. Definition: packages/hyperdx/README.md.",
+  "tags": ["agw"],
+  "channels": [{ "type": "webhook", "webhook": "Factory door" }]
+}

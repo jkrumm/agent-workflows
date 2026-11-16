@@ -110,6 +110,10 @@
         "@types/pg": "8.23.1",
       },
     },
+    "packages/hyperdx": {
+      "name": "@agent-workflows/hyperdx",
+      "version": "0.0.0",
+    },
     "packages/limits": {
       "name": "@agent-workflows/limits",
       "version": "0.0.0",
@@ -205,6 +209,8 @@
     "@agent-workflows/gateway": ["@agent-workflows/gateway@workspace:packages/gateway"],
 
     "@agent-workflows/host": ["@agent-workflows/host@workspace:packages/host"],
+
+    "@agent-workflows/hyperdx": ["@agent-workflows/hyperdx@workspace:packages/hyperdx"],
 
     "@agent-workflows/limits": ["@agent-workflows/limits@workspace:packages/limits"],
 

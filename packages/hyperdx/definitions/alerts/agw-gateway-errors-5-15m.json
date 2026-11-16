@@ -1,0 +1,11 @@
+{
+  "name": "agw gateway error spans >= 5 (15m, modelpick excluded)",
+  "dashboard": "agw",
+  "tile": "Gateway error spans (alert: 5 or more per 15 min, modelpick probes excluded)",
+  "interval": "15m",
+  "threshold": 5,
+  "thresholdType": "above",
+  "message": "The gateway answered 5 or more real requests with an error in 15 minutes (modelpick benchmark probes excluded). The dashboard's \"Gateway errors by caller and status\" tile splits them. Definition: packages/hyperdx/README.md.",
+  "tags": ["agw"],
+  "channels": [{ "type": "webhook", "webhook": "Factory door" }]
+}

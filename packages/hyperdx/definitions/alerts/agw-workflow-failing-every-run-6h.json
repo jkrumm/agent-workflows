@@ -1,0 +1,11 @@
+{
+  "name": "agw a workflow failed every run for 6h (3 or more runs)",
+  "dashboard": "agw",
+  "tile": "Workflows with every run failed in 6 h (alert: 1 or more)",
+  "interval": "1h",
+  "threshold": 1,
+  "thresholdType": "above",
+  "message": "At least one workflow ran 3 or more times in the last 6 hours and every root run failed (verify and eval excluded). The dashboard's \"Workflows by runs and failures\" table names it. Definition: packages/hyperdx/README.md.",
+  "tags": ["agw"],
+  "channels": [{ "type": "webhook", "webhook": "Factory door" }]
+}

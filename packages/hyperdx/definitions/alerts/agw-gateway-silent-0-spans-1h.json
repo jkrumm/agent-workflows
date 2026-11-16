@@ -1,0 +1,11 @@
+{
+  "name": "agw gateway silent - 0 spans (1h)",
+  "dashboard": "agw",
+  "tile": "Gateway spans / 1 h (0 = the mini's telemetry is silent)",
+  "interval": "1h",
+  "threshold": 1,
+  "thresholdType": "below",
+  "message": "No agw-gateway span reached ClickStack in the last hour: the gateway is down, or the mini's span export is. Check the gateway LaunchAgent (`make verify`) and ~/Library/Logs/agent-workflows-gateway.err.log on the mini. Definition: packages/hyperdx/README.md.",
+  "tags": ["agw"],
+  "channels": [{ "type": "webhook", "webhook": "Factory door" }]
+}
