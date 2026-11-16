@@ -35,14 +35,35 @@ const cliOf = (command: string, extra: Partial<ResolvedCliSpec> = {}): ResolvedC
   ...extra,
 })
 
-/** A refused state or a caller's mistake → 400 with its message, so the CLI exits non-zero naming it. */
+/**
+ * Postgres refusing a connection because the role is at its limit (SQLSTATE 53300; a wrapper may keep only the text).
+ * The role is shared with `make check`, so this is a passing state of the host, not a failure of the request.
+ */
+export function isConnectionExhausted(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false
+  if ((error as { code?: unknown }).code === '53300') return true
+  return error instanceof Error && /too many (clients|connections)/i.test(error.message)
+}
+
+/**
+ * A refused state or a caller's mistake → 400 with its message, so the CLI exits non-zero naming it. An exhausted
+ * connection limit → 503 (the CLI retries it with the request's idempotency key). Anything else is logged here with
+ * the operation and its stack, then answered as the opaque 500: the access log line carries only the message.
+ */
 const answer =
-  <I, O>(work: (input: I) => Promise<O>) =>
+  <I, O>(name: Name, work: (input: I) => Promise<O>) =>
   async ({ input }: { input: I }): Promise<O> => {
     try {
       return await work(input)
     } catch (error) {
       if (error instanceof ReviewError) throw new ORPCError('BAD_REQUEST', { message: error.message })
+      if (isConnectionExhausted(error)) {
+        throw new ORPCError('SERVICE_UNAVAILABLE', {
+          message: `review ${name}: the database role is at its connection limit; retry in a few seconds`,
+          cause: error,
+        })
+      }
+      console.error(`[agw-host] review ${name} failed`, error)
       throw error
     }
   }
@@ -86,7 +107,7 @@ export function reviewOperations(service: ReviewService): Record<(typeof OPERATI
         .input(spec.input)
         .output(spec.output)
         // the zod types are checked at each call of `op`; oRPC's generic inference does not see through this helper
-        .handler(answer(work) as never),
+        .handler(answer(name, work) as never),
     }
   }
 
