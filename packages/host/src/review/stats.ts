@@ -136,19 +136,3 @@ export function computeStats(input: {
   })
   return { since: input.since, by, bucket: 'week', groups: [], weeks, total }
 }
-
-const WEEK_MS = 7 * 24 * 3_600_000
-const PUSH_WEEKS = 12
-
-/** The numbers Argo shows: the last 12 ISO weeks by tier (current partial week included), and all-time by prompt. */
-export async function weeklyReviewStats(
-  service: { stats(input: z.input<typeof StatsInput>): Promise<StatsOutputValue> },
-  now: Date,
-) {
-  const since = new Date(Date.parse(`${weekStartOf(now)}T00:00:00Z`) - (PUSH_WEEKS - 1) * WEEK_MS).toISOString()
-  const [weekly, prompts] = await Promise.all([
-    service.stats({ by: 'tier', bucket: 'week', since }),
-    service.stats({ by: 'prompt' }),
-  ])
-  return { weeks: weekly.weeks ?? [], byPrompt: prompts.groups }
-}

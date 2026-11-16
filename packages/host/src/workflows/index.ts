@@ -1,7 +1,7 @@
 import type { createCapabilities, Registry } from '@agent-workflows/capabilities'
 import { routeIds } from '@agent-workflows/routes'
 import type { Logger } from '@agent-workflows/runtime'
-import type { ArgoPush, Fleet } from '../fleet/index.ts'
+import type { Fleet } from '../fleet/index.ts'
 import type { LearningsStore } from '../learnings/index.ts'
 import type { HostWorkflow } from '../operations.ts'
 import type { ToolGate } from '../tool-gate/index.ts'
@@ -34,8 +34,8 @@ export interface WorkflowDeps {
   retro?: { journal: JournalReader; learnings: LearningsStore; gh?: GhPort; tracked?: () => Promise<TrackedPaths> }
   /** Where research's tool gate records every call (Postgres on the host); absent: in memory. */
   research?: { ledger: ToolLedger }
-  /** The agents overview (collectors, quota) and its Argo push; the host process builds one, a test host may leave it out. */
-  fleet?: { fleet: Fleet; argo: ArgoPush; purposeOf?: (runId: string) => Promise<string | null> }
+  /** The agents overview (collectors, quota); the host process builds one, a test host may leave it out. */
+  fleet?: { fleet: Fleet }
   /** The journal's `label` step costs of `eval.mine` runs (`pgLabelStepCosts`), which `eval.mine`'s label estimate reads; absent: the estimate stays unknown. */
   costHistory?: CostHistory
   /** The host's one tool gate; see `HostDeps`. */

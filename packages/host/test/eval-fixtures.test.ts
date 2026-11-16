@@ -30,10 +30,9 @@ const ctx = <R>(schema: { parse(value: unknown): R }, reference: unknown) => ({
 })
 
 describe('overview fixture', () => {
-  test('classifies the fixture, reads no fleet and pushes nothing (the purpose lookup would allow a push)', async () => {
+  test('classifies the fixture, reads no fleet', async () => {
     const c = caseOf(OVERVIEW_CASES, 'ov-blocked-and-working')
     const calls: { facts: string; agentIds: string[] }[] = []
-    const pushes: unknown[] = []
     const workflow = createOverview({
       registry: {
         call: async (_id: string, input: { facts: string; agentIds: string[] }) => {
@@ -52,8 +51,6 @@ describe('overview fixture', () => {
           throw new Error('the fleet must not be read')
         },
       },
-      argo: { push: async (...args: unknown[]) => void pushes.push(args) } as never,
-      purposeOf: async () => 'prod',
     }).workflow
     const rt = testRuntime({ schema: db.schema, workflows: [workflow] })
     await rt.open()
@@ -66,7 +63,6 @@ describe('overview fixture', () => {
       expect(calls).toHaveLength(1)
       expect(calls[0]?.agentIds.toSorted()).toEqual(['w-blocked', 'w-busy'])
       expect(calls[0]?.facts).toContain('Shall I run it against production?')
-      expect(pushes).toEqual([])
       const verdict = overviewScorer.score(input, result.output, ctx(OverviewReference, c.reference)) as Verdict
       expect(verdict.pass).toBe(true)
     } finally {
@@ -257,8 +253,6 @@ describe('a fixture is refused unless the run is an eval', () => {
           throw new Error('unreachable')
         },
       },
-      argo: { push: async () => void touched.push('push') } as never,
-      purposeOf: async () => 'prod',
     }).workflow
     const rt = testRuntime({ schema: db.schema, workflows: [workflow] })
     await rt.open()

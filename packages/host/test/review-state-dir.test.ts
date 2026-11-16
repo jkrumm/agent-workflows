@@ -19,7 +19,6 @@ test('a booted host writes review jobs under BootOptions.stateDir', async () => 
     PATH: process.env.PATH ?? '',
     HOME: home,
     XDG_STATE_HOME: home,
-    AGW_ARGO_PUSH: '0',
     AGW_FACTORY_BIN: join(home, 'no-factory'),
     AGW_CLAUDE_ACCOUNT_BIN: join(home, 'no-claude-account'),
     AGW_API_SECRET: SECRET,

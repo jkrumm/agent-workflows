@@ -1,7 +1,7 @@
 import { MAX_OVERVIEW_AGENTS, MAX_OVERVIEW_FACTS_CHARS } from '@agent-workflows/capabilities'
 import { defineWorkflow } from '@agent-workflows/runtime'
 import { z } from 'zod'
-import { type ArgoPush, classifyInput, type Fleet, reconcileKnown } from '../../fleet/index.ts'
+import { classifyInput, type Fleet, reconcileKnown } from '../../fleet/index.ts'
 import { AGENT, OVERVIEW_OUTPUT, PROJECT, PROJECT_GIT } from '../../fleet/schema.ts'
 import type { HostWorkflow } from '../../operations.ts'
 import { requireEvalPurpose } from '../eval-fixture.ts'
@@ -38,7 +38,7 @@ export const OVERVIEW_INPUT = z.object({
   fixture: z
     .object({ generatedAt: z.number(), projects: z.array(FIXTURE_PROJECT) })
     .optional()
-    .describe('Eval only: classify these projects and agents instead of reading the factory, and push nothing to Argo'),
+    .describe('Eval only: classify these projects and agents instead of reading the factory'),
   staleAfterHours: z
     .number()
     .positive()
@@ -51,16 +51,6 @@ export const OVERVIEW_INPUT = z.object({
 export interface OverviewDeps {
   registry: Pick<HostRegistry, 'call'>
   fleet: Pick<Fleet, 'read'>
-  /** Pushes the completed run to Argo; never fatal. */
-  argo?: Pick<ArgoPush, 'push'>
-  /**
-   * The purpose the run was started with (`prod`, `build`, `verify`, …): the context a workflow sees does not carry it,
-   * so the host reads it from the journal. The push goes out for `prod` only: a build or verify run must not put its
-   * fixtures into the owner's fleet view.
-   */
-  purposeOf?: (runId: string) => Promise<string | null>
-  /** Where a non-fatal failure is logged (the push effect's); default: nowhere. */
-  warn?: (message: string, meta?: Record<string, unknown>) => void
   now?: () => number
 }
 
@@ -89,7 +79,7 @@ export function createOverview(deps: OverviewDeps): HostWorkflow {
           ? { snapshot: input.fixture, unreadable: null }
           : await deps.fleet.read({ fresh: true, staleAfterHours: input.staleAfterHours })
         // An unreadable factory is not an empty fleet: classifying it would reconcile every verdict against nothing.
-        // The step fails with the cause, so the run is `failed` and nothing is classified or pushed.
+        // The step fails with the cause, so the run is `failed` and nothing is classified.
         if (unreadable) throw new Error(`overview cannot classify: ${unreadable}`)
         const prepared = classifyInput(snapshot, {
           maxChars: MAX_OVERVIEW_FACTS_CHARS,
@@ -121,19 +111,6 @@ export function createOverview(deps: OverviewDeps): HostWorkflow {
         classified.model,
         classified.generatedAt,
       )
-      // The run's own output stands in for the stored one, which is not written until the run ends.
-      await ctx.effect('push', async () => {
-        if (!deps.argo || input.fixture) return null
-        try {
-          // The purpose lookup is a Postgres read: telemetry never fails the run, and neither does the gate in front of it.
-          if ((await deps.purposeOf?.(ctx.runId)) !== 'prod') return null
-          await deps.argo.push('run', output)
-        } catch (error) {
-          // never fatal, but not silent
-          deps.warn?.('overview push effect failed', { runId: ctx.runId, error: String(error) })
-        }
-        return null
-      })
       return output
     },
   })

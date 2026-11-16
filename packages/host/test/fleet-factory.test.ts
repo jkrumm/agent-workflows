@@ -644,56 +644,8 @@ describe('createFleet over the factory', () => {
   })
 })
 
-/**
- * The shape Argo's ingest (`POST /agents/overview`, `routes/agents.ts`) requires, as field names and types only; copied
- * by hand, nothing imported from Argo. Every object there is loose, so extra fields ride through.
- */
-function assertArgoIngest(body: Record<string, unknown>) {
-  const AGENT_STATES = ['needs_you', 'working', 'idle', 'stale', 'done', 'unknown']
-  const rec = (value: unknown) => value as Record<string, unknown>
-  const list = (value: unknown) => value as Record<string, unknown>[]
-  expect(typeof body.generatedAt).toBe('number')
-  for (const key of ['needsYou', 'working', 'idle', 'stale', 'done']) {
-    expect(Number.isInteger(rec(body.summary)[key])).toBe(true)
-  }
-  for (const project of list(body.projects)) {
-    expect(typeof project.name).toBe('string')
-    expect(['string', 'undefined']).toContain(typeof project.cwd)
-    const git = project.git == null ? null : rec(project.git)
-    if (git) {
-      expect(typeof git.branch).toBe('string')
-      expect(typeof git.dirty).toBe('boolean')
-      expect(typeof git.ahead).toBe('number')
-      expect(typeof git.behind).toBe('number')
-      if (git.lastCommit != null) {
-        for (const key of ['sha', 'subject', 'at']) expect(typeof rec(git.lastCommit)[key]).toBe('string')
-      }
-    }
-    for (const agent of list(project.agents)) {
-      expect(typeof agent.id).toBe('string')
-      expect(AGENT_STATES).toContain(String(agent.state))
-      // string, null (typeof object) or absent
-      for (const key of ['title', 'lastReply', 'lastPrompt', 'paneId', 'sessionId', 'waitingFor', 'source']) {
-        expect(['string', 'object', 'undefined']).toContain(typeof agent[key])
-      }
-      for (const key of ['lastActivityAt', 'startedAt']) {
-        expect(['number', 'object', 'undefined']).toContain(typeof agent[key])
-      }
-    }
-  }
-  for (const item of list(body.humanQueue)) {
-    expect(typeof item.id).toBe('string')
-    expect(typeof item.question).toBe('string')
-  }
-  for (const w of body.warnings as unknown[]) expect(typeof w).toBe('string')
-  if (body.overview != null) {
-    expect(typeof rec(body.overview).generatedAt).toBe('number')
-    expect(typeof rec(body.overview).model).toBe('string')
-  }
-}
-
 describe('the payload', () => {
-  test('a mapped fleet parses as OVERVIEW_PAYLOAD and satisfies the shape Argo’s ingest requires', async () => {
+  test('a mapped fleet parses as OVERVIEW_PAYLOAD', async () => {
     const commit = { sha: 'a1b2c3d', subject: 'feat: x', at: '2026-11-02T10:00:00.000Z' }
     const s = setupFleet([
       ok(
@@ -713,7 +665,6 @@ describe('the payload', () => {
     ])
     const { payload } = await s.fleet.view()
     expect(OVERVIEW_PAYLOAD.safeParse(payload).success).toBe(true)
-    assertArgoIngest(JSON.parse(JSON.stringify({ ...payload, machine: 'host-1' })))
     expect(payload.projects.map((p) => p.name)).toEqual(['alpha', 'unplaced'])
     expect(payload.humanQueue).toHaveLength(1)
     expect(payload.warnings).toEqual(['one source failed'])

@@ -1,7 +1,7 @@
 import { CONFIDENCES, RECOMMENDATIONS } from '@agent-workflows/capabilities'
 import { z } from 'zod'
 
-// The shapes of the agents overview. They are the payload `agw agents` answers and the Argo push posts, field for field
+// The shapes of the agents overview. They are the payload `agw agents` answers, field for field
 // what agent-gateway's `GET /api/overview` returned under `data` (minus the retired dispatch fields, `summary.dispatch` included).
 // The agents and the human queue are the factory's read API (`factory read overview`, `factory read sessions --live`) mapped on these shapes.
 
@@ -165,7 +165,7 @@ export const ENRICHED_AGENT = AGENT.extend({
 })
 export type EnrichedAgent = z.infer<typeof ENRICHED_AGENT>
 
-/** `GET /api/overview`'s `data` in agent-gateway, which Argo's `/agents/overview` ingest takes as it is. */
+/** `GET /api/overview`'s `data` in agent-gateway; `agw agents` answers it as it is. */
 export const OVERVIEW_PAYLOAD = SNAPSHOT.omit({ projects: true }).extend({
   projects: z.array(PROJECT.extend({ agents: z.array(ENRICHED_AGENT) })),
   overview: z

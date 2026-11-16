@@ -41,8 +41,6 @@ export interface ReviewServicePorts {
   now?: () => Date
   /** The process environment: helper allowlist, network vars for pr/branch fetches, `AGW_REVIEW_DEEP_CAP`. */
   env?: Record<string, string | undefined>
-  /** Called (fire-and-forget) after every successful submit; a throw is swallowed. */
-  onSubmitted?: () => void
 }
 
 export interface ReviewService {
@@ -93,13 +91,7 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
       return { status: 'cancelled', jobId: job.id }
     },
     async submit(input) {
-      const output = await submit(ctx, input)
-      try {
-        ports.onSubmitted?.()
-      } catch {
-        // The submit already happened; a hook must not fail it.
-      }
-      return output
+      return submit(ctx, input)
     },
     covered: (input) => covered(ctx, input),
 

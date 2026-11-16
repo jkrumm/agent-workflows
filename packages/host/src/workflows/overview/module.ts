@@ -19,9 +19,6 @@ export default defineWorkflowModule({
           createOverview({
             registry: deps.registry,
             fleet: deps.fleet.fleet,
-            argo: deps.fleet.argo,
-            purposeOf: deps.fleet.purposeOf,
-            warn: (message, meta) => deps.logger?.warn(message, meta),
           }),
         ]
       : [],
