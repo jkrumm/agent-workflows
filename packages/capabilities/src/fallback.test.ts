@@ -169,7 +169,9 @@ describe('provider-balance fallback', () => {
         ['/openai/v1/chat/completions', fallback.model],
       ])
       // The 5xx carried no usage (nothing was billed); the fallback's call is the only row, under the model that ran.
-      expect(usages).toEqual([expect.objectContaining({ model: fallback.model, route: primary.id, costSource: 'rate' })])
+      expect(usages).toEqual([
+        expect.objectContaining({ model: fallback.model, route: primary.id, costSource: 'rate' }),
+      ])
       expect(warnings).toEqual([
         {
           message: 'provider unavailable; falling back',

@@ -1,15 +1,7 @@
 import { z } from 'zod'
 import { type Env, gatewayConfig } from './config.ts'
 import { gatewayHeaders } from './headers.ts'
-import {
-  Attempt,
-  DEFAULTS,
-  failedResponse,
-  type HttpOptions,
-  readJson,
-  requestFailure,
-  withRetries,
-} from './http.ts'
+import { Attempt, DEFAULTS, failedResponse, type HttpOptions, readJson, requestFailure, withRetries } from './http.ts'
 import type { AttemptUsage, ChatPort, ChatRequest, ChatResult, OnUsage } from './port.ts'
 
 const ANTHROPIC_VERSION = '2023-06-01'

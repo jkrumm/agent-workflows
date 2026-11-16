@@ -352,6 +352,28 @@ suite exists. The table and its tiers are `packages/routes` (README §Seats); th
 - **Pick order per seat:** score first, then wall time. Cost counts only past the credit pacing line (§Credit pacing):
   below it the credit is spent anyway.
 
+## Thinking at effort none
+
+Probed 2026-11-16 through the gateway, Haiku 5.5, one call per variant on a 10-line grouping prompt (the factory digest's
+shape), counting `usage.output_tokens_details.thinking_tokens`:
+
+| Request | thinking tokens | output tokens | content blocks |
+|-|-|-|-|
+| `thinking` omitted, `output_config.format` set | 197 | 488 | `thinking`, `text` |
+| `thinking: {type: 'disabled'}`, `output_config.format` set | 0 | 295 | `text` |
+| `thinking` omitted, no schema | 284 | 523 | `thinking`, `text` |
+| `thinking: {type: 'disabled'}`, no schema | 0 | 184 | `text` |
+
+The model thinks when `thinking` is absent, so the 52 to 74 % reasoning share the ledger showed on `effort: none` routes
+(`digest`, `factory.digest`, `factory-classify`) was adaptive thinking the request never switched off, not a different kind of token. On a one-line
+classification prompt the model chose not to think either way (56 against 58 output tokens): the share depends on the
+task. The `anthropic` wire therefore sends `thinking: {type: 'disabled'}` at effort `none` (`transports/anthropic.ts`),
+and `thinking: {type: 'adaptive'}` plus `output_config.effort` for any other effort; a route with no effort sends neither.
+`disabled` is accepted together with `output_config.format` (no `effort` is sent with it). Sonnet 5.5 rejects `disabled`
+(400), which is why the route table refuses effort `none` on a Sonnet (`effortsOf`). `thinking_tokens` is
+what the gateway moves into `usage.records.reasoning_tokens` (`tee.ts`); the capabilities' own `Usage` still reports
+`reasoning: 0` on this wire, as thinking sits inside `output_tokens` there.
+
 ## Open
 
 - The Admin API works on a one-person org (Wave 1, `iu` and `me`); units and credit basis are proven on `iu` only, `me`
