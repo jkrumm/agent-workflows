@@ -182,6 +182,17 @@ describe('store', () => {
       expect(mine.learning.sources).toEqual([])
     })
 
+    test('a human who revives a retired fact owns it: the runs that once proposed it no longer age it out or activate it', async () => {
+      const agent = 'rule-revive'
+      const first = await store.add({ agent, fact: FACT, source: 'run-a', at: W44 })
+      await store.add({ agent, fact: FACT, source: 'run-b', at: W45 })
+      await store.retire(first.learning.id)
+      const back = await store.add({ agent, fact: FACT, source: 'manual' })
+      expect(back.learning).toMatchObject({ status: 'proposed', sources: [], weeks: [] })
+      const report = await store.tidy({ now: new Date('2027-06-01T00:00:00Z'), agent })
+      expect(report).toMatchObject({ merged: 0, activated: [], retired: [] })
+    })
+
     test('tidy folds the duplicates on file, activates facts seen in two weeks and retires the stale', async () => {
       const agent = 'rule-tidy'
       // rows as they were stored before the rule: three wordings, a lone old fact, a lone recent one, a human's

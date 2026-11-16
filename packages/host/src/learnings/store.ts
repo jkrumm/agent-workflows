@@ -241,7 +241,7 @@ export function pgLearningsStore(pool: Pick<Pool, 'query'>, schema: string): Lea
         if (!manual) return { learning: toLearning(existing), created: false, outcome: 'known' }
         // A human brings a rejected fact back: same row, so its history stays one line.
         const revived = await pool.query<Row>(
-          `update ${table} set status = $2, retired_at = null, source = 'manual',
+          `update ${table} set status = $2, retired_at = null, source = 'manual', sources = '{}', weeks = '{}',
                  activated_at = case when $2 = 'active' then now() end, last_seen_at = now()
             where id = $1 and status = 'retired' returning ${COLUMNS}`,
           [existing.id, status],
