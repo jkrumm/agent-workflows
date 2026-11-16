@@ -127,7 +127,7 @@ export const CaseResult = z.object({
     .nullable()
     .optional()
     .describe(
-      "The case run's tool calls, with its child runs' (the run record's count); null when the record has none",
+      "The case run's tool calls (its own steps, not its child runs'; the run record's count); null when the record has none",
     ),
   group: z
     .string()

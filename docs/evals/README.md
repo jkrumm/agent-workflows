@@ -74,5 +74,5 @@ in this repo.
 **What a research run prints.** `agw eval run research --yes` reports `summary` overall and `summary.groups` per depth:
 cases scored, pass rate, every score's mean, cost (sum and mean per case), tool calls (sum and mean per case). The
 research scorer also writes every score under `<score>.<depth>` (`supported.deep`), so `agw eval compare research` reads a
-depth apart. Cost and tool calls are the case run's record (the whole run tree), so a call budget shows its effect on
+depth apart. Cost is the case run's record over its whole run tree; tool calls are those of the case run's own steps (a research run books its agent's calls there, and has no child runs), so a call budget shows its effect on
 them next to the quality scores. `--args '{"depth":"deep"}'` regroups the run under that depth.
