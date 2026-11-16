@@ -11,8 +11,9 @@ export const CHECK_INPUT = z
       .array(z.string().min(1))
       .optional()
       .describe(
-        'Explicit validation commands, run verbatim in order by an agent that skips ecosystem discovery. ' +
-          'Omit to use `make check` when the Makefile has one, else discovery',
+        'Explicit validation commands, each run verbatim through `sh -c` in order by the host, no model: every command ' +
+          'runs and reports its exit code and output tail. Omit to use `make check` when the Makefile has one, else ' +
+          'an agent discovers the steps',
       ),
     stepTimeoutSeconds: z
       .number()
@@ -36,7 +37,8 @@ export const CHECK_OUTPUT = z.object({
           .string()
           .min(1)
           .describe(
-            'Step name: format | lint | typecheck | test | fallow, or check for the `make check` contract path',
+            'Step name: format | lint | typecheck | test | fallow, check for the `make check` contract path, ' +
+              'or a command’s tool for a caller command that is none of those',
           ),
         passed: z.boolean(),
         errors: z.array(z.string()).optional().describe('Error lines; only when the step failed'),

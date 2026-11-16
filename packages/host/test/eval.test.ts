@@ -33,7 +33,7 @@ const checkCase = (id: string, baseSha: string, passed: boolean) => ({
   source: 'synthetic',
   createdAt: '2026-10-20T10:00:00.000Z',
   repo: 'SourceRoot/demo',
-  input: { commands: ['bun test'] },
+  input: {}, // no commands, no Makefile: the agent path, the one these tests fake
   baseSha,
   baseInferred: false,
   patch: 'diff --git a/b.txt b/b.txt\nnew file mode 100644\n--- /dev/null\n+++ b/b.txt\n@@ -0,0 +1 @@\n+two\n',

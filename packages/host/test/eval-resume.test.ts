@@ -54,7 +54,7 @@ beforeAll(async () => {
       source: 'synthetic',
       createdAt: '2026-10-20T10:00:00.000Z',
       repo: 'SourceRoot/demo',
-      input: { commands: ['bun test'] },
+      input: {}, // no commands, no Makefile: the agent path, the one these tests fake
       baseSha,
       baseInferred: false,
       legacy,

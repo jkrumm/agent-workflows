@@ -328,26 +328,151 @@ describe('parsing the make database', () => {
   })
 })
 
-describe('agent path', () => {
-  test('explicit commands: exactly those commands in the prompt, the checked tree allowed, no Makefile probe', async () => {
+describe('commands path', () => {
+  const commandsRun = (calls: ExecRequest[]) =>
+    calls.filter((c) => c.argv[0] === 'sh' && c.argv[1] === '-c').map((c) => c.argv[2])
+
+  test('no agent step: every command runs in order, a red one reports its exit code and tail verbatim', async () => {
     const cwd = repo()
-    const host = new FakeAgentHost(async () => ({ output: GREEN }))
-    const { exec, calls } = fakeExec(() => undefined, ['make', 'fallow'])
-    const commands = ['.venv/bin/ruff check', '.venv/bin/pytest -q']
-    const { runId, result } = await run({ exec, host, input: { cwd, commands, stepTimeoutSeconds: 90 } })
-    expect(result.output).toEqual(GREEN)
-    const session = host.sessions.get('ses_1')
-    expect(session?.spec.agent).toBe('check')
-    expect(session?.spec.options).toEqual({ output: 'json', allowDirectories: [cwd] })
-    const prompt = session?.spec.prompt ?? ''
-    expect(prompt).toContain(`Working directory: ${cwd}`)
-    expect(prompt).toContain('Mode: COMMANDS.')
-    expect(prompt).toContain('1. `.venv/bin/ruff check`\n2. `.venv/bin/pytest -q`')
-    expect(prompt).not.toContain('DISCOVER')
-    expect(calls.some((c) => c.argv[0] === 'make' || c.argv[0] === 'fallow')).toBe(false)
-    expect((await sql.steps(runId)).map((s) => s.step_id)).toEqual(['plan', 'agent'])
+    const host = new FakeAgentHost()
+    const { exec, calls } = fakeExec(
+      (request) =>
+        request.argv[2] === 'false' ? { exitCode: 3, output: 'src/a.ts:1 boom\n\nsrc/b.ts:2 bang\n' } : undefined,
+      ['make', 'fallow'],
+    )
+    const { runId, result } = await run({ exec, host, input: { cwd, commands: ['true', 'false', 'echo after'] } })
+    expect(result.status).toBe('done')
+    expect(result.output).toEqual({
+      passed: false,
+      steps: [
+        { name: 'true', passed: true },
+        { name: 'false', passed: false, errors: ['src/a.ts:1 boom', 'src/b.ts:2 bang'] },
+        { name: 'echo', passed: true },
+      ],
+      summary: '1/3 steps failed: false failed (exit 3)',
+    })
+    expect(host.events).toEqual([])
+    expect(host.sessions.size).toBe(0)
+    expect(commandsRun(calls)).toEqual(['true', 'false', 'echo after']) // a red step does not stop the rest
+    expect(calls.some((c) => c.argv[0] === 'make' || c.argv[0] === 'fallow')).toBe(false) // no Makefile probe, no fallow
+    expect((await sql.steps(runId)).map((s) => [s.step_id, s.kind])).toEqual([
+      ['plan', 'code'],
+      ['commands', 'code'],
+    ])
   })
 
+  test('all green: passed, one summary line, steps named by what they run', async () => {
+    const cwd = repo(false)
+    const { exec } = fakeExec(() => undefined)
+    const commands = [
+      'bun run lint',
+      '.venv/bin/ruff format --check .',
+      'bunx tsc --noEmit',
+      'pytest -q',
+      'cargo audit',
+    ]
+    const { result } = await run({ exec, input: { cwd, commands } })
+    expect(result.output).toEqual({
+      passed: true,
+      steps: [
+        { name: 'lint', passed: true },
+        { name: 'format', passed: true },
+        { name: 'typecheck', passed: true },
+        { name: 'test', passed: true },
+        { name: 'cargo', passed: true },
+      ],
+      summary: 'All 5 steps passed',
+    })
+  })
+
+  test('idle windows: ordinary steps get the step window, typecheck and test the test window, none a wall clock', async () => {
+    const cwd = repo(false)
+    const { exec, calls } = fakeExec(() => undefined)
+    await run({ exec, input: { cwd, commands: ['bun run lint', 'bun test'] } })
+    const [lint, test] = calls.filter((c) => c.argv[0] === 'sh')
+    expect([lint?.idleMs, test?.idleMs]).toEqual([180_000, 600_000])
+    expect([lint?.wallMs, test?.wallMs]).toEqual([undefined, undefined])
+    const explicit = fakeExec(() => undefined)
+    await run({ exec: explicit.exec, input: { cwd, commands: ['bun run lint', 'bun test'], stepTimeoutSeconds: 45 } })
+    expect(explicit.calls.filter((c) => c.argv[0] === 'sh').map((c) => c.idleMs)).toEqual([45_000, 45_000])
+  })
+
+  test('a silent command is killed after the idle window and reported with the reason', async () => {
+    const cwd = repo(false)
+    const { exec } = fakeExec((request) =>
+      request.argv[2] === 'bun test --watch' ? { exitCode: null, signalCode: 'SIGTERM', idleKilled: true } : undefined,
+    )
+    const { result } = await run({ exec, input: { cwd, commands: ['bun test --watch'], stepTimeoutSeconds: 30 } })
+    expect(result.output).toEqual({
+      passed: false,
+      steps: [
+        {
+          name: 'test',
+          passed: false,
+          errors: ['no output for 30s — likely a watch-mode runner or a hung process'],
+        },
+      ],
+      summary: '1/1 steps failed: bun test --watch failed: no output for 30s',
+    })
+  })
+
+  test('typecheck and test wait for a factory test slot, format and lint do not', async () => {
+    const cwd = repo(false)
+    const { exec, calls } = fakeExec(() => undefined, ['make', 'factory'])
+    await run({ exec, input: { cwd, commands: ['bun run lint', 'bun run typecheck'] } })
+    const [lint, typecheck] = [
+      calls.find((c) => c.argv[2] === 'bun run lint'),
+      calls.find((c) => c.argv.includes('bun run typecheck')),
+    ]
+    expect(lint?.argv).toEqual(['sh', '-c', 'bun run lint'])
+    expect(typecheck?.argv.slice(0, 3)).toEqual(['factory', 'slot', 'run'])
+    expect(typecheck?.argv.slice(-3)).toEqual(['sh', '-c', 'bun run typecheck'])
+    expect(typecheck?.env?.VITEST_MAX_WORKERS).toBeDefined()
+  })
+
+  test('no slot within the wait: that step is machine busy, not red, and the others still run', async () => {
+    const cwd = repo(false)
+    const { exec } = fakeExec(
+      (request) =>
+        request.argv[0] === 'factory' ? { exitCode: 75, output: 'factory: no test slot within 2700s' } : undefined,
+      ['make', 'factory'],
+    )
+    const { result } = await run({ exec, input: { cwd, commands: ['bun test', 'bun run lint'] } })
+    const output = result.output as { passed: boolean; steps: { name: string; passed: boolean; errors?: string[] }[] }
+    expect(output.passed).toBe(false)
+    expect(output.steps.map((s) => [s.name, s.passed])).toEqual([
+      ['test', false],
+      ['lint', true],
+    ])
+    expect(output.steps[0]?.errors?.[0]).toStartWith('machine busy, not a failure')
+  })
+
+  test('the work-tree refusal still applies: a cwd that is no git work tree ends failed, nothing ran', async () => {
+    const cwd = repo(false)
+    const { exec, calls } = fakeExec((request) =>
+      request.argv[0] === 'git' ? { exitCode: 128, output: 'fatal: not a git repository' } : undefined,
+    )
+    const { result } = await run({ exec, input: { cwd, commands: ['true'] } })
+    expect(result.status).toBe('failed')
+    expect(commandsRun(calls)).toEqual([])
+  })
+
+  test('a command killed by a foreign signal is not a red: the step throws and runs again', async () => {
+    const cwd = repo(false)
+    let runs = 0
+    const { exec } = fakeExec((request) =>
+      request.argv[2] === 'true' && ++runs === 1
+        ? { exitCode: null, signalCode: 'SIGKILL', output: 'Killed' }
+        : undefined,
+    )
+    const { runId, result } = await run({ exec, input: { cwd, commands: ['true'] } })
+    expect(result).toMatchObject({ status: 'done', output: { passed: true } })
+    expect(runs).toBe(2)
+    expect((await sql.step(runId, 'commands'))?.status).toBe('done')
+  })
+})
+
+describe('agent path', () => {
   test('the agent step waits out the longest step window: idle above 600 s + margin by default', async () => {
     const cwd = repo(false)
     const host = new FakeAgentHost(async () => ({ output: GREEN }))
@@ -565,7 +690,7 @@ describe('resume', () => {
 
 describe('DISCOVER stays read-only', () => {
   const agentsMd = readFileSync(join(import.meta.dir, '../../../agents/check/AGENTS.md'), 'utf8')
-  const discover = agentsMd.slice(agentsMd.indexOf('## Mode DISCOVER'), agentsMd.indexOf('## Output'))
+  const discover = agentsMd.slice(agentsMd.indexOf('## Discovery'), agentsMd.indexOf('## Output'))
 
   test('Node: a check-mode script, else the formatter’s check flag, else skip and say so', () => {
     expect(discover).toContain('`format:check`')

@@ -5,7 +5,8 @@ never repair them. Do not edit files, do not run a script or target that rewrite
 `--fix`, `--write`, `ruff format` without `--check`, `make format`), and do not rewrite anything by hand. Every
 formatter runs in its check mode only.
 
-Each request names a working directory, the idle windows and one mode: **COMMANDS** or **DISCOVER**.
+Each request names a working directory and the idle windows, and asks you to discover the steps. The host runs a
+repo's `make check` and any commands a caller names itself; only a repo with neither reaches you.
 
 ## Running commands
 
@@ -36,12 +37,7 @@ Each request names a working directory, the idle windows and one mode: **COMMAND
 - Run each step once and record it. Do not re-run a settled step, do not loop on a failing one, and submit the report
   as soon as every step has run once.
 
-## Mode COMMANDS
-
-Run ONLY the commands the request lists, in order. Do not explore the repo, read `package.json` or
-`pyproject.toml`, sniff the ecosystem, run `which` or `git remote -v`, or run `fallow`.
-
-## Mode DISCOVER
+## Discovery
 
 Detect the ecosystem from the files present and run its standard validators, each once, only if the tool or script
 exists. Do not spend turns hunting: try the obvious path once and skip what is absent.
@@ -76,8 +72,7 @@ The report you submit takes this shape:
 { "passed": true, "steps": [{ "name": "lint", "passed": false, "errors": ["<error line>"] }], "summary": "1/3 steps failed: lint (5 errors)" }
 ```
 
-- `name` is the step's name: `format`, `lint`, `typecheck` or `test` (in DISCOVER mode every step maps to one of
-  these), `fallow` for the static analysis. In COMMANDS mode name each step after the command's tool (`ruff`,
-  `pytest`) or `lint` / `test` where that is what it is.
+- `name` is the step's name: `format`, `lint`, `typecheck` or `test` (every step maps to one of these), `fallow` for the
+  static analysis.
 - `errors` only on a failed step. `passed` at the root is true only if every step that ran passed.
 - `steps` holds only the steps that ran.

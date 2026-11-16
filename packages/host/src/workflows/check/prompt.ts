@@ -26,20 +26,15 @@ text is not read. Then stop.`
  */
 export function agentPrompt(options: {
   cwd: string
-  commands?: string[]
   stepSeconds: number
   testSeconds: number
   idleMs: number
 }): string {
-  const { cwd, commands, stepSeconds, testSeconds, idleMs } = options
-  const mode =
-    commands && commands.length > 0
-      ? `Mode: COMMANDS. Run exactly these, in order:\n${commands.map((command, i) => `${i + 1}. \`${command}\``).join('\n')}`
-      : 'Mode: DISCOVER.'
+  const { cwd, stepSeconds, testSeconds, idleMs } = options
   return [
     `Working directory: ${cwd}`,
     `Step idle windows (run-step's second argument): ${stepSeconds}s for ordinary steps, ${testSeconds}s for the test step.`,
     `Session idle window: the host kills the session after ${Math.round(idleMs / 1000)}s without any output.`,
-    mode,
+    'Mode: DISCOVER.',
   ].join('\n')
 }
