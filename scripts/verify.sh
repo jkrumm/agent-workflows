@@ -206,7 +206,7 @@ door_status=$(print -r -- "header = \"authorization: Bearer $secret\"" | curl -s
 ok "image door: 401 without a caller token, studio 400 envelope on a bad body"
 
 # 8. the gateway: healthy at the recorded build, three real calls, their usage rows
-gw_health=$(curl -fsS --max-time 5 "$GATEWAY_URL/health") || fail "no answer from $GATEWAY_URL/health"
+gw_health=$(curl -sS --max-time 5 "$GATEWAY_URL/health") || fail "no answer from $GATEWAY_URL/health"
 [[ "$(print -r -- "$gw_health" | jq -r '.status')" == "ok" ]] || fail "gateway /health is not ok: $gw_health"
 gw_build=$(tr -d '[:space:]' < "$GATEWAY_BUILD_FILE" 2>/dev/null)
 [[ -n "$gw_build" ]] || fail "$GATEWAY_BUILD_FILE missing: no gateway build was recorded"

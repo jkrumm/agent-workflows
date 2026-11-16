@@ -59,8 +59,10 @@ export function evalMineAutoPorts(options: {
       try {
         // A hang guard on a plain HTTP read; the gateway answers /health from memory.
         const res = await doFetch(`${base}/health`, { signal: AbortSignal.timeout(30_000) })
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        health = Health.parse(await res.json())
+        // A 503 `degraded` (no eligible pool) still carries the pools: every one at 0, so the answer is 'no-credit'.
+        const parsed = Health.safeParse(await res.json().catch(() => null))
+        if (!parsed.success) throw new Error(res.ok ? parsed.error.message : `HTTP ${res.status}`)
+        health = parsed.data
       } catch (error) {
         throw new Error(`gateway /health unreadable: ${error instanceof Error ? error.message : String(error)}`)
       }

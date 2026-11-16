@@ -50,15 +50,22 @@ function exporterFor(env: Record<string, string | undefined>): LogRecordExporter
   return endpoint ? new OTLPLogExporter() : null
 }
 
+/** The secret shapes a log field could carry by accident: bearer tokens, `sk-` keys and the password of a URL. */
+const redact = (text: string): string =>
+  text
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, '$1 [redacted]')
+    .replace(/\bsk-[A-Za-z0-9_-]{10,}/g, 'sk-[redacted]')
+    .replace(/(\w+:\/\/[^\s:/@]+:)[^\s@]+@/g, '$1[redacted]@')
+
 const cut = (text: string): string => (text.length > MAX_VALUE_CHARS ? `${text.slice(0, MAX_VALUE_CHARS)}…` : text)
 
 function valueOf(value: unknown): AnyValue | undefined {
   if (value === null || value === undefined) return undefined
-  if (typeof value === 'string') return cut(value)
+  if (typeof value === 'string') return cut(redact(value))
   if (typeof value === 'number' || typeof value === 'boolean') return value
-  if (value instanceof Error) return cut(`${value.name}: ${value.message}`)
+  if (value instanceof Error) return cut(redact(`${value.name}: ${value.message}`))
   try {
-    return cut(JSON.stringify(value))
+    return cut(redact(JSON.stringify(value)))
   } catch {
     return undefined
   }
@@ -76,7 +83,7 @@ function attributesOf(fields: Record<string, unknown> | undefined): Record<strin
 
 /**
  * Warn and error lines as OTLP logs, so `ledger write failed` is a row in ClickStack and not only a line in the
- * LaunchAgent's stderr file. Fields never carry a key or a connection string (`log.ts`), so none is redacted here. Off
+ * LaunchAgent's stderr file. Fields never carry a key or a connection string (`log.ts`); `redact` is the belt for the one that slips through. Off
  * without an OTLP endpoint (`wrap` hands `base` back). The resource carries `service.name` and `service.version`, as the
  * spans do.
  */
@@ -107,7 +114,7 @@ export function createLogShipper(options: {
     fields?: Record<string, unknown>,
   ) => {
     try {
-      logger.emit({ severityNumber, severityText, body: cut(message), attributes: attributesOf(fields) })
+      logger.emit({ severityNumber, severityText, body: cut(redact(message)), attributes: attributesOf(fields) })
     } catch {
       // A record that cannot be built never takes the caller down; the base logger already wrote the line.
     }

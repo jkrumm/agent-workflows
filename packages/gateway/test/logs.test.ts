@@ -55,6 +55,17 @@ describe('createLogShipper', () => {
     })
   })
 
+  test('a secret that slips into a field or a message is redacted before it ships', async () => {
+    const exporter = collector()
+    const shipper = createLogShipper({ env: {}, version: 'v', exporter, scheduledDelayMillis: 1 })
+    shipper.wrap(sink()).error('call failed: Bearer abcdefghijklmnop0123', {
+      error: new Error('connect postgres://usage:hunter2pass@127.0.0.1/db failed with sk-ant-abcdefghijklmnop0123'),
+    })
+    await shipper.shutdown()
+    const shipped = JSON.stringify(exporter.records.map((r) => [r.body, r.attributes]))
+    for (const secret of ['abcdefghijklmnop0123', 'hunter2pass']) expect(shipped).not.toContain(secret)
+  })
+
   test('without an OTLP endpoint the base logger comes back untouched', () => {
     const base = sink()
     expect(createLogShipper({ env: {}, version: 'dev' }).wrap(base)).toBe(base)

@@ -55,9 +55,12 @@ fi
 
 command -v curl >/dev/null 2>&1 || fail "curl not found on PATH — cannot probe the model endpoint" 78
 if [[ -n "$gateway" ]]; then
-  # /health is a compact JSON object; `"status":"ok"` is its healthy form (`degraded` otherwise).
-  health=$(curl --silent --fail --max-time 5 "$base" || true)
-  [[ "$health" == *'"status":"ok"'* ]] ||
+  # /health is a compact JSON object; `"status":"ok"` is its healthy form (`degraded` otherwise). No eligible credit pool
+  # alone (`"reasons":["no-eligible-pool"]`, HTTP 503) still serves through IU, so it does not stop opencode.
+  reply=$(curl --silent --max-time 5 --write-out $'\n%{http_code}' "$base" || true)
+  health=${reply%$'\n'*}
+  code=${reply##*$'\n'}
+  [[ ( "$code" == 200 && "$health" == *'"status":"ok"'* ) || ( "$code" == 503 && "$health" == *'"reasons":["no-eligible-pool"]'* ) ]] ||
     fail "the gateway's /health is not ok ($(printf '%.200s' "${health:-no answer}")) — not running opencode"
 else
   code=$(curl --silent --output /dev/null --max-time 5 --write-out '%{http_code}' "$base" || true)

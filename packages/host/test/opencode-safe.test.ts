@@ -83,6 +83,18 @@ describe('opencode-safe', () => {
     }
   })
 
+  test('no eligible credit pool alone (503 degraded) still runs; with another reason, or at 200, it refuses', async () => {
+    const pools = { status: 'degraded', reasons: ['no-eligible-pool'], version: 'x' }
+    const up = await run({ AGW_GATEWAY_URL: '<origin>' }, { health: { status: 503, body: pools } })
+    expect(up).toMatchObject({ code: 0, out: 'opencode run hi\n' })
+    for (const health of [
+      { status: 503, body: { ...pools, reasons: ['ledger', 'no-eligible-pool'] } },
+      { status: 200, body: pools },
+    ]) {
+      expect((await run({ AGW_GATEWAY_URL: '<origin>' }, { health })).code).toBe(75)
+    }
+  })
+
   test('a 5xx on an IU base refuses with 75; nothing set and no Keychain item refuses with 78', async () => {
     const down = await run({ IU_OPENAI_BASE: '<origin>/openai/v1' }, { status: 503 })
     expect(down.code).toBe(75)

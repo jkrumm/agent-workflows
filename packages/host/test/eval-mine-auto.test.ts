@@ -224,6 +224,19 @@ describe('evalMineAutoPorts', () => {
     expect(await ports({ fetch: health([]) }).creditAvailableUsd()).toBe(0)
   })
 
+  test('a 503 degraded /health with its pools (no eligible pool) is no credit, not an unreadable gateway', async () => {
+    const pools = [
+      { id: 'me', evalEligible: false, evalAvailableUsd: 0 },
+      { id: 'iu', evalEligible: false, evalAvailableUsd: 0 },
+    ]
+    const degraded = (async () =>
+      Response.json(
+        { status: 'degraded', reasons: ['no-eligible-pool'], pools },
+        { status: 503 },
+      )) as unknown as typeof fetch
+    expect(await ports({ fetch: degraded }).creditAvailableUsd()).toBe(0)
+  })
+
   test('a read that cannot answer throws with its reason', async () => {
     const reason = (read: Promise<unknown>) =>
       read.then(
