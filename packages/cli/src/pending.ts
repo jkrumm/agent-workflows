@@ -32,10 +32,8 @@ export function adviceFor(options: { typicalWallS?: number; waitedS: number; int
   const budgetS = Math.min(want, FOREGROUND_CAP_S)
   const why = interrupted ? `interrupted by ${interrupted}` : `after ${waitedS}s`
   const typical = typicalWallS !== undefined && typicalWallS > 0 ? `; typically ~${minutes(typicalWallS)}` : ''
-  const background =
-    want > FOREGROUND_CAP_S
-      ? ` It needs more than ${FOREGROUND_CAP_S}s: run the command in the background (a foreground call ends at 600s) with --budget ${want}.`
-      : ''
+  // Short on purpose: the whole message, run id included, must fit the head of the error line.
+  const background = want > FOREGROUND_CAP_S ? ` Needs ${want}s: background it with --budget ${want}.` : ''
   return {
     budgetS,
     ...(want > FOREGROUND_CAP_S ? { needsS: want } : {}),

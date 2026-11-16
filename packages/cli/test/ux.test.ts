@@ -50,7 +50,7 @@ async function agw(args: string[], env: Record<string, string> = {}): Promise<Ou
   return { code, stdout, stderr }
 }
 
-const typicalRunId = 'run-typical'
+const typicalRunId = '0198e2c4-7a1b-7d3e-9f40-5b6c1a2d3e4f'
 let typicalWallS: number | undefined
 const accepted = () =>
   Response.json(
@@ -139,7 +139,8 @@ describe('the wait budget', () => {
     ).error
     expect(longError.hint).toBe(`agw run wait ${typicalRunId} --budget ${FOREGROUND_CAP_S}`)
     expect(longError.details).toMatchObject({ needsS: 1500, runInBackground: true })
-    expect(longError.message).toContain('background')
+    expect(longError.message).toContain('background it with --budget 1500')
+    expect(longError.message.endsWith('…')).toBe(false)
     typicalWallS = undefined
   })
 
@@ -178,6 +179,9 @@ describe('a usage error', () => {
   })
 
   test('a long message and hint are cut in the head and kept whole behind it', () => {
+    const unicode = new AgwError('usage', 'ä'.repeat(200), { hint: '"'.repeat(200) })
+    const head = unicode.toErrorLine().slice(0, unicode.toErrorLine().indexOf('"details"'))
+    expect(Buffer.byteLength(head)).toBeLessThan(400)
     const long = new AgwError('usage', `bad value ${'x'.repeat(400)}`, {
       hint: `try ${'y'.repeat(400)}`,
       details: { a: 1 },

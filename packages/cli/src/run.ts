@@ -199,7 +199,9 @@ class Runner {
     if (!words.length || words.some((w) => w.startsWith('-'))) return false
     if (resolveCommand(this.platform.commands, words)) return false
     const below = this.platform.commands
-      .filter((c) => c.words.length > words.length && words.every((w, i) => c.words[i] === w))
+      .filter(
+        (c) => c.x.serverOnly !== true && c.words.length > words.length && words.every((w, i) => c.words[i] === w),
+      )
       .sort((a, b) => (a.words.join(' ') < b.words.join(' ') ? -1 : 1))
     if (!below.length) return false
     const width = Math.max(...below.map((c) => c.words.join(' ').length))

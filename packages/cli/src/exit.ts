@@ -38,6 +38,8 @@ export const EXIT_MEANING: Record<ExitKind, string> = {
 export const HEAD_BYTES = 400
 const MESSAGE_HEAD = 170
 const HINT_HEAD = 150
+/** Bytes a string takes inside a JSON string literal: multi-byte characters and escapes count in full. */
+const escapedBytes = (text: string) => Buffer.byteLength(JSON.stringify(text)) - 2
 
 export interface ErrorFields {
   code?: string | null
@@ -75,8 +77,16 @@ export class AgwError extends Error {
   toErrorLine(): string {
     const { kind, code, message, hint, details } = this
     // Agents read the first few hundred bytes of an output: kind, message and hint are always inside them, so a long
-    // one is cut there and its whole text moves behind them, into `details`.
-    const cut = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text)
+    // one is cut there (by its JSON-escaped bytes) and its whole text moves behind them, into `details`.
+    const cut = (text: string, max: number) => {
+      if (escapedBytes(text) <= max) return text
+      let out = ''
+      for (const char of text) {
+        if (escapedBytes(out + char) > max - 3) break
+        out += char
+      }
+      return `${out}…`
+    }
     const shortMessage = cut(message, MESSAGE_HEAD)
     const shortHint = cut(hint, HINT_HEAD)
     const rest = {
