@@ -14,8 +14,9 @@ let service: ReviewService
 const stateDir = realpathSync(mkdtempSync(join(tmpdir(), 'agw-rv4-http-')))
 let root: string
 /** The service needs the host's schema, which exists once the host does: the operations delegate. */
+let prepareFailure: Error | null = null
 const late: ReviewService = {
-  prepare: (i) => service.prepare(i),
+  prepare: (i) => (prepareFailure ? Promise.reject(prepareFailure) : service.prepare(i)),
   submit: (i) => service.submit(i),
   dispose: (i) => service.dispose(i),
   status: (i) => service.status(i),
@@ -132,6 +133,30 @@ describe('agw review prepare → submit through the host', () => {
     const next = await agw(['review', 'prepare', '--cwd', root, '--thread', 'cancel-cwd'])
     const cancelled = await agw(['review', 'cancel', '--cwd', root, next.body.jobId])
     expect(cancelled.body).toEqual({ status: 'cancelled', jobId: next.body.jobId })
+  })
+
+  test('a role at its connection limit is a retryable 503, any other throw the opaque 500', async () => {
+    const logged: unknown[][] = []
+    const original = console.error
+    console.error = (...args: unknown[]) => void logged.push(args)
+    try {
+      prepareFailure = Object.assign(new Error('too many connections for role "agent_workflows"'), { code: '53300' })
+      const exhausted = await agw(['review', 'prepare', '--cwd', root])
+      expect(exhausted.status).toBe(503)
+      expect(exhausted.body).toMatchObject({ code: 'SERVICE_UNAVAILABLE', defined: false })
+      expect(exhausted.body.message).toMatch(/connection limit; retry/)
+
+      prepareFailure = new Error('journal: too many connections for role "agent_workflows"') // a wrapper dropped the code
+      expect((await agw(['review', 'prepare', '--cwd', root])).status).toBe(503)
+
+      prepareFailure = new Error('git clone: exit 128')
+      const other = await agw(['review', 'prepare', '--cwd', root])
+      expect(other.status).toBe(500)
+      expect(logged.some((l) => String(l[0]).includes('review prepare failed') && l[1] === prepareFailure)).toBe(true)
+    } finally {
+      console.error = original
+      prepareFailure = null
+    }
   })
 
   test('stats answers over HTTP through the CLI parser; a bad --since is a 400', async () => {
