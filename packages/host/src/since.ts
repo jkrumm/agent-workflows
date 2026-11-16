@@ -1,5 +1,5 @@
-// One reading of a `--since` flag for every host operation that has one: an ISO date or timestamp, or a duration back
-// from now (`30m`, `24h`, `7d`, `2w`).
+// One reading of a `--since` flag for a host read operation: an ISO date or timestamp, or a duration back from now
+// (`30m`, `24h`, `7d`, `2w`). Not for a workflow input: its hash must not move with the clock.
 const DURATION = /^(\d+)([mhdw])$/
 const UNIT_MS = { m: 60_000, h: 3_600_000, d: 86_400_000, w: 7 * 86_400_000 } as const
 

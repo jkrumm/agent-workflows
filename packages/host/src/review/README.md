@@ -29,7 +29,7 @@ CLI exits non-zero naming it.
 
 `--cwd` is required wherever a repo is read (the CLI does not fill it). `cancel`, `submit` and `dispose` take it too and ignore it (the job names its repo), so a caller may pass it to every verb.
 
-`--since` is an ISO date or timestamp or a duration back from now (`30m`, `24h`, `7d`, `2w`), on `review stats` and on the narrative workflow (`src/since.ts`); the otel workflow's own `since` window already took durations.
+`review stats --since` is an ISO date or timestamp or a duration back from now (`30m`, `24h`, `7d`, `2w`; `src/since.ts`); the otel workflow's own `since` window already took durations. The narrative workflow's `since` stays ISO only: a workflow input is hashed for idempotent replays, and a duration resolved at parse time would hash differently on every retry.
 
 ## Scopes and the snapshot
 
