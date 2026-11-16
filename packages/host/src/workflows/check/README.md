@@ -12,29 +12,37 @@ Behaviour is ported from agent-gateway's `check`, the code is written fresh. Leg
 | `exec.ts` idle watchdog, process-group kill, `PWD` pin, drain grace | `check.ts` `runStep` |
 | `env.ts` `commandEnv` | `mcp/worker-shared.ts` `scrubSensitiveEnv`, the `CLAUDE_CODE_OAUTH_TOKEN` delete in `runStep` |
 | `agents/check/skills/run-step/run-step.sh` | `check.ts` `idleWatchdogBlock` (`run_step`) |
-| `index.ts` `contractCheck`, `errorLines`, `stepResult` | `check.ts` `runRepoContractCheck`, `makeCheckErrorLines`, `runStep` verdicts |
+| `index.ts` `contractCheck`, `commandsCheck`, `errorLines`, `stepResult` | `check.ts` `runRepoContractCheck`, `makeCheckErrorLines`, `runStep` verdicts |
 | `index.ts` `agentCheck` (one retry on invalid JSON) | `check.ts` `runCheck` tail, `lib/worker-io.ts` `JSON_ONLY_RETRY` |
 | `prompt.ts` `agentIdleMs`, `agentPrompt` | `check.ts` `checkSessionIdleTimeoutMs`, `explicitCommandsPrompt`, `idleWatchdogBlock` (OpenCode variant) |
 | `agents/check/AGENTS.md` | `skills/check.md` plus the explicit-commands prompt |
 
 ## Paths
 
-1. **Makefile contract, no LLM.** No `commands` and the Makefile (`GNUmakefile`, `makefile`, `Makefile`) has a real
+1. **Caller commands, no LLM.** With `commands`, each entry runs through `sh -c` in `cwd`, in order, inside
+   one journaled step (`commands`; a step id is a literal, so a resume runs them all again) through the same `runStep` as the contract path: the idle watchdog, the
+   output tail, the exit code. A red command does not stop the rest; the report holds every step that ran. A step is
+   named `format | lint | typecheck | test` by what the command runs (`commandStepName`), else after its tool
+   (`cargo audit` is `cargo`). `typecheck` and `test` steps wait for a factory test slot and get the test idle window,
+   the others the step window (§Machine budget); `errors` are the last 50 non-empty lines, 500 characters each, and an
+   idle kill says `no output for Ns`. The summary is `All N steps passed`, else `K/N steps failed: <command> failed
+   (exit C); …`. The caller's commands win over `make check`; no Makefile probe and no `fallow`.
+2. **Makefile contract, no LLM.** No `commands` and the Makefile (`GNUmakefile`, `makefile`, `Makefile`) has a real
    `check:` rule: step `make-check` runs `make check`, step `fallow` runs `fallow audit --quiet` when fallow is
    installed and the repo has a remote (also after a red `make check`). `errors` are the last 50 non-empty output
    lines, 500 characters each; nothing else of the log is kept. A `check-foo` target, a recipe-less `check:`, a file
    named `check` or a catch-all `%:` rule is not a contract.
-2. **Agent.** Otherwise one agent step (`agent`, agent `check`, route `check`): explicit `commands` run verbatim,
-   without discovery; none means the discovery guide in `AGENTS.md`. The agent works in its compiled location, so the
-   step passes `options.allowDirectories: [cwd]` and the prompt names `cwd`. The step is a JSON step: the report
-   comes back through the host's `submit_result` tool (`packages/opencode-host` README §Structured output). A turn
-   without a valid call (or a step name outside the contract) fails the step as `invalid_output`; one more session
-   (`agent-retry`) gets the same prompt plus `SUBMIT_RESULT_RETRY` (submit the report through the tool; it is a new
-   session, so running the steps again is expected). A second miss ends the run `done` with `passed: false`, `steps: []` and a summary. Any other
-   step failure fails the run.
+3. **Agent, discovery only.** Neither `commands` nor a `make check` target: one agent step (`agent`, agent `check`,
+   route `check`) discovers the ecosystem's validators per the guide in `AGENTS.md`. The agent works in its compiled
+   location, so the step passes `options.allowDirectories: [cwd]` and the prompt names `cwd`. The step is a JSON step:
+   the report comes back through the host's `submit_result` tool (`packages/opencode-host` README §Structured output).
+   A turn without a valid call (or a step name outside the contract) fails the step as `invalid_output`; one more
+   session (`agent-retry`) gets the same prompt plus `SUBMIT_RESULT_RETRY` (submit the report through the tool; it is a
+   new session, so running the steps again is expected). A second miss ends the run `done` with `passed: false`,
+   `steps: []` and a summary. Any other step failure fails the run.
 
-`plan` is a journaled step with a retry policy (3 attempts): it decides the path (and whether fallow applies), so a
-resume takes the same path without re-probing. It refuses a `cwd` that is not an existing git work tree (the run
+`plan` is a journaled step with a retry policy (3 attempts): it decides the contract path (and whether fallow applies),
+so a resume takes the same path without re-probing; `commands` decide their path by the input alone. It refuses a `cwd` that is not an existing git work tree (the run
 ends `failed`, kind `invalid_input`), but only on a definitive answer: no such directory, or `git` exiting 128 with
 "not a git repository", or `false`. Any other probe failure throws and is retried, never journaled as a verdict
 about the caller's input. Every probe gets the step's abort signal. The `make -p -q` probe has 30 s (a short wall
@@ -46,7 +54,7 @@ A command killed by a signal the host did not send (an OOM kill, an operator) is
 
 ## Agent path watchdog
 
-The agent runs every command through `agents/check/skills/run-step/run-step.sh <cwd> <idle-seconds> '<command>'`
+In discovery the agent runs every command through `agents/check/skills/run-step/run-step.sh <cwd> <idle-seconds> '<command>'`
 (ported from legacy's `run_step`): the command is killed alone after `idle-seconds` without new output, the wrapper
 prints `run-step: IDLE_TIMEOUT no output for Ns` and exits 124, and the agent records that step as failed with
 "no output for Ns — likely a watch-mode runner or a hung process" and goes on, so the report keeps the other steps.
@@ -78,7 +86,7 @@ idle kill, an abort, or a drain that did not finish, never after a clean reap.
 ## Idle, never a wall clock
 
 A command is killed only after `stepTimeoutSeconds` (default 180 s; 600 s for `make check`, which bundles the tests,
-and for the agent's test step) without a new byte of output. The exec port's watchdog is re-armed per chunk, so a slow
+for a caller's `typecheck` and `test` commands and for the agent's test step) without a new byte of output. The exec port's watchdog is re-armed per chunk, so a slow
 chatty suite runs as long as it needs. The runtime's step idle timer is a backstop (window + 60 s) fed by the same
 chunks (`scope.progress`); it never fires before the port's own watchdog. Only helper subprocesses have wall caps
 (`git`, 30 s; `make -p -q`, 5 s). The agent step's idle window is the legacy one: the larger of the runtime default
@@ -99,6 +107,9 @@ without `factory` run exactly as before.
 
 - **Makefile path:** the whole `make check` is wrapped (it bundles install, format, lint, tsc and the tests; only the
   repo's Makefile could split the heavy part out). `fallow` is not wrapped.
+- **Commands path:** each `typecheck` or `test` command is wrapped alone (`factory slot run … -- sh -c '<command>'`);
+  format, lint and any other command run unwrapped. A command that finds no slot is that step's `machine busy`
+  verdict and the rest still run.
 - **Agent path:** `run-step.sh <cwd> <idle> '<cmd>' slot` wraps one command; the agent passes `slot` for the typecheck and
   test steps (`agents/check/AGENTS.md`), not for format and lint.
 - **Waiting is silent**, so the idle window of a wrapped command (and of the agent session) grows by
@@ -114,16 +125,16 @@ without `factory` run exactly as before.
   | Runner | Cap | Applied |
   |-|-|-|
   | vitest (v4+) | `VITEST_MAX_WORKERS` (also `--maxWorkers`) | env, on every wrapped command |
-  | jest | `--maxWorkers=<n or %>` only, no variable | flag; the agent adds it to a plain jest test command |
+  | jest | `--maxWorkers=<n or %>` only, no variable | flag; the discovery agent adds it to a plain jest test command, a caller's command runs verbatim |
   | `bun test` | serial unless `--parallel[=N]` (Bun 1.4); `--max-concurrency` is per-file test concurrency, not a worker cap; no variable | none needed; a repo that passes `--parallel` sets its own N |
 
 ## Token and cache effect
 
-- The Makefile path spends **no tokens** (no usage on any step). It is also the common path for the repos that
-  matter, which is why `commands` is the caller's explicit opt-out.
-- The agent path's stable rules live in `agents/check/AGENTS.md` (the cacheable prefix, identical for every run);
-  the per-run prompt is three short lines (cwd, idle window, mode and commands) at the end. Discovery and explicit
-  commands share one `AGENTS.md`, so both hit the same cache entry; the mode line switches behaviour.
+- The commands path and the Makefile path spend **no tokens** (no usage on any step): a model that runs the given
+  commands and copies the outcome costs latency and cents and can misreport a red run as green, where code does the
+  same by exit code. Both are the common paths for the repos that matter.
+- The discovery agent's stable rules live in `agents/check/AGENTS.md` (the cacheable prefix, identical for every run);
+  the per-run prompt is three short lines (cwd, idle window, mode) at the end.
 - The retry is a fresh session with the same prompt plus a short directive, so it re-reads the cached prefix at the
   cache-read rate; a second miss costs two sessions and no more.
 - The agent is told to run each command once and never to re-read: that, not the prompt size, is where tokens go.
