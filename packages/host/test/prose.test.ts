@@ -89,6 +89,7 @@ function setup(reply: Reply = REVIEW, env: Record<string, string> = { [VOICE_PAT
 const refusing: CritiqueCaller = { call: () => Promise.reject(new Error('no model in this test')) }
 
 const db = freshSchema('prose')
+afterAll(() => db.drop())
 async function run(workflow: ReturnType<typeof setup>['review'], input: Record<string, unknown>) {
   const rt = testRuntime({ schema: db.schema, workflows: [workflow] })
   await rt.open()
