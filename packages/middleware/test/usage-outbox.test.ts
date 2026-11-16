@@ -111,20 +111,21 @@ describe('usage outbox', () => {
         }),
     )
     await rt.open()
+    let ticking = true
+    let tickers: Promise<void>[] = []
     try {
       usage.down = true
       const runIds = await Promise.all(
         Array.from({ length: 24 }, async (_, i) => (await rt.start(busy, { n: i }, { purpose: 'build' })).runId),
       )
       // Flushers tick while runs finish and the database is down: every post fails, no step may be marked.
-      let ticking = true
       const tick = async (outbox: UsageOutbox) => {
         while (ticking) {
           await outbox.flush()
           await Bun.sleep(3)
         }
       }
-      const tickers = outboxes.map(tick)
+      tickers = outboxes.map(tick)
       const results = await Promise.all(runIds.map((id) => rt.wait(id)))
       expect(results.every((r) => r.status === 'done')).toBe(true)
       await until(async () => {
@@ -134,9 +135,11 @@ describe('usage outbox', () => {
       await Bun.sleep(50)
       expect(usage.failedPosts).toBeGreaterThan(0)
       expect(usage.stored.size).toBe(0)
+      // `ask` writes no row (the gateway recorded its calls), so a batch of only those is marked even in an outage;
+      // which steps share a batch depends on the claim race. Every step that has rows must stay pending.
       const { rows: marked } = await sql.pool.query(
         `select count(*)::int as n from "${db.schema}".steps
-         where argo_synced_at is not null and (tokens_input > 0 or cost > 0)`,
+         where argo_synced_at is not null and (tokens_input > 0 or cost > 0) and step_id <> 'ask'`,
       )
       expect(marked[0]?.n).toBe(0)
 
@@ -151,8 +154,6 @@ describe('usage outbox', () => {
         )
         return rows[0]?.n === 0
       }, 'every step with usage marked')
-      ticking = false
-      await Promise.all(tickers)
 
       expect([...usage.accepted.keys()].sort()).toEqual(expected)
       expect([...usage.accepted.values()].every((count) => count === 1)).toBe(true)
@@ -176,6 +177,9 @@ describe('usage outbox', () => {
       expect(await outboxes[0]?.flush()).toMatchObject({ posted: 0, marked: 0, error: null })
       expect(usage.posts).toBe(before)
     } finally {
+      // A failed assertion must not leave flushers ticking: they would claim steps of the tests that follow.
+      ticking = false
+      await Promise.all(tickers)
       await rt.close()
       await platform.close()
       await Promise.all(dbs.map((d) => d.close()))

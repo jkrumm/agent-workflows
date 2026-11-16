@@ -156,8 +156,13 @@ describe('hung hooks (F8)', () => {
 })
 
 describe('fan-out concurrency limit (F31)', () => {
-  function fanOutWorkflows(id: string, concurrency: number | undefined) {
+  /**
+   * `allStart` holds every child until all 7 are running (or 5 s pass), so the peak never depends on how fast the
+   * children get scheduled: a fixed hold lets the first finish before the last starts on a loaded runner.
+   */
+  function fanOutWorkflows(id: string, concurrency: number | undefined, allStart = false) {
     const g = { now: 0, peak: 0 }
+    const all = Promise.withResolvers<void>()
     const child = defineWorkflow({
       id: `${id}.child`,
       version: 'v1',
@@ -167,7 +172,8 @@ describe('fan-out concurrency limit (F31)', () => {
         await ctx.step('hold', async () => {
           g.now++
           g.peak = Math.max(g.peak, g.now)
-          await Bun.sleep(60)
+          if (g.now === 7) all.resolve()
+          await (allStart ? Promise.race([all.promise, Bun.sleep(5000)]) : Bun.sleep(60))
           g.now--
           return null
         })
@@ -210,7 +216,7 @@ describe('fan-out concurrency limit (F31)', () => {
   })
 
   test('without a limit every child starts at once', async () => {
-    const { g, child, parent } = fanOutWorkflows('robust.unlimited', undefined)
+    const { g, child, parent } = fanOutWorkflows('robust.unlimited', undefined, true)
     const rt = testRuntime({ schema: db.schema, workflows: [parent, child] })
     await rt.open()
     try {

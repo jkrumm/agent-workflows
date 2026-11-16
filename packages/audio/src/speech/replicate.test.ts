@@ -112,10 +112,16 @@ describe.skipIf(!hasFfmpeg)('replicate lane', () => {
     }
     iu.requests.length = 0
     await speak(post({ model: FLASH, input: `${sentence} ${sentence}`, response_format: 'pcm' }))
+    // The chunks synthesize concurrently, so the order the requests arrive in is not the chunk order.
     const inputs = predictionInputs()
     expect(inputs).toHaveLength(2)
-    expect(inputs[0]?.next_text).toBe(inputs[1]?.prompt)
-    expect(inputs[1]?.previous_text).toBe(inputs[0]?.prompt)
+    const first = inputs.find((i) => i.previous_text === undefined)
+    const second = inputs.find((i) => i.next_text === undefined)
+    expect(first).toBeDefined()
+    expect(second).toBeDefined()
+    expect(first).not.toBe(second)
+    expect(first?.next_text).toBe(second?.prompt)
+    expect(second?.previous_text).toBe(first?.prompt)
   })
 
   test('pcm is transcoded and labelled audio/pcm; speed is clamped, and exactly 1 is omitted', async () => {
