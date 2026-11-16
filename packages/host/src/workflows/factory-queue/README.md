@@ -38,4 +38,4 @@ echo '{"repo":"app","issues":[{"id":"issue_12","title":"…","kind":"bug","state
 
 ## Eval
 
-None, by the owner's decision (RS13). It learns from real queues through the run journal. A one-off effort comparison on 14 synthetic cases (no suite, nothing registered) is `docs/evals/2026-11-16-effort-arms.md`: high, low and none agree within what those cases show, and the route stays on `EASY`. A one-off effort comparison on 14 synthetic cases (no suite, nothing registered) is `docs/evals/2026-11-16-effort-arms.md`: high, low and none agree within what those cases show, and the route stays on `EASY`.
+None, by the owner's decision (RS13). It learns from real queues through the run journal. A one-off effort comparison on 14 synthetic cases (no suite, nothing registered) is `docs/evals/2026-11-16-effort-arms.md`: high, low and none agree within what those cases show, and the route stays on `EASY`.
