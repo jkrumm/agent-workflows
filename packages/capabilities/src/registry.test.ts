@@ -70,7 +70,7 @@ describe('one definition, two doors', () => {
   })
 
   test('a typed handler error fails identically, defined, with its data', async () => {
-    const b = build({ anthropic: [fail('UPSTREAM_ERROR', 'anthropic request failed (503): down', { status: 503 })] })
+    const b = build({ anthropic: [fail('UPSTREAM_ERROR', 'anthropic request failed (500): down', { status: 500 })] })
     const s = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: b.registry.fetch })
     try {
       const viaImport = await b.registry.call('llm.title', { text: 'x' }).catch(errorJson)
@@ -81,8 +81,8 @@ describe('one definition, two doors', () => {
         defined: true,
         code: 'UPSTREAM_ERROR',
         status: 502,
-        message: 'anthropic request failed (503): down',
-        data: { status: 503 },
+        message: 'anthropic request failed (500): down',
+        data: { status: 500 },
       })
     } finally {
       void s.stop(true)

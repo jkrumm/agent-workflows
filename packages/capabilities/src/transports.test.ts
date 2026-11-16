@@ -207,13 +207,15 @@ describe('openai wire details', () => {
     ])
   })
 
-  test('effort none is not sent as reasoning_effort, like the Messages wire', async () => {
+  test('effort none is not sent as reasoning_effort; the Messages wire turns thinking off explicitly', async () => {
     iu.on('chat', () => chatStream('ok', null))
     iu.on('messages', () => messageResponse('ok', null))
     await iuOpenai({ env: env() }).complete({ ...chatRequest, effort: 'none' }, never())
     await anthropicWire({ env: env() }).complete({ ...chatRequest, effort: 'none' }, never())
     expect(iu.requests[0]?.body.reasoning_effort).toBeUndefined()
-    expect(iu.requests[1]?.body.thinking).toBeUndefined()
+    // Absent `thinking` means the model decides (Haiku thinks); `none` is the explicit off.
+    expect(iu.requests[1]?.body.thinking).toEqual({ type: 'disabled' })
+    expect(iu.requests[1]?.body.output_config).toBeUndefined()
   })
 
   test('a stream cut before its finish chunk is retried, not returned as a complete answer', async () => {
@@ -297,6 +299,7 @@ describe('messages wire details', () => {
     expect(iu.requests[1]?.body.output_config).toEqual({ format })
     expect(iu.requests[1]?.body.thinking).toBeUndefined()
     expect(iu.requests[2]?.body.output_config).toEqual({ format })
+    expect(iu.requests[2]?.body.thinking).toEqual({ type: 'disabled' })
     expect(iu.requests[3]?.body.output_config).toEqual({ effort: 'high' })
   })
 

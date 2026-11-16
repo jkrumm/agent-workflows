@@ -93,13 +93,15 @@ export class FallbackFailedError extends Error {
     primaryModel: string
     fallbackModel: string
     primaryRequestId?: string
+    /** The primary was out (retries ran out on a 502/503/504 or a dead connection), not refused for balance. */
+    unavailable?: boolean
     cause: unknown
   }) {
     const detail = (args.cause instanceof Error ? args.cause.message : String(args.cause))
       .slice(0, 300)
       .replace(BALANCE_WORDS, '[redacted]')
     super(
-      `${args.route}: the fallback ${args.fallbackModel} failed after ${args.primaryModel} was refused: ${detail}`,
+      `${args.route}: the fallback ${args.fallbackModel} failed after ${args.primaryModel} ${args.unavailable ? 'was unavailable' : 'was refused'}: ${detail}`,
       { cause: args.cause },
     )
     this.name = 'FallbackFailedError'

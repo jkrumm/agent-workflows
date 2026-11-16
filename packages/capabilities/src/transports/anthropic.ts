@@ -4,11 +4,10 @@ import { gatewayHeaders } from './headers.ts'
 import {
   Attempt,
   DEFAULTS,
-  describe,
   failedResponse,
   type HttpOptions,
-  isAbort,
   readJson,
+  requestFailure,
   withRetries,
 } from './http.ts'
 import type { AttemptUsage, ChatPort, ChatRequest, ChatResult, OnUsage } from './port.ts'
@@ -35,7 +34,8 @@ const messageSchema = z.object({
 /**
  * The native Messages route on the gateway, which pays it from a Claude credit pool or IU. One non-streamed request
  * under a hang guard (the agent-limits fallback for a client that cannot stream), never a budget. Thinking is
- * `adaptive` with the route's effort, and only when the route has one; models without effort get a plain request.
+ * `adaptive` with the route's effort, `disabled` at effort `none` (the model thinks by default when the field is absent),
+ * and absent when the route has no effort: models without effort get a plain request.
  * A request with a `jsonSchema` adds `output_config.format` (`json_schema`), next to the effort when there is one.
  * Every request carries `x-agw-fallback: none`: with no credit left the gateway answers 402 (balance), so the call
  * moves to the route's own fallback, never onto IU's Claude.
@@ -62,7 +62,7 @@ export function anthropicWire(options: HttpOptions & { env?: Env } = {}): ChatPo
           })
         } catch (error) {
           if (error instanceof Attempt) throw error
-          throw new Attempt(describe(error), !isAbort(error))
+          throw requestFailure(error)
         }
         if (!res.ok) throw await failedResponse(res, 'anthropic')
         return readMessage(await readJson(res, 'anthropic'), request.model, onUsage)
@@ -73,6 +73,8 @@ export function anthropicWire(options: HttpOptions & { env?: Env } = {}): ChatPo
 
 function body(request: ChatRequest) {
   const thinking = request.effort !== undefined && request.effort !== 'none'
+  // Haiku 5.5 thinks when `thinking` is absent (probed 2026-11-16, docs/gateway.md §Thinking): effort `none` says so.
+  const thinkingOff = request.effort === 'none'
   return {
     model: request.model,
     max_tokens: request.maxOutputTokens,
@@ -91,7 +93,7 @@ function body(request: ChatRequest) {
       },
     ],
     ...(request.system ? { system: request.system } : {}),
-    ...(thinking ? { thinking: { type: 'adaptive' } } : {}),
+    ...(thinking ? { thinking: { type: 'adaptive' } } : thinkingOff ? { thinking: { type: 'disabled' } } : {}),
     ...(thinking || request.jsonSchema
       ? {
           output_config: {

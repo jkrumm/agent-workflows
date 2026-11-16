@@ -120,10 +120,10 @@ describe('llm.summarize (anthropic)', () => {
     expect(usages[0]).toMatchObject({ tokens: { input: 0, output: 0 }, costSource: 'unknown' })
   })
 
-  test('a route with no effort sends no thinking and gets the route ceiling', async () => {
+  test('a route at effort none turns thinking off and gets the route ceiling', async () => {
     iu.on('messages', () => messageResponse('x', null))
     await call('llm.summarize', { text: 'x' }, { 'cheap.summarize': { effort: 'none' } })
-    expect(iu.requests[0]?.body.thinking).toBeUndefined()
+    expect(iu.requests[0]?.body.thinking).toEqual({ type: 'disabled' })
     expect(iu.requests[0]?.body.output_config).toBeUndefined()
     expect(iu.requests[0]?.body.max_tokens).toBe(resolveRoute('cheap.summarize', {}).maxOutputTokens)
   })
@@ -183,7 +183,7 @@ describe('llm.classify (anthropic)', () => {
     const [request] = iu.requests
     expect(request?.path).toBe('/anthropic/v1/messages')
     expect(request?.body).toMatchObject({ model: route.model })
-    expect(request?.body.thinking).toBeUndefined()
+    expect(request?.body.thinking).toEqual({ type: 'disabled' })
     expect(request?.body.temperature).toBeUndefined()
     expect(request?.body.stream).toBeUndefined()
     const prompt = JSON.stringify(request?.body.messages)

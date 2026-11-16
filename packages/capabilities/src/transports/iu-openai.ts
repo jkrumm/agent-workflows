@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { type Env, gatewayConfig } from './config.ts'
 import { gatewayHeaders } from './headers.ts'
-import { Attempt, DEFAULTS, describe, failedResponse, type HttpOptions, isAbort, withRetries } from './http.ts'
+import { Attempt, DEFAULTS, failedResponse, type HttpOptions, requestFailure, withRetries } from './http.ts'
 import { isStrictCompatible } from './json-schema.ts'
 import type { AttemptUsage, ChatPort, ChatRequest, ChatResult, OnUsage, Tokens } from './port.ts'
 
@@ -74,7 +74,7 @@ export function iuOpenai(options: HttpOptions & { env?: Env } = {}): ChatPort {
             )
           }
           if (error instanceof Attempt) throw error
-          throw new Attempt(describe(error), !isAbort(error))
+          throw requestFailure(error)
         } finally {
           clearTimeout(timer)
         }

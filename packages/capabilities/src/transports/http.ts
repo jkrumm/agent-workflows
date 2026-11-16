@@ -74,11 +74,37 @@ export async function failedResponse(res: Response, wire: string): Promise<Attem
   return new Attempt(`${prefix}: ${detail}`, retryable, res.status, undefined, undefined, requestId)
 }
 
+/**
+ * The attempt for a fetch that threw: a hang guard or an abort is spent wait (not retried, not `transport`); anything
+ * else never reached the vendor (a refused or reset connection) and is retryable, marked `transport` so the exhausted
+ * call is an outage a route's fallback answers (`isOutageError`).
+ */
+export function requestFailure(error: unknown): Attempt {
+  const spent = isAbort(error)
+  return new Attempt(describe(error), !spent, undefined, undefined, spent ? undefined : true)
+}
+
 /** A transport failure that a route's fallback answers: the classifier over a failed call's status and message. */
 export function isBalanceError(error: unknown): boolean {
   if (!(error instanceof CapabilityError) || error.code !== 'UPSTREAM_ERROR') return false
   const status = (error.data as { status?: unknown } | undefined)?.status
   return isBalanceFailure({ ...(typeof status === 'number' ? { status } : {}), text: error.message })
+}
+
+/** The statuses of an upstream that is down, not a request that is wrong: a bad gateway, an unavailable service, a gateway timeout. */
+const OUTAGE_STATUS = new Set([502, 503, 504])
+
+/**
+ * A failed call whose primary route is out: the retries ran out on 502/503/504 (a 503 that is a balance refusal is
+ * `isBalanceError`, checked first by the caller) or on a connection that never reached the vendor (`transport`: no
+ * response; a hang guard or an idle stop is not one, the wait is already spent). A route's fallback answers it, once.
+ * 429 and 500 stay with the retries: no 429 in the 14-day ledger audit, and a 500 is as likely the request as the host.
+ */
+export function isOutageError(error: unknown): boolean {
+  if (!(error instanceof CapabilityError) || error.code !== 'UPSTREAM_ERROR' || isBalanceError(error)) return false
+  const data = error.data as { status?: unknown; transport?: unknown } | undefined
+  if (data?.transport === true) return true
+  return typeof data?.status === 'number' && OUTAGE_STATUS.has(data.status)
 }
 
 /**

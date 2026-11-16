@@ -14,7 +14,7 @@ import type { z } from 'zod'
 import type { Ctx, Usage } from '../context.ts'
 import { CapabilityError, causeOf, fail } from '../errors.ts'
 import type { Env } from '../transports/config.ts'
-import { isBalanceError, refusedRequestId } from '../transports/http.ts'
+import { isBalanceError, isOutageError, refusedRequestId } from '../transports/http.ts'
 import { type JsonSchema, toJsonSchema } from '../transports/json-schema.ts'
 import type { AttemptUsage, ChatRequest, ChatResult, GatewayTransports, Tokens } from '../transports/port.ts'
 
@@ -130,7 +130,8 @@ export type Completion = Pick<ChatResult, 'text' | 'model' | 'stop' | 'stopDetai
 /**
  * One completion through the route's wire. Every billed call is reported to `ctx.addUsage`, failures included, under the
  * model that actually ran. A provider-balance failure (`isBalanceError`) moves the call once to the route's fallback;
- * the primary is never retried for it. When the fallback fails too, the caller sees an `UPSTREAM_ERROR` with data
+ * the primary is never retried for it. So does an outage (`isOutageError`): the transport's retries ran out on a 502,
+ * 503 or 504, or on a connection that never reached the vendor. When the fallback fails too, the caller sees an `UPSTREAM_ERROR` with data
  * `{ reason: 'fallback_failed' }` whose `cause` is the fallback's error (`FallbackFailedError`): the fallback ran and was
  * billed for its own failure, so the primary's balance refusal is not rethrown (`isBalanceError` is false on it).
  * `start` pins the route to call (a re-ask stays on the route that answered); a fallback route has no fallback.
@@ -141,9 +142,15 @@ export async function complete(deps: LlmDeps, args: CompleteArgs, start?: Resolv
     return await completeOn(deps, route, args)
   } catch (error) {
     const fallback = fallbackRoute(route)
-    if (!fallback || !isBalanceError(error)) throw error
+    if (!fallback) throw error
+    const unavailable = isOutageError(error)
+    if (!unavailable && !isBalanceError(error)) throw error
     const warn = deps.warn ?? ((message, meta) => console.warn(message, meta))
-    warn('provider balance exhausted; falling back', { route: route.id, from: route.model, to: fallback.model })
+    warn(unavailable ? 'provider unavailable; falling back' : 'provider balance exhausted; falling back', {
+      route: route.id,
+      from: route.model,
+      to: fallback.model,
+    })
     const refused = refusedRequestId(error)
     try {
       return await completeOn(deps, fallback, args, refused)
@@ -159,6 +166,7 @@ export async function complete(deps: LlmDeps, args: CompleteArgs, start?: Resolv
         primaryModel: route.model,
         fallbackModel: fallback.model,
         ...(refused ? { primaryRequestId: refused } : {}),
+        ...(unavailable ? { unavailable } : {}),
         cause: fallbackError,
       })
       throw new CapabilityError('UPSTREAM_ERROR', failure.message, { reason: failure.reason }, { cause: fallbackError })

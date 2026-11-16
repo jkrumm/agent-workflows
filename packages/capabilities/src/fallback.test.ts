@@ -5,7 +5,7 @@ import type { Attribution, Usage } from './context.ts'
 import { CapabilityCallError } from './errors.ts'
 import { createRegistry } from './registry.ts'
 import { type FakeGateway, type RecordedRequest, sse, startFakeGateway } from '@agent-workflows/testing/gateway'
-import { gatewayTransports, isBalanceError } from './transports/index.ts'
+import { gatewayTransports, isBalanceError, isOutageError } from './transports/index.ts'
 
 // IU's body on an empty provider account, as it arrived 2026-10-28.
 const BALANCE_503 = 'IU request failed (503) — Insufficient Balance (PaymentRequired) on Requesty-Global'
@@ -44,11 +44,13 @@ async function call(
   input: unknown,
   routes?: PatchInput,
   attribution?: Attribution,
+  fetch?: (url: string, init: RequestInit) => Promise<Response>,
 ) {
   const transports = gatewayTransports({
     env: { AGW_API_SECRET: 'test-key', AGW_GATEWAY_URL: iu.url },
     backoffMs: 0,
     idleTimeoutMs: 200,
+    ...(fetch ? { fetch } : {}),
   })
   const warn = (message: string, meta: Record<string, unknown>) => void warnings.push({ message, meta })
   const registry = createRegistry(createCapabilities({ transports, env: {}, warn }))
@@ -154,12 +156,100 @@ describe('provider-balance fallback', () => {
     expect(usages).toEqual([expect.objectContaining({ model: fallback.model, cost: 0.0042, costSource: 'provider' })])
   })
 
-  test('a 503 without the balance text is retried on the primary as before; no fallback', async () => {
-    iu.on('messages', () => new Response('Service Unavailable', { status: 503 }))
-    const error = await caught(call('llm.classify', classify))
-    expect(error).toMatchObject({ code: 'UPSTREAM_ERROR', data: { status: 503 } })
+  for (const status of [502, 503, 504]) {
+    test(`${status} until the retries are exhausted: one successful fallback call, the primary tried three times, usage of the fallback`, async () => {
+      iu.on('messages', () => new Response('Service Unavailable', { status }))
+      iu.on('chat', (request) => answer(request, '{"label":"bug","reason":"crash"}'))
+      expect(await call('llm.classify', classify)).toEqual({ label: 'bug', reason: 'crash' })
+
+      expect(iu.requests.map((r) => [r.path, r.body.model])).toEqual([
+        ['/anthropic/v1/messages', primary.model],
+        ['/anthropic/v1/messages', primary.model],
+        ['/anthropic/v1/messages', primary.model],
+        ['/openai/v1/chat/completions', fallback.model],
+      ])
+      // The 5xx carried no usage (nothing was billed); the fallback's call is the only row, under the model that ran.
+      expect(usages).toEqual([expect.objectContaining({ model: fallback.model, route: primary.id, costSource: 'rate' })])
+      expect(warnings).toEqual([
+        {
+          message: 'provider unavailable; falling back',
+          meta: { route: 'cheap.classify', from: primary.model, to: fallback.model },
+        },
+      ])
+    })
+  }
+
+  test('a 502 that recovers inside the retries stays on the primary', async () => {
+    let n = 0
+    iu.on('messages', () =>
+      n++ < 2
+        ? new Response('bad gateway', { status: 502 })
+        : Response.json({
+            model: primary.model,
+            stop_reason: 'end_turn',
+            content: [{ type: 'text', text: '{"label":"bug","reason":"r"}' }],
+            usage: { input_tokens: 10, output_tokens: 5 },
+          }),
+    )
+    await call('llm.classify', classify)
     expect(iu.requests.map((r) => r.body.model)).toEqual([primary.model, primary.model, primary.model])
     expect(warnings).toEqual([])
+  })
+
+  test('a dead connection until the retries are exhausted: one fallback call', async () => {
+    iu.on('chat', (request) => answer(request, '{"label":"bug","reason":"crash"}'))
+    let refused = 0
+    const flaky = (url: string, init: RequestInit) => {
+      if (url.includes('/anthropic/')) {
+        refused++
+        return Promise.reject(new TypeError('fetch failed'))
+      }
+      return fetch(url, init)
+    }
+    expect(await call('llm.classify', classify, undefined, undefined, flaky)).toEqual({ label: 'bug', reason: 'crash' })
+    expect(refused).toBe(3)
+    expect(iu.requests.map((r) => r.path)).toEqual(['/openai/v1/chat/completions'])
+    expect(warnings.map((w) => w.message)).toEqual(['provider unavailable; falling back'])
+  })
+
+  test('a hang guard is spent wait: no retry and no fallback', async () => {
+    const hung = () => Promise.reject(new DOMException('timed out', 'TimeoutError'))
+    const error = await caught(call('llm.classify', classify, undefined, undefined, hung))
+    expect(isOutageError(error)).toBe(false)
+    expect(iu.requests).toEqual([])
+  })
+
+  test('a 500 is retried on the primary; no fallback', async () => {
+    iu.on('messages', () => new Response('boom', { status: 500 }))
+    const error = await caught(call('llm.classify', classify))
+    expect(error).toMatchObject({ code: 'UPSTREAM_ERROR', data: { status: 500 } })
+    expect(iu.requests.map((r) => r.body.model)).toEqual([primary.model, primary.model, primary.model])
+    expect(warnings).toEqual([])
+  })
+
+  test('the fallback failing on a 502 too: fallback_failed after an unavailable primary, no third call, not an outage again', async () => {
+    iu.on('messages', () => new Response('bad gateway', { status: 502 }))
+    iu.on('chat', () => new Response('bad gateway', { status: 502 }))
+    const error = await caught(call('llm.classify', classify))
+    expect(error).toMatchObject({ code: 'UPSTREAM_ERROR', data: { reason: 'fallback_failed' } })
+    expect(error.message).toContain('was unavailable')
+    expect(isOutageError(error)).toBe(false)
+    expect(iu.requests.map((r) => r.body.model)).toEqual([
+      primary.model,
+      primary.model,
+      primary.model,
+      fallback.model,
+      fallback.model,
+      fallback.model,
+    ])
+    expect(warnings.map((w) => w.message)).toEqual(['provider unavailable; falling back', 'fallback failed'])
+  })
+
+  test('an arm with fallback: null leaves an outage failing', async () => {
+    iu.on('messages', () => new Response('bad gateway', { status: 502 }))
+    const error = await caught(call('llm.classify', classify, { 'cheap.classify': { fallback: null } }))
+    expect(error).toMatchObject({ data: { status: 502 } })
+    expect(iu.requests.map((r) => r.path)).toEqual(Array(3).fill('/anthropic/v1/messages'))
   })
 
   test('a plain 429 rate limit is retried on the primary; no fallback', async () => {
