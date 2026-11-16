@@ -58,9 +58,13 @@ function gateway(env: Record<string, string | undefined>) {
   }
 }
 
-/** Headers of a text call: the bearer and the step's attribution. The gateway writes the usage row of these calls. */
-const callHeaders = (token: string, attribution: Attribution | undefined, extra: Record<string, string> = {}) => ({
-  ...gatewayHeaders(attribution),
+/** Headers of a text call: the bearer, the step's attribution and the call's route and effort. The gateway writes the usage row of these calls. */
+const callHeaders = (
+  token: string,
+  call: { attribution?: Attribution; routeId?: string; effort?: string },
+  extra: Record<string, string> = {},
+) => ({
+  ...gatewayHeaders(call.attribution, { route: call.routeId, effort: call.effort }),
   ...extra,
   authorization: `Bearer ${token}`,
 })
@@ -69,8 +73,8 @@ const callHeaders = (token: string, attribution: Attribution | undefined, extra:
  * Headers of a Messages call. `x-agw-fallback: none`: with no credit left the gateway answers 402 (balance) and the
  * route's own fallback takes the call, never IU's Claude.
  */
-const anthropicHeaders = (token: string, attribution: Attribution | undefined) =>
-  callHeaders(token, attribution, {
+const anthropicHeaders = (token: string, call: { attribution?: Attribution; routeId?: string; effort?: string }) =>
+  callHeaders(token, call, {
     'anthropic-version': ANTHROPIC_VERSION,
     'content-type': 'application/json',
     'x-agw-fallback': 'none',
@@ -236,7 +240,7 @@ export function iuModelPort(options: IuOptions = {}): ModelPort {
         await stream(
           'iu-openai',
           `${openaiBase}/chat/completions`,
-          callHeaders(token, call.attribution, { 'content-type': 'application/json' }),
+          callHeaders(token, call, { 'content-type': 'application/json' }),
           {
             model: call.model,
             messages: [
@@ -289,7 +293,7 @@ export function iuModelPort(options: IuOptions = {}): ModelPort {
       await stream(
         'anthropic',
         `${anthropicBase}/v1/messages`,
-        anthropicHeaders(token, call.attribution),
+        anthropicHeaders(token, call),
         body,
         signal,
         // The whole body: SSE events, or a plain JSON message or error envelope from a proxy that ignores `stream`.
@@ -328,7 +332,7 @@ export function iuModelPort(options: IuOptions = {}): ModelPort {
       await stream(
         'anthropic',
         `${anthropicBase}/v1/messages`,
-        anthropicHeaders(token, call.attribution),
+        anthropicHeaders(token, call),
         body,
         signal,
         (raw) => events.push(raw),
@@ -362,7 +366,7 @@ export function iuModelPort(options: IuOptions = {}): ModelPort {
         onSent()
         res = await doFetch(`${openaiBase}${responses ? '/responses' : '/chat/completions'}`, {
           method: 'POST',
-          headers: callHeaders(token, call.attribution, { 'content-type': 'application/json' }),
+          headers: callHeaders(token, call, { 'content-type': 'application/json' }),
           body: JSON.stringify(roundBody(call)),
           signal: AbortSignal.any([signal, AbortSignal.timeout(hangMs)]),
         })

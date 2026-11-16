@@ -617,6 +617,7 @@ describe('Llm.call', () => {
     expect(port.chats[0]).toEqual({
       wire: 'iu-openai',
       model: 'fake-model',
+      routeId: 'podcast.editorial',
       effort: 'high',
       system: 'sys',
       user: 'user',

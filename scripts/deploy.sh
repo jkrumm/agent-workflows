@@ -176,6 +176,13 @@ processes_of() {  # $1 release dir -> process names
 is_healthy() {  # $1 sha, $2 process
   local body field=version want=$1
   if [[ "$2" == gateway ]]; then field=build; want="$GW_EXPECT"; [[ -n "$want" ]] || return 1; fi
+  if [[ "$2" == gateway ]]; then
+    # No eligible credit pool answers 503 `degraded` (`reasons: ["no-eligible-pool"]`): the credit is no property of the
+    # build, so it never rolls a release back. A ledger that cannot be written still does.
+    body=$(curl -sS --max-time 2 "$(health_url "$2")" 2>/dev/null) \
+      && [[ "$(print -r -- "$body" | jq -r "if .status == \"ok\" or (.status == \"degraded\" and .reasons == [\"no-eligible-pool\"]) then \"ok\" else .status end + \" \" + .$field" 2>/dev/null)" == "ok $want" ]]
+    return
+  fi
   body=$(curl -fsS --max-time 2 "$(health_url "$2")" 2>/dev/null) \
     && [[ "$(print -r -- "$body" | jq -r ".status + \" \" + .$field" 2>/dev/null)" == "ok $want" ]]
 }

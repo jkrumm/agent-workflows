@@ -6,6 +6,7 @@ import {
   frictionRecounter,
   fsFingerprintSource,
   JournalDb,
+  createLogShipper,
   platformMiddleware,
 } from '@agent-workflows/middleware'
 import { basePolicyDigest, DEFAULT_STATE_DIR, OpenCodeHost, OpenCodeServer } from '@agent-workflows/opencode-host'
@@ -268,11 +269,13 @@ export async function bootProcess(
 ): Promise<RunningHost> {
   const env = options.env ?? process.env
   const { name } = definition
-  const logger = processLogger(name)
+  // Warn and error lines also ship as OTLP logs; its closer registers first, so it runs last and flushes what the others log.
+  const logs = createLogShipper({ env, serviceName: definition.serviceName, version: config.version })
+  const logger = logs.wrap(processLogger(name))
   const tag = `[agw-${name}]`
   // Every resource registers its closer as it is created; a failure at any point runs the same teardown as a
   // signal does, in reverse order, so a half-started process never keeps pools, timers or leases.
-  const closers: (() => Promise<void>)[] = []
+  const closers: (() => Promise<void>)[] = [() => logs.shutdown()]
   let closing: Promise<void> | undefined
   const shutdown = () =>
     (closing ??= (async () => {
@@ -350,7 +353,8 @@ export async function bootProcess(
         learnings,
       ),
       friction: frictionSource,
-      telemetry: { exporter: exporterFor(env), serviceName: definition.serviceName },
+      logger,
+      telemetry: { exporter: exporterFor(env), serviceName: definition.serviceName, version: config.version },
       usage: { machine: config.machine },
     })
     closers.push(() => platform.close())

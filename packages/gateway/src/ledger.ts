@@ -19,6 +19,8 @@ export interface RecordRow {
   project_raw?: string | null
   /** These three are absent from a row an older build wrote and the ledger still owes. */
   workspace?: 'work' | 'private' | null
+  /** The caller's `x-agw-effort`: the effort the call asked for, absent from a row an older build wrote. */
+  effort?: string | null
   billing: 'api_credit' | 'api_key'
   /** The credit pool, for `api_credit`. */
   account: string | null

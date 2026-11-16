@@ -24,16 +24,26 @@ const NAMES = {
 /**
  * The gateway's attribution headers for one call, the same set as `gatewayHeaders` of `packages/capabilities` (not a
  * dependency of audio). The session is the root run, so a run tree stays on one credit pool. A value that is absent
- * or not printable ASCII up to 200 characters is left out.
+ * or not printable ASCII up to 200 characters is left out. `call` names the route the call dispatches on
+ * (`x-agw-route`) and its effort (`x-agw-effort`), which the gateway stores on the usage row; each under the same filter.
  */
-export function gatewayHeaders(attribution: Attribution | undefined): Record<string, string> {
+export function gatewayHeaders(attribution: Attribution | undefined, call: CallHeaders = {}): Record<string, string> {
   const headers: Record<string, string> = {}
-  if (!attribution) return headers
-  for (const [key, name] of Object.entries(NAMES) as [keyof Attribution, string][]) {
-    const value = attribution[key]
-    if (typeof value === 'string' && HEADER_VALUE.test(value)) headers[name] = value
+  if (attribution) {
+    for (const [key, name] of Object.entries(NAMES) as [keyof Attribution, string][]) {
+      const value = attribution[key]
+      if (typeof value === 'string' && HEADER_VALUE.test(value)) headers[name] = value
+    }
   }
+  if (call.route !== undefined && HEADER_VALUE.test(call.route)) headers['x-agw-route'] = call.route
+  if (call.effort !== undefined && HEADER_VALUE.test(call.effort)) headers['x-agw-effort'] = call.effort
   return headers
+}
+
+/** The route id and effort of one call. */
+export interface CallHeaders {
+  route?: string
+  effort?: string
 }
 
 /**

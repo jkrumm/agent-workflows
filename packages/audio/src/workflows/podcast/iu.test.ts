@@ -311,7 +311,7 @@ describe('iuModelPort', () => {
     const { seen, fetch } = scripted([() => new Response(OPENAI_STREAM)])
     const { usages, onUsage } = usageSink()
     const reply = await port(fetch).chat(
-      { ...chatCall, effort: 'high', attribution: ATTRIBUTION },
+      { ...chatCall, routeId: 'podcast.write', effort: 'high', attribution: ATTRIBUTION },
       SIGNAL,
       onUsage,
       NOT_SENT,
@@ -340,6 +340,8 @@ describe('iuModelPort', () => {
     expect(headers.get('x-agw-step')).toBe('write')
     expect(headers.get('x-agw-purpose')).toBe('prod')
     // A text call: the gateway writes its row, and there is nothing to fall back from.
+    expect(headers.get('x-agw-route')).toBe('podcast.write')
+    expect(headers.get('x-agw-effort')).toBe('high')
     expect(headers.get('x-agw-usage')).toBeNull()
     expect(headers.get('x-agw-fallback')).toBeNull()
   })

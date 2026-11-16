@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import type { Attributes } from '@opentelemetry/api'
 import { BEARER_CHALLENGE, CALLER_PATTERN } from '@agent-workflows/host/auth'
 import { callerAuth, PLATFORM_CALLER } from '@agent-workflows/host/door-tokens'
 import { BALANCE_MARKER, isBalanceFailure, resolveModelAlias } from '@agent-workflows/routes/pricing'
@@ -258,12 +259,29 @@ function routeFallbackOf(inbound: Headers): string | null {
   return value !== null && (value === FALLBACK_UNKNOWN || REQUEST_ID.test(value)) ? value : null
 }
 
+/** A caller's header value, bounded: an empty or an overlong value is no value. */
+const boundedHeader = (inbound: Headers, name: string): string | null => {
+  const value = inbound.get(name)
+  return value === null || value === '' || value.length > MAX_CALLER_VALUE_CHARS ? null : value
+}
+
+/** `x-agw-route` and `x-agw-effort`: what the call is (the route id, the effort it asked for), beside who it is for. */
+const callOf = (inbound: Headers): { route: string | null; effort: string | null } => ({
+  route: boundedHeader(inbound, 'x-agw-route'),
+  effort: boundedHeader(inbound, 'x-agw-effort'),
+})
+
+const routeAttributes = (inbound: Headers): Attributes => {
+  const { route, effort } = callOf(inbound)
+  return {
+    ...(route === null ? {} : { 'agw.gateway.route': route }),
+    ...(effort === null ? {} : { 'agw.gateway.effort': effort }),
+  }
+}
+
 /** `x-agw-project` and `x-agw-workspace` as `usage.records` takes them; an empty or an overlong value is no value. */
 function attributionOf(inbound: Headers): Attribution {
-  const bounded = (name: string): string | null => {
-    const value = inbound.get(name)
-    return value === null || value === '' || value.length > MAX_CALLER_VALUE_CHARS ? null : value
-  }
+  const bounded = (name: string) => boundedHeader(inbound, name)
   const project = bounded('x-agw-project')
   const declared = bounded('x-agw-workspace')
   const workspace = declared === 'work' || declared === 'private' ? declared : null
@@ -386,6 +404,7 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
     const lane = laneOf(x.caller)
     const origin = originOf(x.inbound)
     const routeFallback = routeFallbackOf(x.inbound)
+    const call = callOf(x.inbound)
     const row: RecordRow = {
       source: 'gateway',
       source_id: x.requestId,
@@ -398,6 +417,7 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
       account: creditPool ? pick.pool : null,
       api_key: creditPool ? null : 'personal',
       machine,
+      effort: call.effort,
       outcome: ok && ended === 'complete' && !tee.streamError ? 'ok' : 'error',
       lane,
       lane_detail: {
@@ -409,6 +429,7 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
         workflow: x.inbound.get('x-agw-workflow'),
         step: x.inbound.get('x-agw-step'),
         purpose: x.inbound.get('x-agw-purpose'),
+        ...(call.route === null ? {} : { route: call.route }),
         ...(origin === null ? {} : { origin }),
         ...(routeFallback === null ? {} : { routeFallback }),
         pool: pick.pool,
@@ -854,6 +875,7 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
       'gen_ai.system': x.system,
       'agw.gateway.caller': x.caller,
       'agw.gateway.request_id': x.requestId,
+      ...routeAttributes(x.inbound),
       ...(x.thread === null ? {} : { 'agw.gateway.thread': x.thread }),
       ...(x.session === null ? {} : { 'agw.gateway.session': x.session }),
       ...(x.model === null ? {} : { 'gen_ai.request.model': x.model }),

@@ -65,9 +65,8 @@ KEYS=( ${(f)"$(/usr/bin/grep -hoE '^[A-Za-z_][A-Za-z0-9_]*=' "$TPL" | /usr/bin/t
 # exits 78 and the process never starts, so the usage outbox is never "off" on a deployed host (seed the ref before the
 # deploy that needs it). The raw AGW_PG_PASSWORD, USAGE_PG_PASSWORD and OTEL_EXPORTER_OTLP_AUTHORIZATION are dropped before the host
 # starts. The built OTEL_EXPORTER_OTLP_HEADERS (`authorization=<ClickStack ingest key>`)
-# stays: it is what the exporter reads, and the OpenCode server's env allow-list forwards every OTEL_EXPORTER_OTLP_*
-# variable, so the ingest key is also in that server's env and its tool shells, like the agw-opencode door token
-# (accepted risk: packages/opencode-host/README.md, "Accepted risk"). The host holds no provider key: every model call
+# stays: it is what the exporter reads. The OpenCode server's env allow-list forwards no OTEL_EXPORTER_OTLP_* variable
+# (packages/opencode-host/README.md, "Accepted risk"), so the ingest key is not in its env or its tool shells. The host holds no provider key: every model call
 # goes through the gateway (AGW_GATEWAY_URL).
 exec "$SECRETS_RUN" run --env-file="$TPL" -- /bin/sh -c '
   # >>> gateway-tool-token

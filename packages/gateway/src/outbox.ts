@@ -42,6 +42,7 @@ const RECORD_COLUMNS = [
   'repo',
   'project_raw',
   'workspace',
+  'effort',
 ] as const
 
 // `cost_usd` is priced in the statement, by the database, as for every other writer: the reported figure wins.
@@ -50,7 +51,7 @@ const RECORD_UPSERT = `
   select $1::text, $2::text, $3::text, $4::timestamptz, $5::text, $6::text, $7::text, $8::text, $9::text, $10::text,
     $11::text, $12::text, $13::jsonb, $14::text, $15::bigint, $16::bigint, $17::bigint, $18::bigint, $19::bigint,
     $20::bigint, $21::integer, $22::numeric, c.cost_usd, c.cost_source, c.price_id, $23::jsonb,
-    $24::text, $25::text, $26::text
+    $24::text, $25::text, $26::text, $27::text
   from usage.compute_cost($6::text, $4::timestamptz, $15::bigint, $16::bigint, $17::bigint, $18::bigint, $19::bigint,
     $20::bigint, 'message', $22::numeric) c
   on conflict (source, source_id) do update set
@@ -90,6 +91,7 @@ const recordParams = (r: RecordRow): unknown[] => [
   r.repo ?? null,
   r.project_raw ?? null,
   r.workspace ?? null,
+  r.effort ?? null,
 ]
 
 const pickParams = (p: PickRow): unknown[] => [p.ts, p.caller, p.session, p.picked, p.reason, p.machine, p.request_id]

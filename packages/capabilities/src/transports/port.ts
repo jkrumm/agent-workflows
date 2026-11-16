@@ -22,6 +22,8 @@ export interface ChatRequest {
   images?: { mime: string; base64: string }[]
   maxOutputTokens: number
   effort?: Effort
+  /** The route id the call dispatches on; the gateway stores it as `lane_detail.route`. */
+  route?: string
   /** Ask for a JSON object (JSON mode where the wire has one). Syntax only; `jsonSchema` is the stronger ask and wins. */
   json?: boolean
   /**
@@ -71,6 +73,8 @@ export type DecisionAnswer =
 
 export interface DecisionRequest {
   model: string
+  /** The route id the call dispatches on; the gateway stores it as `lane_detail.route`. */
+  route?: string
   state: string
   questions: Record<string, DecisionQuestion>
   /** Sent to the gateway as `x-agw-*` headers (`gatewayHeaders`). */

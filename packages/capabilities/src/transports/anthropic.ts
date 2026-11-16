@@ -44,7 +44,7 @@ export function anthropicWire(options: HttpOptions & { env?: Env } = {}): ChatPo
           res = await doFetch(`${anthropicBase}/v1/messages`, {
             method: 'POST',
             headers: {
-              ...gatewayHeaders(request.attribution),
+              ...gatewayHeaders(request.attribution, { route: request.route, effort: request.effort }),
               authorization: `Bearer ${token}`,
               'anthropic-version': ANTHROPIC_VERSION,
               'content-type': 'application/json',

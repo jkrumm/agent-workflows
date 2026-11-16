@@ -102,7 +102,7 @@ and its bases have no Gemini one.
 `x-agw-usage: caller` marks the calls priced per minute, per character or per image: agw writes their row, from the run
 record, as before. The gateway honours it only for caller `agw` on `/openai/v1/images/`, `/openai/v1/audio/`,
 `/gemini/v1beta/` and `/replicate/v1/`, so no text call sends it. The attribution (`gatewayHeaders`: session = the root
-run, run, workflow, step, purpose, project, workspace, `traceparent`) comes from the step that makes the call: the door's
+run, run, workflow, step, purpose, project, workspace, `traceparent`, plus the optional `x-agw-route` and `x-agw-effort` of a text call: the route id and its effort, which the gateway stores on the usage row) comes from the step that makes the call: the door's
 own run (`door.speech` / `door.transcriptions`, step `request`, a root run), the synth unit step, the cover step, the
 podcast step through `Llm`.
 
@@ -268,6 +268,10 @@ The run observes, it never gates:
   ended, failed or was cancelled, then up to 2 s more for a `request` summary not yet in (a pcm stream records it as
   its body ends). At the latest one hour after the request arrived it ends anyway. The output's `ended` says why:
   `done`, `client-gone` (the client had gone away) or `bound`.
+- **Probe runs.** A request with `x-agw-purpose: verify` that the door answers 4xx (`make verify` sends a bad body on
+  purpose and expects the 400) is journaled `done` with `output.probe: true`, status and error text included, so a
+  failure rate over `agw.runs` counts real failures only. A verify request answered 5xx, and any 4xx of another purpose,
+  still fails the run.
 - The client going away does not end the record: it aborts the handler's upstream calls (every handler gets a
   `fetch` bound to `request.signal`), and a call billed on the way out is still recorded.
 - A handler that cannot even be built is answered like one that threw: 500 `proxy_error`, with `agw-run-id`, and

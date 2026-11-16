@@ -731,6 +731,22 @@ describe('usage row', () => {
     )
   })
 
+  test('x-agw-route and x-agw-effort land on lane_detail.route and the effort column, else dropped; they are not forwarded', async () => {
+    const gw = start({ registry: [pool('iu')] })
+    const init = jsonBody(request())
+    const send = async (headers: Record<string, string>) =>
+      (await gw.call(MESSAGES, { ...init, headers: { ...init.headers, ...headers } })).text()
+    await send({ 'x-agw-route': 'title', 'x-agw-effort': 'low' })
+    await send({ 'x-agw-route': 'x'.repeat(201), 'x-agw-effort': '' })
+    await (await gw.call(MESSAGES, init)).text()
+    const rows = gw.rows().records.map(({ row }) => row)
+    expect(rows.map((row) => row.lane_detail.route)).toEqual(['title', undefined, undefined])
+    expect(rows.map((row) => row.effort)).toEqual(['low', null, null])
+    expect(anthropic.seen.every((seen) => [...seen.headers.keys()].every((name) => !name.startsWith('x-agw-')))).toBe(
+      true,
+    )
+  })
+
   test('origin and routeFallback land on a passthrough row too, and never change the pick', async () => {
     iu.reply(() => Response.json({ ok: true }))
     const gw = start({ registry: [pool('iu')] })
@@ -1676,13 +1692,25 @@ describe('the model catalog', () => {
 describe('span', () => {
   test('one span per request, parented by traceparent, with the attributes', async () => {
     const exporter = new InMemorySpanExporter()
-    const telemetry = createTelemetry({ env: {}, logger: silentLogger(), exporter, scheduledDelayMillis: 1 })
+    const telemetry = createTelemetry({
+      env: {},
+      logger: silentLogger(),
+      exporter,
+      scheduledDelayMillis: 1,
+      version: 'abc123',
+    })
     const gw = start({ registry: [pool('iu')], telemetry })
     const init = jsonBody(request())
     const trace = '0af7651916cd43dd8448eb211c80319c'
     const response = await gw.call(MESSAGES, {
       ...init,
-      headers: { ...init.headers, traceparent: `00-${trace}-b7ad6b7169203331-01`, 'x-agw-session': 'sess' },
+      headers: {
+        ...init.headers,
+        traceparent: `00-${trace}-b7ad6b7169203331-01`,
+        'x-agw-session': 'sess',
+        'x-agw-route': 'title',
+        'x-agw-effort': 'low',
+      },
     })
     await response.text()
     for (let i = 0; i < 100 && exporter.getFinishedSpans().length === 0; i++) await Bun.sleep(5)
@@ -1691,7 +1719,10 @@ describe('span', () => {
     const span = spans[0]
     expect(span?.spanContext().traceId).toBe(trace)
     expect(span?.resource.attributes['service.name']).toBe('agw-gateway')
+    expect(span?.resource.attributes['service.version']).toBe('abc123')
     expect(span?.attributes).toMatchObject({
+      'agw.gateway.route': 'title',
+      'agw.gateway.effort': 'low',
       'gen_ai.system': 'anthropic',
       'gen_ai.request.model': haikuId,
       'gen_ai.response.model': haikuId,
@@ -2018,6 +2049,24 @@ describe('health and shutdown', () => {
     })
     expect(health.pools).toHaveLength(1)
     expect(health.pools[0]).toMatchObject({ id: 'iu', eligible: true, reconciledAt: null, reconcileError: null })
+  })
+
+  const SPENT = { creditUsd: 1, headroomUsd: 1 }
+
+  test('/health is 503 degraded with the reason when every enabled pool is ineligible', async () => {
+    const gw = start({ registry: [pool('iu', SPENT), pool('me', SPENT)] })
+    const response = await fetch(`${gw.url}/health`)
+    expect(response.status).toBe(503)
+    expect(await response.json()).toMatchObject({ status: 'degraded', reasons: ['no-eligible-pool'] })
+  })
+
+  test('/health stays ok while one pool is eligible, and with no enabled pool at all', async () => {
+    const gw = start({ registry: [pool('iu', SPENT), pool('me')] })
+    const response = await fetch(`${gw.url}/health`)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ status: 'ok' })
+    const empty = start({ registry: [pool('iu', { enabled: false })] })
+    expect((await fetch(`${empty.url}/health`)).status).toBe(200)
   })
 
   test('shutdown lets a stream finish, then its row is in the ledger', async () => {

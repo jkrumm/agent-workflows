@@ -1,4 +1,4 @@
-import { CALLER_USAGE, gatewayHeaders } from './gateway.ts'
+import { CALLER_USAGE, type CallHeaders, gatewayHeaders } from './gateway.ts'
 import type { AudioScope } from './scope.ts'
 
 export interface RawResponse {
@@ -176,15 +176,17 @@ export async function rawFetch(
 /**
  * Headers for a text call on the gateway: the bearer and the step's attribution. The gateway writes the usage row of
  * these calls itself. `refused`: on a route-fallback call, the request id of the balance refusal it replaces
- * (`x-agw-route-fallback`).
+ * (`x-agw-route-fallback`). `call`: the route id and effort of the call (`x-agw-route`, `x-agw-effort`).
  */
 export const gatewayTextHeaders = (
   scope: AudioScope,
   extra: Record<string, string> = {},
   refused?: string,
+  call: CallHeaders = {},
 ): Record<string, string> => ({
   ...gatewayHeaders(
     refused && scope.attribution ? { ...scope.attribution, routeFallback: refused } : scope.attribution,
+    call,
   ),
   ...extra,
   authorization: `Bearer ${scope.config.transports.token}`,
@@ -194,8 +196,12 @@ export const gatewayTextHeaders = (
  * Headers for a media call (TTS, ElevenLabs predictions and polls, transcriptions): the same, plus `x-agw-usage:
  * caller`, since these are priced per minute, per character or per image and only agw can price them.
  */
-export const gatewayMediaHeaders = (scope: AudioScope, extra: Record<string, string> = {}): Record<string, string> => ({
-  ...gatewayTextHeaders(scope, extra),
+export const gatewayMediaHeaders = (
+  scope: AudioScope,
+  extra: Record<string, string> = {},
+  call: CallHeaders = {},
+): Record<string, string> => ({
+  ...gatewayTextHeaders(scope, extra, undefined, call),
   ...CALLER_USAGE,
 })
 

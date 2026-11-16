@@ -3,7 +3,8 @@
 import { mkdirSync } from 'node:fs'
 import { ConfigError, type GatewayConfig, loadConfig } from './config.ts'
 import { Ledger } from './ledger.ts'
-import { errorMessage, stderrLogger as logger } from './log.ts'
+import { errorMessage, stderrLogger } from './log.ts'
+import { createLogShipper } from './logs.ts'
 import { Outbox, pgUsageSink } from './outbox.ts'
 import { createPools, reserveAboveCredit } from './pools/index.ts'
 import { createProxy } from './proxy.ts'
@@ -43,6 +44,8 @@ function openLedger(config: GatewayConfig): Ledger {
 }
 
 const config = readConfig()
+const logs = createLogShipper({ env: process.env, version: config.version })
+const logger = logs.wrap(stderrLogger)
 const ledger = openLedger(config)
 const { keys, adminKeys } = await resolveKeys({ registry: config.registry, read: secretsRunReader(), logger })
 for (const pool of reserveAboveCredit(config.registry)) {
@@ -53,7 +56,7 @@ for (const pool of reserveAboveCredit(config.registry)) {
   })
 }
 const pools = createPools({ registry: config.registry, keys, meter: ledger })
-const telemetry = createTelemetry({ env: process.env, logger })
+const telemetry = createTelemetry({ env: process.env, logger, version: config.version })
 
 const reconciler = new Reconciler({
   registry: config.registry.filter((pool) => pool.enabled),
@@ -115,6 +118,7 @@ const stop = (signal: string): void => {
   void server
     .shutdown()
     .catch((error: unknown) => logger.error('shutdown failed', { error: errorMessage(error) }))
+    .then(() => logs.shutdown())
     .finally(() => process.exit(0))
 }
 process.on('SIGTERM', () => stop('SIGTERM'))

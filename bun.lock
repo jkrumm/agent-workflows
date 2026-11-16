@@ -70,8 +70,10 @@
         "@agent-workflows/routes": "workspace:*",
         "@opentelemetry/api": "1.10.0",
         "@opentelemetry/core": "3.0.0",
+        "@opentelemetry/exporter-logs-otlp-proto": "0.300.0",
         "@opentelemetry/exporter-trace-otlp-proto": "0.300.0",
         "@opentelemetry/resources": "3.0.0",
+        "@opentelemetry/sdk-logs": "3.0.0",
         "@opentelemetry/sdk-trace": "3.0.0",
         "pg": "8.23.1",
         "zod": "4.6.7",
@@ -131,8 +133,10 @@
         "@opentelemetry/api": "1.10.0",
         "@opentelemetry/context-async-hooks": "3.0.0",
         "@opentelemetry/core": "3.0.0",
+        "@opentelemetry/exporter-logs-otlp-proto": "0.300.0",
         "@opentelemetry/exporter-trace-otlp-proto": "0.300.0",
         "@opentelemetry/resources": "3.0.0",
+        "@opentelemetry/sdk-logs": "3.0.0",
         "@opentelemetry/sdk-trace": "3.0.0",
         "pg": "8.23.1",
         "zod": "4.6.7",
@@ -339,6 +343,8 @@
     "@opentelemetry/context-async-hooks": ["@opentelemetry/context-async-hooks@3.0.0", "", { "peerDependencies": { "@opentelemetry/api": ">=1.0.0 <1.11.0" } }, "sha512-qDZeKSgTT+qTaL99eRbpvWO5+oZ0MKvMH4pqvzi6xYKyhiMTDBxBeTLI6BpdeMt58T5TpxHJvFl9P52i6CDWGA=="],
 
     "@opentelemetry/core": ["@opentelemetry/core@3.0.0", "", { "dependencies": { "@opentelemetry/semantic-conventions": "^1.29.0" }, "peerDependencies": { "@opentelemetry/api": ">=1.10.0 <1.11.0" } }, "sha512-whOLlww0R/RLtCWGBXhK1fdvL9t2/TL0fqdjZvcaoUUuNilRPjXecqQdzyVwV68s6XEDA5oYbm7/bZT62GXF4A=="],
+
+    "@opentelemetry/exporter-logs-otlp-proto": ["@opentelemetry/exporter-logs-otlp-proto@0.300.0", "", { "dependencies": { "@opentelemetry/otlp-exporter-base": "0.300.0", "@opentelemetry/otlp-transformer": "0.300.0", "@opentelemetry/sdk-logs": "3.0.0" }, "peerDependencies": { "@opentelemetry/api": "^1.3.0" } }, "sha512-i9EqF1mvD0IrL6yBAqb2Cnv61WIYjkBxb36MulHf6/iAb/c653onKVWRJbpexBOHq+fd0VjH+1mhn+AtpFIZwQ=="],
 
     "@opentelemetry/exporter-trace-otlp-proto": ["@opentelemetry/exporter-trace-otlp-proto@0.300.0", "", { "dependencies": { "@opentelemetry/otlp-exporter-base": "0.300.0", "@opentelemetry/otlp-transformer": "0.300.0", "@opentelemetry/sdk-trace": "3.0.0" }, "peerDependencies": { "@opentelemetry/api": "^1.3.0" } }, "sha512-ZCWrexCUsfp5o5Eti91uvTlXMfszknzrPt3VM+jAk/Q5T53S/ix6mF07ndSHAhreQ5bKmBg3r1Ar4wkqQ1XlPQ=="],
 

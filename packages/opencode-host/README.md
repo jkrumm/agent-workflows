@@ -149,7 +149,7 @@ turn's tokens; the gateway's usage rows do.
   `OPENCODE_DISABLE_MODELS_FETCH=1`, `OPENCODE_DISABLE_AUTOUPDATE=1`, the server password, the generated config,
   `AGW_GATEWAY_URL` and `AGW_GATEWAY_TOOL_TOKEN` (`gatewayFromEnv`, both required, the start fails naming the variable; on the
   mini `.env.tpl` sets the URL and `scripts/launch.sh` reads the token from the `agw-opencode` line of `data/door-tokens`), and
-  `OTEL_EXPORTER_OTLP_*` when set. Nothing else: no provider key, no `AGW_API_SECRET`, no `CLAUDE_*`, no database URL.
+  `OTEL_SDK_DISABLED=true`. Nothing else: no provider key, no `AGW_API_SECRET`, no `CLAUDE_*`, no database URL.
 - **Config** (`buildServerConfig`, built once per server spawn from the route table): three providers with a model row
   for every `opencode`-wire route and its fallback, each row carrying exactly the efforts the model's provider takes
   (`effortsOf` in `@agent-workflows/routes`: a Sonnet no `none`, DeepSeek `none`/`low`/`high`/`max`), so a step whose run's arm moves its route to another of these models or effort opens on the
@@ -208,10 +208,11 @@ a shell can read are outside this boundary. Mitigations: the shell tool is denie
 `HOME` is its own (no `~/.claude`, `~/.agents` or dotfiles at `~`), the env is an allow-list, the server listens on
 loopback with a password. Decided by the lead on that evidence, not an isolation boundary.
 
-The allow-list forwards `OTEL_EXPORTER_OTLP_*`, and on the mini the deploy sets `OTEL_EXPORTER_OTLP_HEADERS`
-(`authorization=<ClickStack ingest key>`). That key therefore sits in the server's env and in the env of its tool
-shells, readable by a shell-capable agent exactly like the door token. Accepted by the lead for the same reason: the shell
-tool is denied unless an agent opts in, and the key is an ingest key.
+The allow-list forwards no `OTEL_EXPORTER_OTLP_*` and sets `OTEL_SDK_DISABLED=true`, so the ClickStack ingest key
+(`OTEL_EXPORTER_OTLP_HEADERS` of the host) is not in the server's env or its tool shells. The server's own spans
+(polling `GET /`, `Session.get`, `Project.activate`) were 871,916 in 7 days against 33,087 for agw, the gateway and audio
+together; a run's spans are the host's (`agw.run`, `agw.step`). OpenCode 2.0.32 reads no `OTEL_TRACES_SAMPLER`
+(no such string in the binary), so there is no 2 % sampling to configure: off is the one switch.
 
 ## Attribution
 

@@ -140,7 +140,8 @@ describe('OpenCodeServer', () => {
       OPENCODE_DISABLE_FILEWATCHER: '1',
       HOME: join(dir, 'opencode/home'),
     })
-    expect(names).toContain('OTEL_EXPORTER_OTLP_ENDPOINT')
+    expect(names).not.toContain('OTEL_EXPORTER_OTLP_ENDPOINT')
+    expect(names).toContain('OTEL_SDK_DISABLED')
     expect(names).toContain('AGW_GATEWAY_URL')
     expect(names).toContain('AGW_GATEWAY_TOOL_TOKEN')
     for (const name of FORBIDDEN) expect(names).not.toContain(name)
@@ -148,7 +149,7 @@ describe('OpenCodeServer', () => {
       ...['PATH', 'HOME', 'TMPDIR', 'LANG', 'XDG_DATA_HOME', 'XDG_CONFIG_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME'],
       ...['OPENCODE_DB', 'OPENCODE_DISABLE_FILEWATCHER', 'OPENCODE_DISABLE_CLAUDE_CODE'],
       ...['OPENCODE_DISABLE_MODELS_FETCH', 'OPENCODE_DISABLE_AUTOUPDATE', 'OPENCODE_SERVER_PASSWORD'],
-      ...['OPENCODE_CONFIG_CONTENT', 'AGW_GATEWAY_URL', 'AGW_GATEWAY_TOOL_TOKEN', 'OTEL_EXPORTER_OTLP_ENDPOINT'],
+      ...['OPENCODE_CONFIG_CONTENT', 'AGW_GATEWAY_URL', 'AGW_GATEWAY_TOOL_TOKEN', 'OTEL_SDK_DISABLED'],
     ])
     // Bun's own runtime adds a few to the child's view of process.env.
     expect(names.filter((n) => !allowed.has(n) && !n.startsWith('BUN_') && n !== '_')).toEqual([])
@@ -384,6 +385,17 @@ describe('serverEnv', () => {
     expect(out.AGW_GATEWAY_URL).toBe('http://127.0.0.1:7794')
     expect(out.AGW_GATEWAY_TOOL_TOKEN).toBe('door-token')
     for (const name of FORBIDDEN) expect(name in out).toBe(false)
+    expect(JSON.stringify(out)).not.toContain('sekret')
+  })
+
+  test('no OTLP variable reaches the server, whatever the host holds; its SDK is off', () => {
+    const out = envOf({
+      ...GATEWAY,
+      OTEL_EXPORTER_OTLP_ENDPOINT: 'https://otel.example.com',
+      OTEL_EXPORTER_OTLP_HEADERS: 'authorization=sekret-ingest',
+    })
+    expect(Object.keys(out).filter((name) => name.startsWith('OTEL_EXPORTER_OTLP_'))).toEqual([])
+    expect(out.OTEL_SDK_DISABLED).toBe('true')
     expect(JSON.stringify(out)).not.toContain('sekret')
   })
 

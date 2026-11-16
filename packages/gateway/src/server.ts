@@ -64,19 +64,33 @@ export function startGateway(options: GatewayServerOptions): GatewayServer {
     } catch (error) {
       stats = { error: errorMessage(error) }
     }
-    return Response.json({
-      status: writeError === null && !('error' in stats) ? 'ok' : 'degraded',
-      version: options.version,
-      build: options.build,
-      pools: pools.status().map((pool) => ({ ...pool, ...reconciler.status(pool.id) })),
-      ledger: {
-        ...stats,
-        requeuedAtStart: options.requeuedAtStart ?? 0,
-        flush: outbox === null ? 'off' : 'on',
-        ...(outbox?.lastError() ? { flushError: outbox.lastError() } : {}),
-        ...(writeError === null ? {} : { writeError }),
+    const poolStatus = pools.status()
+    const enabled = poolStatus.filter((pool) => pool.enabled)
+    // Every enabled pool unable to serve a normal call: only IU is left. One pool at its margin while another is
+    // eligible stays ok; a registry with no enabled pool never had credit to lose.
+    const noEligiblePool = enabled.length > 0 && !enabled.some((pool) => pool.eligible)
+    const reasons = [
+      ...(writeError === null && !('error' in stats) ? [] : ['ledger']),
+      ...(noEligiblePool ? ['no-eligible-pool'] : []),
+    ]
+    const healthy = reasons.length === 0
+    return Response.json(
+      {
+        status: healthy ? 'ok' : 'degraded',
+        ...(healthy ? {} : { reasons }),
+        version: options.version,
+        build: options.build,
+        pools: poolStatus.map((pool) => ({ ...pool, ...reconciler.status(pool.id) })),
+        ledger: {
+          ...stats,
+          requeuedAtStart: options.requeuedAtStart ?? 0,
+          flush: outbox === null ? 'off' : 'on',
+          ...(outbox?.lastError() ? { flushError: outbox.lastError() } : {}),
+          ...(writeError === null ? {} : { writeError }),
+        },
       },
-    })
+      { status: healthy ? 200 : 503 },
+    )
   }
 
   const server = Bun.serve({

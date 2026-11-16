@@ -59,7 +59,7 @@ export function iuOpenai(options: HttpOptions & { env?: Env } = {}): ChatPort {
           const res = await doFetch(`${openaiBase}/chat/completions`, {
             method: 'POST',
             headers: {
-              ...gatewayHeaders(request.attribution),
+              ...gatewayHeaders(request.attribution, { route: request.route, effort: request.effort }),
               authorization: `Bearer ${token}`,
               'content-type': 'application/json',
             },

@@ -75,6 +75,23 @@ describe('gatewayHeaders', () => {
   })
 })
 
+describe('gatewayHeaders call', () => {
+  test('route and effort land as x-agw-route and x-agw-effort, with or without attribution', () => {
+    const call = { route: 'audio.tts.prep', effort: 'low' }
+    expect(gatewayHeaders(ATTRIBUTION, call)).toMatchObject({ 'x-agw-route': 'audio.tts.prep', 'x-agw-effort': 'low' })
+    expect(gatewayHeaders(undefined, call)).toEqual({ 'x-agw-route': 'audio.tts.prep', 'x-agw-effort': 'low' })
+  })
+
+  test('absent or invalid values are left out, never thrown', () => {
+    expect(gatewayHeaders(ATTRIBUTION)).not.toHaveProperty('x-agw-route')
+    expect(gatewayHeaders(ATTRIBUTION, { route: 'a' })).not.toHaveProperty('x-agw-effort')
+    const headers = gatewayHeaders(ATTRIBUTION, { route: ' lead', effort: 'ünï' })
+    expect(headers).not.toHaveProperty('x-agw-route')
+    expect(headers).not.toHaveProperty('x-agw-effort')
+    expect(gatewayHeaders(undefined, { route: 'x'.repeat(201) })).toEqual({})
+  })
+})
+
 describe('headers per lane', () => {
   let mp3: Uint8Array<ArrayBuffer>
   let wav: Uint8Array<ArrayBuffer>
@@ -253,6 +270,8 @@ describe('the prep call on the route wire', () => {
     expect(h?.get('anthropic-version')).toBe('2023-06-01')
     expect(h?.get('x-agw-fallback')).toBe('none')
     expect(h?.get('x-agw-usage')).toBeNull()
+    expect(h?.get('x-agw-route')).toBe('audio.tts.prep')
+    expect(h?.get('x-agw-effort')).toBe('low')
     expect(h?.get('x-agw-session')).toBe('root-1')
     expect(h?.get('x-agw-step')).toBe('synth')
     expect(request?.body).toMatchObject({

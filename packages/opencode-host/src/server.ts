@@ -35,7 +35,7 @@ export type ServerOptions = {
   command?: string[]
   /** Loopback port. Default: the persisted one, else a free one picked at the first start and kept. */
   port?: number
-  /** Where the gateway's address and door token and `OTEL_EXPORTER_OTLP_*` are read from. Default `process.env`. */
+  /** Where the gateway's address and door token are read from. Default `process.env`. */
   env?: Env
   /** `OPENCODE_CONFIG_CONTENT`. Default `buildServerConfig()` with the plugin from `installPlugin`. */
   config?: Record<string, unknown>
@@ -112,10 +112,9 @@ export function installPlugin(root: string): string {
 
 /**
  * The server's complete environment, an explicit allow-list: the process basics, the server's own state roots, the
- * gateway's address and door token, and `OTEL_EXPORTER_OTLP_*` when set. Nothing else from the host's env (provider keys,
- * `AGW_API_SECRET`, `CLAUDE_*`, database URLs) reaches the server or a tool shell. The door token opens the gateway only.
- * `OTEL_EXPORTER_OTLP_HEADERS` is one of those variables: on the mini it carries the ClickStack ingest key, so that key is
- * in a shell-capable agent's reach, like the door token (README, "Accepted risk"). `HOME` is the server's own
+ * gateway's address and door token, and `OTEL_SDK_DISABLED`. Nothing else from the host's env (provider keys,
+ * `AGW_API_SECRET`, `CLAUDE_*`, database URLs, the ClickStack ingest key in `OTEL_EXPORTER_OTLP_HEADERS`) reaches the
+ * server or a tool shell. The door token opens the gateway only. `HOME` is the server's own
  * (`<root>/home`), so no `~/.claude` or `~/.agents` file reaches an agent and a tool shell starts there; the binary is
  * spawned by absolute path, so no shim needs the user's home.
  */
@@ -141,9 +140,10 @@ export function serverEnv(input: { root: string; password: string; config: Recor
     OPENCODE_CONFIG_CONTENT: JSON.stringify(input.config),
     AGW_GATEWAY_URL: gateway.url,
     AGW_GATEWAY_TOOL_TOKEN: gateway.token,
-  }
-  for (const [name, value] of Object.entries(env)) {
-    if (name.startsWith('OTEL_EXPORTER_OTLP_') && value) out[name] = value
+    // No OTLP variable is forwarded and the SDK is off: the server's own spans (polling `GET /`, `Session.get`,
+    // `Project.activate`) were 871,916 of 7 days against 33,087 for agw, the gateway and audio together. The runs' spans
+    // are the host's; OpenCode 2.0.32 does not read `OTEL_TRACES_SAMPLER`, so there is no sampling to turn on.
+    OTEL_SDK_DISABLED: 'true',
   }
   return out
 }

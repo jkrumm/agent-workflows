@@ -69,6 +69,7 @@ interface PrepRequest {
  */
 function prepRequest(
   scope: AudioScope,
+  routeId: string,
   route: AudioRoute,
   opts: { systemPrompt: string; userContent: string; inputChars: number; summarize: boolean },
   refused?: string,
@@ -88,6 +89,7 @@ function prepRequest(
           'x-agw-fallback': 'none',
         },
         refused,
+        { route: routeId, ...(effort && { effort }) },
       ),
       body: {
         model: route.model,
@@ -102,7 +104,10 @@ function prepRequest(
   if (route.wire === 'iu-openai') {
     return {
       url: `${transports.openaiBase}/chat/completions`,
-      headers: gatewayTextHeaders(scope, { 'content-type': 'application/json' }, refused),
+      headers: gatewayTextHeaders(scope, { 'content-type': 'application/json' }, refused, {
+        route: routeId,
+        ...(effort && { effort }),
+      }),
       body: {
         model: route.model,
         messages: [
@@ -146,7 +151,7 @@ async function attemptPrep(
   refused?: string,
 ): Promise<Attempt> {
   const endpoint = opts.summarize ? 'speech-summary' : 'speech-prep'
-  const request = prepRequest(scope, route, opts, refused)
+  const request = prepRequest(scope, routeId, route, opts, refused)
   const start = scope.deps.clock.now()
   const res = await rawFetch(
     scope,

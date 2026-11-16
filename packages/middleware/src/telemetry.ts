@@ -34,6 +34,8 @@ export type TelemetryOptions = {
   logger: Logger
   /** `service.name`. Default `agw`. */
   serviceName?: string
+  /** `service.version`: the deployed sha, so a failure burst ties to a build. Absent: the attribute is left off. */
+  version?: string
   /**
    * Default: OTLP http/protobuf configured only by the standard env (`OTEL_EXPORTER_OTLP_ENDPOINT`,
    * `OTEL_EXPORTER_OTLP_HEADERS`, `…_TRACES_…`); the receiver is deployment config, never code.
@@ -182,7 +184,10 @@ export class Telemetry {
     routeDiag(this.logger)
     this.exporter = new LoggingExporter(options.exporter ?? new OTLPTraceExporter(), this.logger)
     this.provider = new TracerProvider({
-      resource: resourceFromAttributes({ 'service.name': options.serviceName ?? 'agw' }),
+      resource: resourceFromAttributes({
+        'service.name': options.serviceName ?? 'agw',
+        ...(options.version ? { 'service.version': options.version } : {}),
+      }),
       idGenerator: this.ids,
       spanProcessors: [
         this.counter,

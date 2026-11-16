@@ -111,6 +111,17 @@ describe('gatewayHeaders', () => {
     expect(bad).not.toHaveProperty('x-agw-route-fallback')
   })
 
+  test('the call labels are x-agw-route and x-agw-effort, with no attribution too; a bad value is left out', () => {
+    expect(gatewayHeaders(attribution, { route: 'title', effort: 'low' })).toEqual({
+      ...ATTRIBUTED,
+      'x-agw-route': 'title',
+      'x-agw-effort': 'low',
+    })
+    expect(gatewayHeaders(undefined, { route: 'title' })).toEqual({ 'x-agw-route': 'title' })
+    expect(gatewayHeaders(attribution, {})).toEqual(ATTRIBUTED)
+    expect(gatewayHeaders(attribution, { route: 'a\nb', effort: ' low' })).toEqual(ATTRIBUTED)
+  })
+
   test('absent and unsendable values are left out, never a failed call', () => {
     expect(gatewayHeaders(undefined)).toEqual({})
     const { project: _, workspace: __, traceparent: ___, ...bare } = attribution
@@ -148,6 +159,23 @@ describe('the wires on the gateway', () => {
       'anthropic-version': '2023-06-01',
       'x-agw-fallback': 'none',
     })
+  })
+
+  test('every chat wire and the decision wire send the route; the chat wires also the effort', async () => {
+    gateway.on('messages', () => Response.json({ content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' }))
+    gateway.on('chat', () => chatStream('ok', { prompt_tokens: 1, completion_tokens: 1 }))
+    gateway.on('decide', () => Response.json({ answers: { q: { type: 'noul', noul: 0.9 } } }))
+    const labelled = { ...chat, route: 'title', effort: 'low' as const }
+    await anthropicWire({ env: env() }).complete(labelled, never())
+    await iuOpenai({ env: env() }).complete(labelled, never())
+    await iuDecision({ env: env() }).decide(
+      { model: 'd', route: 'decide', state: 's', questions: { q: { type: 'boolean', instructions: 'i' } } },
+      never(),
+    )
+    expect(headersOf(0)).toMatchObject({ 'x-agw-route': 'title', 'x-agw-effort': 'low' })
+    expect(headersOf(1)).toMatchObject({ 'x-agw-route': 'title', 'x-agw-effort': 'low' })
+    expect(headersOf(2)).toMatchObject({ 'x-agw-route': 'decide' })
+    expect(headersOf(2)).not.toHaveProperty('x-agw-effort')
   })
 
   test('iu-openai: bearer token and attribution, no fallback opt-out', async () => {

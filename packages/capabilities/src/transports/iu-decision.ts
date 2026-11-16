@@ -45,7 +45,7 @@ export function iuDecision(options: HttpOptions & { env?: Env } = {}): DecisionP
           res = await doFetch(`${decisionBase}/systemone`, {
             method: 'POST',
             headers: {
-              ...gatewayHeaders(request.attribution),
+              ...gatewayHeaders(request.attribution, { route: request.route }),
               authorization: `Bearer ${token}`,
               'content-type': 'application/json',
             },

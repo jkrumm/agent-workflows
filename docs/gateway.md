@@ -298,8 +298,10 @@ Schema changes in usage-tracker (`migrations/pg`, it owns the `usage` schema):
 
 - `records.billing` gains `api_credit`; `account` (`iu|me|me2`) is set on those rows. Gateway rows: `source='gateway'`,
   `repo`, `project_raw`, `workspace` from the caller's headers, `lane_detail {caller, raw, session, run_id, workflow, step,
-  purpose, origin, routeFallback, pool, fallback}` (`raw` on lane `other` only; `origin` and `routeFallback` only when the
-  caller sent a valid `x-agw-origin` / `x-agw-route-fallback`).
+  purpose, route, origin, routeFallback, pool, fallback}` (`raw` on lane `other` only; `origin` and `routeFallback` only when the
+  caller sent a valid `x-agw-origin` / `x-agw-route-fallback`; `route` only when it sent `x-agw-route`) and the `effort`
+  column from `x-agw-effort`. Spend per route is `select lane_detail->>'route', sum(cost_usd) from usage.records where
+  source = 'gateway' group by 1`; a row with a null route is a caller that sends none (OpenCode steps, Hermes, Claude Code).
 - `usage.credit_cycles` (account, cycle start/end, grant, metered, reconciled, unspent at close).
 - `usage.gateway_picks` (ts, caller, session, picked, reason, machine, request_id), modelled on `account_picks`, one row
   per routing decision: `picked` is a pool id, `iu-api` (the IU passthrough, because a pool is itself named `iu`) or
@@ -319,7 +321,15 @@ Every one of them but the 402 still sets the span's response model and usage att
 row.
 
 One span per request, service `agw-gateway` (`gen_ai.*` attributes, pool, cache read/write tokens, time to the first
-body byte), parented by `traceparent`. Every response carries `x-agw-request-id`, the row's `source_id`, and `x-agw-pool`.
+body byte, `agw.gateway.route` and `agw.gateway.effort` when the caller sent them), parented by `traceparent`. Every
+response carries `x-agw-request-id`, the row's `source_id`, and `x-agw-pool`. The resource carries `service.name` and
+`service.version` (the deployed sha, `AGW_VERSION`), and warn and error log lines go to the same collector as OTLP logs
+(service `agw-gateway`; the stderr file stays).
+
+**Dropping the probes.** `agw.gateway.caller` is the door caller on every span (`agw`, `agw-opencode`, `hermes`, `oc`,
+`modelpick`, …). modelpick's benchmark probes are about 20 % of the ledger rows at a high error rate by design, so an
+error-rate query leaves them out: `SpanAttributes['agw.gateway.caller'] != 'modelpick'` on spans, `lane_detail->>'caller'
+<> 'modelpick'` on `usage.records`. Rows and spans of `x-agw-purpose: verify` (`make verify`) are the same kind of probe.
 
 Argo: payers `iu-credit`, `me-credit`, `me2-credit` beside `iu-api`; a Credits tab with burn-down per pool against its
 cycle, projected unspent credit, picks and fallbacks, and cache-hit rate per caller.

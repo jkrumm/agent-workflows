@@ -48,6 +48,8 @@ function exporterFor(env: Record<string, string | undefined>): SpanExporter | nu
 export function createTelemetry(options: {
   env: Record<string, string | undefined>
   logger: Logger
+  /** `service.version`: the deployed sha. */
+  version?: string
   /** Replaces the env's exporter (tests). */
   exporter?: SpanExporter
   /** Batch delay. Default 1000 ms. */
@@ -55,7 +57,10 @@ export function createTelemetry(options: {
 }): Telemetry {
   const exporter = options.exporter ?? exporterFor(options.env)
   const provider = new TracerProvider({
-    resource: resourceFromAttributes({ 'service.name': SERVICE_NAME }),
+    resource: resourceFromAttributes({
+      'service.name': SERVICE_NAME,
+      ...(options.version ? { 'service.version': options.version } : {}),
+    }),
     spanProcessors:
       exporter === null
         ? []

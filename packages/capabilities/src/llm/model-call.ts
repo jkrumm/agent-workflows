@@ -202,6 +202,7 @@ async function completeOn(
     .complete(
       {
         model: route.model,
+        route: route.id,
         system: args.system,
         prompt: args.prompt,
         ...(args.images ? { images: args.images } : {}),

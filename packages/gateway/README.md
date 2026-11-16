@@ -36,6 +36,7 @@ which is re-serialised with the concrete id. **Not forwarded:** every credential
 | Header | Effect |
 |-|-|
 | `x-agw-session`, `x-agw-run-id`, `x-agw-workflow`, `x-agw-step`, `x-agw-purpose` | the session binding, `lane_detail`, `run_id` |
+| `x-agw-route`, `x-agw-effort` | `lane_detail.route` and the `effort` column, and the span's `agw.gateway.route` / `agw.gateway.effort`; the route id the call dispatches on and the effort it asks for. A value over 200 characters is dropped. Attribution only |
 | `x-agw-project` | `project_raw`, and `repo` when it is a plain slug and the workspace is not `work` |
 | `x-agw-workspace` | `workspace`, when it is `work` or `private` |
 | `x-agw-origin` | `lane_detail.origin`, when it matches the caller pattern `[a-z][a-z0-9-]{0,31}`; else dropped. Who asked agw (the root run's caller), not the door caller. Attribution only |
@@ -60,7 +61,7 @@ Project and workspace values over 200 characters are dropped. `x-agw-fallback`, 
 | `AGW_DOOR_CALLERS_FILE` | no | door tokens, mode 0600; default `~/.agent-workflows/data/door-tokens` |
 | `AGW_GATEWAY_PORT` | no | default 7794 |
 | `USAGE_PG_URL` | no | unset turns the flush loop off; rows stay in the ledger and `/health` says so |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS` | no | span export; off without an endpoint |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS` | no | span and log export (warn and error lines, `logs.ts`); off without an endpoint |
 | `AGW_MACHINE`, `AGW_VERSION`, `AGW_GATEWAY_BUILD` | no | row and `/health` labels; the last two default to `dev` |
 
 A bad config exits 78 and names every problem, never a value. Pool keys resolve at start through `secrets-run read`
@@ -149,7 +150,10 @@ after an upstream 2xx.
 }
 ```
 
-`status` is `degraded` only when the ledger cannot be written. `ledger.flushError` carries the last flush failure,
+`status` is `degraded` (HTTP 503, with `reasons`) when the ledger cannot be written (`ledger`) or when pools are enabled and none
+is eligible for a normal call (`no-eligible-pool`: every request would go to IU or be refused). One pool at its margin
+while another is eligible stays `ok`, and so does a registry with no enabled pool. The deploy treats `no-eligible-pool`
+alone as up: credit is no property of a build. `ledger.flushError` carries the last flush failure,
 `pools[].reconcileError` the last reconcile failure kind. The runway fields are `docs/gateway.md` §Credit pacing.
 
 ## Lifecycle

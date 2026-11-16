@@ -82,6 +82,7 @@ export const createDecide = (deps: LlmDeps) =>
       const result = await deps.transports.decision.decide(
         {
           model: route.model,
+          route: route.id,
           state: truncatedChars > 0 ? state.slice(0, kept) : state,
           questions,
           ...(ctx.attribution ? { attribution: ctx.attribution } : {}),

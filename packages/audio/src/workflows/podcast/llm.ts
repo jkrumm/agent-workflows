@@ -24,6 +24,8 @@ export interface ChatCall {
   wire: ResolvedRoute['wire']
   model: string
   effort?: string
+  /** The route the call dispatches on: the gateway puts it on its usage row. */
+  routeId?: string
   system: string
   user: string
   maxTokens: number
@@ -83,6 +85,8 @@ export interface RoundCall {
   api: 'chat' | 'responses' | 'messages'
   model: string
   effort?: string
+  /** The route the call dispatches on: the gateway puts it on its usage row. */
+  routeId?: string
   system?: string
   messages: WireMessage[]
   tools: ToolSchema[]
@@ -312,6 +316,7 @@ export class Llm {
         {
           wire: route.wire,
           model: route.model,
+          routeId: route.id,
           ...(route.effort && route.effort !== 'none' ? { effort: route.effort } : {}),
           system: params.systemPrompt,
           user: params.userContent,
@@ -364,6 +369,7 @@ export class Llm {
         }
         const base = {
           model: route.model,
+          routeId: route.id,
           ...(route.effort && route.effort !== 'none' ? { effort: route.effort } : {}),
           tools,
           ...this.attribution(refused),
