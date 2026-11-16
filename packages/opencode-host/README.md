@@ -165,6 +165,10 @@ turn's tokens; the gateway's usage rows do.
   fallback, never Claude on IU. `iu-chat` (`@ai-sdk/openai-compatible`) and `iu-responses` (`@ai-sdk/openai`) keep their
   ids on `<AGW_GATEWAY_URL>/openai/v1`. OpenAI's own models (`gpt-`) go on `iu-responses`: they call tools only over the
   Responses API. Model ids come only from `@agent-workflows/routes`.
+- **Housekeeping model.** OpenCode's background calls (the hidden `title` agent, other sessions' titles on the shared
+  server) would go to its default model. The config sets `agents.title.model` (2.x's name for what V1 called
+  `small_model`, which 2.0.32 maps onto it) to the `cheap.title` route's model through the `anthropic` leg
+  (`HOUSEKEEPING_ROUTE`), so they land on a credit pool. Compaction keeps the session's model.
 - **Detached.** The server is its own process group. A host restart (deploy) leaves it and its running sessions
   alone; the next `start()` adopts it after an authenticated `GET /api/info` with the pinned version
   (`OPENCODE_VERSION`, `2.0.32`; another version is refused) **and** the same launch fingerprint (sha256 of command
