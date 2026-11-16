@@ -6,6 +6,7 @@ import { AGENT_SAFE_HDX, createCapabilities, createRegistry } from '@agent-workf
 import { fakeTransports } from '@agent-workflows/testing/transports'
 import type { Json } from '@agent-workflows/runtime'
 import { FakeAgentHost, type FakeSession } from '@agent-workflows/testing/agent-host'
+import { workflowOperation } from '../src/operations.ts'
 import { ToolGate } from '../src/tool-gate/index.ts'
 import type { HostRegistry } from '../src/workflows/index.ts'
 import { assemble, createOtelWorkflows, OTEL_VERSION } from '../src/workflows/otel/index.ts'
@@ -336,6 +337,12 @@ describe('otel workflow on a fake host', () => {
     expect(OtelInput.safeParse({ investigation: 'checkout errors', extra: 1 }).success).toBe(false)
     expect(OtelInput.safeParse({ investigation: 'checkout errors', env: 'staging' }).success).toBe(false)
     expect(OTEL_VERSION).toMatch(/^\d{4}-\d{2}-\d{2}\.\d+$/)
+  })
+
+  test('the operation tells the CLI to pass --since as typed (3d must not become an instant)', () => {
+    const entry = workflows[0]
+    if (!entry) throw new Error('no otel workflow')
+    expect(workflowOperation(entry, {} as never).cli.typedFlags).toEqual(['since'])
   })
 
   test('--since is a duration or two strict ISO-8601 instants with a zone, the first before the second', () => {

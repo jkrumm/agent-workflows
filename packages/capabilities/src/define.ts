@@ -24,6 +24,8 @@ export interface CliSpec {
   resume?: CliResume
   /** Default: false. True: no CLI command (its answer is not for a terminal, e.g. megabytes of base64); the operation stays on HTTP and in process. The CLI lists it under `hidden` in `agw schema`. Its `command` is still checked for uniqueness: the host's `assertCommands` covers every capability, hidden or not. */
   hidden?: boolean
+  /** Input properties the host reads as typed: the CLI does not turn a `--since 3d` among them into an instant. Workflows only. */
+  typedFlags?: string[]
   /** Default: false. True: a command only a server calls (the factory's seats), never an agent session. It stays a command; `agw schema --index` leaves it out unless `--all`. */
   serverOnly?: boolean
 }
@@ -39,7 +41,7 @@ export interface CliResume {
 export type ResolvedCliSpec = Required<
   Pick<CliSpec, 'command' | 'positional' | 'mutating' | 'defaultFormat' | 'kind'>
 > &
-  Pick<CliSpec, 'stdin' | 'plainField' | 'resume' | 'hidden' | 'serverOnly'>
+  Pick<CliSpec, 'stdin' | 'plainField' | 'resume' | 'hidden' | 'serverOnly' | 'typedFlags'>
 
 export interface RouteSpec {
   /** Default: `POST`. */

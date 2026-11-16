@@ -29,6 +29,8 @@ export interface Workflow {
   kind?: string
   /** Leaves `x-cli.resume` out. */
   noResume?: boolean
+  /** Emits `x-cli.typedFlags`: properties the host reads as typed. */
+  typedFlags?: string[]
   /** Emits `x-cli.serverOnly`: a command only a server calls. */
   serverOnly?: boolean
   /** Runs inline when absent; `{ durationS, fail }` drive the fixture's run, `respond` replaces the answer. */
@@ -171,6 +173,13 @@ export const FIXTURE_WORKFLOWS: Workflow[] = [
     }),
   },
   {
+    id: 'fixture.duration',
+    summary: 'Echoes a since flag the host reads as a duration',
+    typedFlags: ['since'],
+    input: { type: 'object', properties: { since: { type: 'string' } } },
+    outcome: (input) => ({ output: { since: input.since ?? null } }),
+  },
+  {
     id: 'fixture.text',
     summary: 'A long text that is cut at maxChars',
     input: {
@@ -250,6 +259,7 @@ function workflowOperation(w: Workflow) {
       ...(w.plainField ? { plainField: w.plainField } : {}),
       kind: w.kind ?? 'workflow',
       ...(w.serverOnly ? { serverOnly: true } : {}),
+      ...(w.typedFlags ? { typedFlags: w.typedFlags } : {}),
       ...(w.noResume ? {} : { resume: { command: ['run', 'wait'], positional: ['runId'] } }),
     },
   }

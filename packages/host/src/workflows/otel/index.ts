@@ -177,7 +177,7 @@ export function createOtelWorkflows(deps: HostDeps, options: OtelOptions = {}): 
     {
       workflow: otel,
       summary: 'Investigate traces, logs and metrics in ClickStack/HyperDX into typed findings',
-      cli: { positional: ['investigation'], defaultFormat: 'json' },
+      cli: { positional: ['investigation'], defaultFormat: 'json', typedFlags: ['since'] },
       agents: [{ agent: AGENT, route: 'otel.agent' }],
     },
   ]

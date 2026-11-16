@@ -75,7 +75,7 @@ export function coerce(field: Field, raw: string, label = `--${field.flag}`): un
   const bad = (why: string) => usage(`${label} ${why}, got: ${raw}`, `${BIN} schema <command…> prints the input schema`)
   switch (fieldType(field.schema)) {
     case 'string':
-      return isWhenFlag(field.name) ? parseWhen(raw) : pathAware(field, raw)
+      return isWhenFlag(field.name) && !field.typed ? parseWhen(raw) : pathAware(field, raw)
     case 'scalar':
       return raw
     case 'number':
