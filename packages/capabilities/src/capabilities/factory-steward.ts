@@ -21,12 +21,14 @@ import {
 export const STALL_CAUSES = ['wall', 'unreported', 'blocked', 'lead_gone', 'regressed'] as const
 export const STEWARD_ACTIONS = ['wake', 'requeue', 'raise_decision', 'none'] as const
 /**
- * The prompt's wording of the lines that push toward a Decision, so an arm can measure them (`agw eval run
- * factory-steward --arm`, workflow param `stewardWording`; docs/evals/2026-11-16-steward-wording.md). `current` is production.
- * `neutral` replaces the two lines the audit named (`do not shy away from it`, `a Decision is better than a guess`);
- * `neutral-wake` also neutralises the sentence that sends a repeated wake to a Decision.
+ * The prompt's wording of the lines that push toward a Decision, measured as arms (`agw eval run factory-steward --arm`,
+ * workflow param `stewardWording`; `docs/evals/2026-11-16-steward-wording.md`). `pushing` is the wording production had until
+ * 2026-11-16 (`do not shy away from it`, `a Decision is better than a guess`, a repeated wake is `not a fix: choose
+ * raise_decision`); `neutral` replaces the first two; `neutral-wake` also the repeated-wake sentence, and is the production
+ * wording: it scored best on the 14 labelled stalls. One line back to the old behaviour: `DEFAULT_STEWARD_WORDING`.
  */
-export const STEWARD_WORDINGS = ['current', 'neutral', 'neutral-wake'] as const
+export const STEWARD_WORDINGS = ['pushing', 'neutral', 'neutral-wake'] as const
+export const DEFAULT_STEWARD_WORDING = 'neutral-wake' satisfies (typeof STEWARD_WORDINGS)[number]
 export type StewardWording = (typeof STEWARD_WORDINGS)[number]
 
 const MAX_TEXT_CHARS = 4_000
@@ -60,7 +62,10 @@ export type FactoryStewardInput = z.output<typeof factoryStewardInput>
 
 /** What the capability takes: the stall, and an eval arm's prompt wording (the workflow sets it, only from an arm param). */
 const factoryStewardCall = factoryStewardInput.extend({
-  wording: z.enum(STEWARD_WORDINGS).optional().describe('Eval arm only; production sends none'),
+  wording: z
+    .enum(STEWARD_WORDINGS)
+    .optional()
+    .describe('Eval arm only; production sends none and gets the default wording'),
 })
 
 const text = z.string().trim().min(1).max(MAX_TEXT_CHARS)
@@ -146,16 +151,16 @@ export function guardSteward(
 
 const WORDING = {
   settled: {
-    current: 'and only then reaches the owner: do not shy away from it.',
+    pushing: 'and only then reaches the owner: do not shy away from it.',
     neutral: 'and only then reaches the owner. Raise one when the work needs a choice, not to avoid answering.',
   },
   thin: {
-    current: 'When the facts are thin, a Decision is better than a guess (except for lead_gone, where it is none).',
+    pushing: 'When the facts are thin, a Decision is better than a guess (except for lead_gone, where it is none).',
     neutral:
       'Choose the action the facts support. When they support none of wake, requeue or a Decision, answer none: the factory raises a Decision of its own after a few such answers.',
   },
   repeat: {
-    current:
+    pushing:
       'A wake that repeats a stall (stewardWakes is high, or the\nhistory shows the same stall again) is not a fix: choose raise_decision.',
     neutral:
       'A wake that repeats a stall (stewardWakes is high, or the\nhistory shows the same stall again) is a reason to read the facts again: raise a Decision only when they show a choice is needed.',
@@ -163,10 +168,10 @@ const WORDING = {
 } as const
 
 const instructions = (wording: StewardWording) => {
-  const neutral = wording !== 'current'
-  const settled = WORDING.settled[neutral ? 'neutral' : 'current']
-  const thin = WORDING.thin[neutral ? 'neutral' : 'current']
-  const repeat = WORDING.repeat[wording === 'neutral-wake' ? 'neutral' : 'current']
+  const neutral = wording !== 'pushing'
+  const settled = WORDING.settled[neutral ? 'neutral' : 'pushing']
+  const thin = WORDING.thin[neutral ? 'neutral' : 'pushing']
+  const repeat = WORDING.repeat[wording === 'neutral-wake' ? 'neutral' : 'pushing']
   return `You are the steward of a software factory. One Issue of the owner's repository is stalled: a machine cause
 stopped its work, no person has to act, and the factory's own rules did not say what to do. You decide the one action that
 ends the stall. You have no tools. Answer from the stall below and the rules here only.
@@ -216,7 +221,7 @@ read first, in English.`
 export function buildFactoryStewardPrompt(
   input: FactoryStewardInput,
   nonce: string,
-  wording: StewardWording = 'current',
+  wording: StewardWording = DEFAULT_STEWARD_WORDING,
 ): string {
   const safe = neutralizeFenceMarkers
   const list = (lines: readonly string[]) => (lines.length ? lines.map((l) => `- ${safe(l)}`).join('\n') : '(none)')
