@@ -78,7 +78,7 @@ export interface Command {
 const METHODS = ['get', 'post', 'put', 'patch', 'delete']
 
 /** Always the CLI's own flags; an operation with an input property of one of these names is skipped. */
-export const RESERVED_FLAGS: readonly string[] = ['format', 'commit', 'idempotency-key', 'help']
+export const RESERVED_FLAGS: readonly string[] = ['format', 'commit', 'idempotency-key', 'wait', 'budget', 'help']
 
 /** An operation that is deliberately no command (`x-cli.hidden`); `agw schema` lists it apart from the skipped ones. */
 export interface Hidden {

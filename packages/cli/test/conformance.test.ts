@@ -445,7 +445,7 @@ describe('agw against the fake host', () => {
     expect(r.code).toBe(EXIT.pending)
     const state = r.json()
     expect(state.status).toBe('running')
-    expect(r.error?.hint).toBe(`agw run wait ${String(state.runId)}`)
+    expect(r.error?.hint).toBe(`agw run wait ${String(state.runId)} --budget 300`)
     const started = host.requests.findLast((q) => q.path === '/workflows/fixture/echo')
     expect(started?.headers.prefer).toBe('wait=1')
     const done = await agw(b, resumeArgs(r.error?.hint ?? ''))
@@ -961,7 +961,7 @@ describe('agw across platform processes (AGW_PROCESSES)', () => {
     const r = await agw(b, ['audio', 'speak', 'slow', '--duration-s', '2.5'], { env: { AGW_WAIT_BUDGET_S: '1' } })
     expect(r.code).toBe(EXIT.pending)
     const state = r.json()
-    expect(r.error?.hint).toBe(`agw run wait ${String(state.runId)}`)
+    expect(r.error?.hint).toBe(`agw run wait ${String(state.runId)} --budget 300`)
     const done = await agw(b, resumeArgs(r.error?.hint ?? ''))
     expect(done.code).toBe(0)
     expect(done.json()).toMatchObject({ runId: state.runId, status: 'done', output: { spoken: 'slow' } })
@@ -1302,7 +1302,7 @@ describe('the wait loop on a host that fails mid-run', () => {
   const accepted = () => Response.json({ runId, workflowId: 'fixture.accepted', status: 'running' }, { status: 202 })
   const errorLine = (status: number, code: string, headers: Record<string, string> = {}) =>
     Response.json({ defined: false, code, status, message: `fixture ${status}` }, { status, headers })
-  const resume = `agw run wait ${runId}`
+  const resume = `agw run wait ${runId} --budget 300`
   const short = { env: { AGW_WAIT_BUDGET_S: '2' } }
 
   beforeAll(async () => {

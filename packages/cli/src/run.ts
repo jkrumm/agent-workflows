@@ -1,9 +1,20 @@
 import { randomUUID } from 'node:crypto'
-import { assertValues, BIN, coerceStdin, helpText, type Parsed, parseArgs, unsafePathField, usageLine } from './args.ts'
+import {
+  assertValues,
+  BIN,
+  coerceStdin,
+  helpText,
+  type Parsed,
+  parseArgs,
+  unsafePathField,
+  usageLine,
+  waitFlag,
+} from './args.ts'
 import { type Env, waitBudgetS } from './config.ts'
 import { AgwError, EXIT, EXIT_MEANING, type ExitKind, usage } from './exit.ts'
 import { type Host, MAX_WAIT_S, type Reply, Unreachable } from './host.ts'
 import { Platform } from './platform.ts'
+import { adviceFor } from './pending.ts'
 import { type Command, nextWords, resolveCommand, type Schema, waitPlan } from './spec.ts'
 
 export interface Io {
@@ -113,6 +124,19 @@ function render(body: unknown, format: 'json' | 'plain', command: Command): stri
   return JSON.stringify(field ?? body, null, 2)
 }
 
+/**
+ * Plain output of a text command that was cut: one line on stderr (stdout stays the text, so it can be redirected into a
+ * file) saying so, at what size, and how to read more. Empty when nothing was cut or the command has no `--max-chars`.
+ */
+function cutNote(command: Command, body: unknown, values: Record<string, unknown>): string | undefined {
+  const cap = command.fields.find((f) => f.flag === 'max-chars')
+  const answer = command.x.kind === 'workflow' ? (body as { output?: unknown } | null)?.output : body
+  if (!cap || (answer as { truncated?: unknown } | null)?.truncated !== true) return undefined
+  const used = values[cap.name] ?? cap.schema.default
+  const max = typeof cap.schema.maximum === 'number' ? ` (max ${cap.schema.maximum})` : ''
+  return `${BIN}: output cut${used === undefined ? '' : ` at ${String(used)} characters`}; --max-chars <n> reads more${max}, no head or tail needed`
+}
+
 class Runner {
   readonly platform: Platform
   #stdin: Promise<string> | undefined
@@ -141,7 +165,15 @@ class Runner {
     // stale (a command added, a flag added or dropped since it was written): ask every process first, keep a cache if
     // its process cannot answer. Every other command carries the sha, and a stale one is a 412 that refreshes and retries.
     if (wantsHelp(argv)) await this.freshen()
-    const call = await this.prepareFresh(argv)
+    if (this.groupHelp(argv)) return EXIT.ok
+    let call: Call
+    try {
+      call = await this.prepareFresh(argv)
+    } catch (error) {
+      // A group the cache did not know yet: prepareFresh refreshed it.
+      if (error instanceof AgwError && this.groupHelp(argv)) return EXIT.ok
+      throw error
+    }
     const conflict = this.platform.conflictError(call.command)
     if (call.parsed.globals.help) {
       this.io.out(helpText(call.command, this.platform.commands))
@@ -156,6 +188,34 @@ class Runner {
       if (!(error instanceof StaleContract)) throw error
       return this.retryAfterMismatch(argv, error)
     }
+  }
+
+  /**
+   * `agw <group>` and `agw <group> --help`, a group being the first words of commands that are not a command
+   * themselves: one `command<TAB>summary` line per command below it, exit 0. Not a group: nothing printed.
+   */
+  private groupHelp(argv: string[]): boolean {
+    const words = argv.filter((w) => w !== '-h' && w !== '--help')
+    if (!words.length || words.some((w) => w.startsWith('-'))) return false
+    if (resolveCommand(this.platform.commands, words)) return false
+    const below = this.platform.commands
+      .filter(
+        (c) => c.x.serverOnly !== true && c.words.length > words.length && words.every((w, i) => c.words[i] === w),
+      )
+      .sort((a, b) => (a.words.join(' ') < b.words.join(' ') ? -1 : 1))
+    if (!below.length) return false
+    const width = Math.max(...below.map((c) => c.words.join(' ').length))
+    this.io.out(
+      [
+        `usage: ${BIN} ${words.join(' ')} <command> [args] [--help]`,
+        '',
+        ...below.map((c) => `  ${c.words.join(' ').padEnd(width)}  ${c.summary}`),
+        '',
+        `${BIN} ${words.join(' ')} <command> --help shows its flags`,
+        '',
+      ].join('\n'),
+    )
+    return true
   }
 
   /** Fetches each contract once per call; a process that cannot answer (down, no secret) leaves its cached one in use. */
@@ -272,9 +332,13 @@ class Runner {
     const startsWork = command.x.kind === 'workflow' || command.x.mutating
     if (startsWork) this.#key ??= parsed.globals.idempotencyKey ?? randomUUID()
     const format = parsed.globals.format ?? (io.stdoutIsTTY ? command.x.defaultFormat : 'json')
-    const emit = (body: unknown) => io.out(`${render(body, format, command)}\n`)
+    const emit = (body: unknown) => {
+      io.out(`${render(body, format, command)}\n`)
+      const cut = format === 'plain' ? cutNote(command, body, values) : undefined
+      if (cut) io.err(`${cut}\n`)
+    }
     const plan = waitPlan(this.platform.commands, command)
-    const budgetS = waitBudgetS(io.env)
+    const budgetS = parsed.globals.waitS ?? waitBudgetS(io.env)
     let deadline = Date.now() + budgetS * 1000
 
     let reply: Reply
@@ -332,11 +396,11 @@ class Runner {
         details: { status: reply.status, [unsafe.name]: resumeValues[unsafe.name] },
       })
     }
-    const resumeLine = [
+    const resumeWords = [
       BIN,
       ...(resume?.command ?? []),
       ...Object.values(resumeValues).map((v) => shellWord(String(v))),
-    ].join(' ')
+    ]
     let interrupted: string | undefined
     let lastError: AgwError | undefined
     if (resumeCommand) {
@@ -368,13 +432,18 @@ class Runner {
     emit(state)
     const status = String(state.status)
     if (reply.status === 202 || !TERMINAL.has(status)) {
-      const why = interrupted ? `interrupted by ${interrupted}` : `after ${budgetS}s`
-      throw new AgwError('pending', `run ${String(state.runId)} still ${status} ${why}`, {
+      const typicalWallS = typeof state.typicalWallS === 'number' ? state.typicalWallS : undefined
+      const advice = adviceFor({ typicalWallS, waitedS: budgetS, interrupted })
+      const budgeted = resumeCommand && waitFlag(resumeCommand) === 'budget'
+      const resumeLine = (budgeted ? [...resumeWords, '--budget', String(advice.budgetS)] : resumeWords).join(' ')
+      throw new AgwError('pending', `run ${String(state.runId)} ${advice.message}`, {
         hint: resumeLine,
         details: {
           runId: state.runId,
           status,
           budgetS,
+          ...(typicalWallS === undefined ? {} : { typicalWallS }),
+          ...(advice.needsS === undefined ? {} : { needsS: advice.needsS, runInBackground: true }),
           ...(interrupted ? { signal: interrupted } : {}),
           ...(lastError ? { lastError: lastError.message } : {}),
         },

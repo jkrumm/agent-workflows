@@ -52,6 +52,27 @@ const hold = defineWorkflow({
   },
 })
 
+describe('wallP95S', () => {
+  test('null below five done runs, then the p95 wall time of the workflow in seconds', async () => {
+    const rt = testRuntime({ schema: db.schema, workflows: [ok, boom, hold] })
+    await rt.open()
+    try {
+      expect(await rt.wallP95S('get.ok')).toBeNull()
+      for (let i = 0; i < 5; i++) {
+        const started = await rt.start(ok, {}, { purpose: 'test' })
+        await rt.wait(started.runId)
+      }
+      const p95 = await rt.wallP95S('get.ok')
+      expect(p95).not.toBeNull()
+      expect(p95).toBeGreaterThanOrEqual(0)
+      expect(p95).toBeLessThan(30)
+      expect(await rt.wallP95S('get.boom')).toBeNull() // failed runs are no sample
+    } finally {
+      await rt.close()
+    }
+  })
+})
+
 describe('getRun and ping', () => {
   test('a run is readable in every state; output only when done, error once it ended badly', async () => {
     const rt = testRuntime({ schema: db.schema, workflows: [ok, boom, hold] })

@@ -18,6 +18,8 @@ export type RunState = {
   unpricedCalls?: number
   costPending?: true
   recordFailed?: true
+  /** A run that has not ended: the workflow's p95 wall time in seconds, so a waiter sizes its next wait. */
+  typicalWallS?: number
 }
 
 /** What a store reads of a run; `waitFor` and `toRunState` decide what of it reaches the wire. */
@@ -46,10 +48,23 @@ export interface RunStore {
   get(runId: string): Promise<StoredRun | null>
   /** Resolves when the journal database answers; rejects after `timeoutMs`, ending the query itself. */
   ping(timeoutMs?: number): Promise<void>
+  /** The workflow's p95 wall time in seconds over its recent done runs; null when there is no history. Optional. */
+  typicalWallS?(workflowId: string): Promise<number | null>
 }
 
-export function runtimeRunStore(runtime: Pick<Runtime, 'getRun' | 'ping'>): RunStore {
+/** How long a workflow's p95 is reused: waits on it come every few seconds, and a p95 moves slowly. */
+const TYPICAL_TTL_MS = 10 * 60_000
+
+export function runtimeRunStore(runtime: Pick<Runtime, 'getRun' | 'ping' | 'wallP95S'>): RunStore {
+  const typical = new Map<string, { at: number; value: number | null }>()
   return {
+    async typicalWallS(workflowId) {
+      const hit = typical.get(workflowId)
+      if (hit && Date.now() - hit.at < TYPICAL_TTL_MS) return hit.value
+      const value = await runtime.wallP95S(workflowId)
+      typical.set(workflowId, { at: Date.now(), value })
+      return value
+    },
     async get(runId) {
       const run = await runtime.getRun(runId)
       if (!run) return null
