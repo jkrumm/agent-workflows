@@ -40,6 +40,8 @@ function sandbox(extra: Record<string, string> = {}): Sandbox {
     HOME: dir,
     XDG_CACHE_HOME: join(dir, 'cache'),
     XDG_CONFIG_HOME: join(dir, 'config'),
+    // These cases are about a host that is down; the wait that rides a restart out has its own suite (restart.test.ts).
+    AGW_RESTART_WAIT_S: '0',
     ...extra,
   }
   return { dir, env, envFile: join(dir, 'config', 'agw', 'env') }
@@ -715,7 +717,7 @@ describe('agw against the fake host', () => {
     }
   })
 
-  test('a network failure on a workflow start hints the idempotency key to retry with', async () => {
+  test('a refused connection on a workflow start sent nothing, so it carries no idempotency hint', async () => {
     const b = box()
     await agw(b, ['schema', '--refresh'])
     const dead = 'http://127.0.0.1:1'
@@ -723,9 +725,9 @@ describe('agw against the fake host', () => {
     cpSync(cacheFile(b, host.url), cacheFile(b, dead))
     const r = await agw(b, ['fixture', 'echo', 'x'], { env: { AGW_URL: dead } })
     expect(r.code).toBe(EXIT.network)
-    expect(r.error?.hint).toMatch(/^the run may have started; retry with --idempotency-key [0-9a-f-]{36}$/)
+    expect(r.error?.hint).not.toContain('may have started')
     const given = await agw(b, ['fixture', 'echo', 'x', '--idempotency-key', 'k-1'], { env: { AGW_URL: dead } })
-    expect(given.error?.hint).toBe('the run may have started; retry with --idempotency-key k-1')
+    expect(given.error?.hint).not.toContain('may have started')
   })
 
   test('a request without a wait hits AGW_TIMEOUT_S as its own message', async () => {
