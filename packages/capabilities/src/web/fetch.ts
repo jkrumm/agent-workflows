@@ -4,7 +4,7 @@ import { CapabilityError, fail } from '../errors.ts'
 import { defineCapability } from '../procedure.ts'
 import { describe, failedResponse, isAbort, readJson, withRetries } from '../transports/http.ts'
 import { BrowserFailure, BrowserRefused, ownerPage } from './browser.ts'
-import { askOnce } from './handoff.ts'
+import { askOnce, HANDOFF_INTERVAL_MS, WallMemory } from './handoff.ts'
 import { type Pin, type ResolvedWebDeps, requireKey, webUsage, within } from './deps.ts'
 import { extractPdfPages, PdfTimeout } from './pdf.ts'
 import { TAVILY_USD_PER_CREDIT } from './search.ts'
@@ -90,21 +90,33 @@ const THIN_CHARS = 200
 /** Tavily Extract, basic: every 5 successful URLs cost 1 credit (docs.tavily.com/documentation/api-credits, checked 2026-10-28). */
 const TAVILY_EXTRACT_CREDITS_PER_URL = 1 / 5
 
+/** One Tavily Extract request stops here. */
+const EXTRACT_TIMEOUT_MS = 30_000
 const USER_AGENT = 'agent-workflows/0.1 (web.fetch)'
 
 /** A successful read is kept this long and served to any caller of this process (parallel research runs read the same shop pages). */
 const CACHE_TTL_MS = 6 * 3_600_000
-const CACHE_MAX_ENTRIES = 300
+const CACHE_MAX_ENTRIES = 1000
 /** Text held by the cache, in UTF-8 bytes of `read.text` (what a page of non-Latin text actually costs). */
 const CACHE_MAX_BYTES = 10_000_000
 
 type Via = 'direct' | 'browser' | 'tavily-extract'
 type CachedRead = { read: Read; via: Via; at: number; size: number }
 
-/** The reads of one process by URL (fragment dropped), oldest evicted first. Only successful, complete reads go in. */
-class ReadCache {
+/**
+ * The reads of one process by URL (fragment dropped), the least recently read evicted first. Only successful, complete
+ * reads go in. A read that is served moves to the young end; its 6-hour age does not renew.
+ */
+export class ReadCache {
   private readonly entries = new Map<string, CachedRead>()
   private bytes = 0
+
+  constructor(
+    private readonly limits: { maxEntries: number; maxBytes: number } = {
+      maxEntries: CACHE_MAX_ENTRIES,
+      maxBytes: CACHE_MAX_BYTES,
+    },
+  ) {}
 
   static key(url: string): string {
     try {
@@ -120,7 +132,12 @@ class ReadCache {
   get(key: string): CachedRead | undefined {
     const hit = this.entries.get(key)
     if (!hit) return undefined
-    if (Date.now() - hit.at < CACHE_TTL_MS) return hit
+    if (Date.now() - hit.at < CACHE_TTL_MS) {
+      // Map keeps insertion order: re-inserting makes this entry the last the eviction below reaches.
+      this.entries.delete(key)
+      this.entries.set(key, hit)
+      return hit
+    }
     this.delete(key)
     return undefined
   }
@@ -135,7 +152,7 @@ class ReadCache {
     this.entries.set(key, entry)
     this.bytes += size
     for (const oldest of this.entries.keys()) {
-      if (this.entries.size <= CACHE_MAX_ENTRIES && this.bytes <= CACHE_MAX_BYTES) break
+      if (this.entries.size <= this.limits.maxEntries && this.bytes <= this.limits.maxBytes) break
       this.delete(oldest)
     }
     return entry
@@ -538,7 +555,10 @@ async function extract(
   url: string,
   signal: AbortSignal,
   addUsage: Ctx['addUsage'],
+  budgetMs?: number,
 ): Promise<Read> {
+  // With a budget the whole call (retries and their pauses included) ends by then, not only one attempt.
+  const budget = budgetMs === undefined ? signal : within(signal, budgetMs)
   let key: string
   try {
     key = requireKey(deps.env(), 'TAVILY_API_KEY', 'web.fetch')
@@ -548,17 +568,20 @@ async function extract(
   }
   let json: unknown
   try {
-    json = await withRetries(deps.retry, signal, async () => {
+    json = await withRetries(deps.retry, budget, async () => {
       const res = await deps.fetch('https://api.tavily.com/extract', {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
         body: JSON.stringify({ urls: [url], extract_depth: 'basic', format: 'text' }),
-        signal: within(signal, 30_000),
+        signal: within(budget, EXTRACT_TIMEOUT_MS),
       })
       if (!res.ok) throw await failedResponse(res, 'tavily-extract')
       return readJson(res, 'tavily-extract')
     })
   } catch (error) {
+    // The budget ran out (the caller's own cancel did not): one more failed leg, not a cancel.
+    if (budgetMs !== undefined && budget.aborted && !signal.aborted)
+      throw new DirectFailure(`tavily-extract: timed out after ${budgetMs / 1000} s`)
     // The chain moves on from a failed extraction; a cancel is not a failure.
     if (error instanceof CapabilityError && error.code === 'UPSTREAM_ERROR') throw new DirectFailure(error.message)
     throw error
@@ -571,8 +594,12 @@ async function extract(
   return { finalUrl: hit.url, text: hit.raw_content!.trim() }
 }
 
+/** The reasons whose verdict is a wall that stays up for a while: remembered per host. */
+const WALL_REASONS: readonly BlockReason[] = ['needs-human', 'cloudflare-challenge', 'bot-protection']
+
 export const createFetch = (deps: ResolvedWebDeps) => {
   const cache = new ReadCache()
+  const walls = new WallMemory<BlockReason>()
   /** Reads under way by render flag and URL; a parallel caller of the same page waits on it instead of reading again. */
   const inFlight = new Map<string, Promise<Found>>()
   return defineCapability({
@@ -591,6 +618,22 @@ export const createFetch = (deps: ResolvedWebDeps) => {
       if (hit) {
         ctx.addUsage(webUsage('cache', 0))
         return shape(url, hit.read, hit.via, maxChars, { cached: true, at: hit.at }, { legs: [], startedAt })
+      }
+      // A host that turned the last read away at a wall is not read again for the handoff interval: no browser settle, no
+      // paid read. `fresh` asks for a read of its own, and a pass of it clears the verdict.
+      const host = hostOf(url)
+      const wall = fresh || !host ? undefined : walls.recall(host)
+      if (wall) {
+        const minutes = Math.max(1, Math.round((Date.now() - wall.at) / 60_000))
+        const again =
+          wall.reason === 'needs-human'
+            ? 'a person has to pass the wall; once the owner did, read again with fresh, else use web.search for another source'
+            : nextStep(wall.reason, undefined, [])
+        throw fail(
+          'UPSTREAM_ERROR',
+          `web.fetch: blocked (${wall.reason}) · known wall: ${host} turned a read away ${minutes} min ago and none has passed since (remembered for ${HANDOFF_INTERVAL_MS / 60_000} min) · ${again}`,
+          { legs: [], wallMs: Date.now() - startedAt },
+        )
       }
       const flightKey = `${render ? 'render' : 'plain'} ${key}`
       // Parallel callers of one page share the read already under way: it paid, they did not read.
@@ -627,6 +670,8 @@ export const createFetch = (deps: ResolvedWebDeps) => {
       })
       /** A complete read: kept for the next caller. */
       const done = (read: Read, via: CachedRead['via']): Found => {
+        // A plain or browser read that passes proves the wall is down; Extract passing proves nothing about them.
+        if (host && via !== 'tavily-extract') walls.clear(host)
         const entry = cache.set(key, read, via, startedAt)
         return { read, via, at: entry.at, legs }
       }
@@ -642,6 +687,8 @@ export const createFetch = (deps: ResolvedWebDeps) => {
         let pageStatus: number | undefined
         // Why the page turned the direct read away, when it did: the failure says `blocked (<reason>)` up front.
         let blocked: BlockReason | undefined
+        // The plain read of the page itself timed out: the host is slow or down, and Extract gets a short budget.
+        let directTimedOut = false
         // A direct read that went out costs nothing, and says so: the run is priced at $0, not unknown. A refused URL
         // sends nothing and reports nothing.
         const free = () => ctx.addUsage(webUsage('direct', 0))
@@ -677,7 +724,9 @@ export const createFetch = (deps: ResolvedWebDeps) => {
           } catch (error) {
             if (!(error instanceof DirectFailure)) throw error
             free()
-            timeline(leg, began, directOutcome(error))
+            const outcome = directOutcome(error)
+            timeline(leg, began, outcome)
+            if (target === url && outcome === 'timeout') directTimedOut = true
             // A page that is definitively gone is not worth a paid second opinion; another spelling of it may be missing alone.
             if (error.missing && target === url)
               throw fail(
@@ -784,7 +833,13 @@ export const createFetch = (deps: ResolvedWebDeps) => {
         const extractBegan = Date.now()
         try {
           tried.push('tavily-extract')
-          const read = await extract(deps, url, ctx.signal, ctx.addUsage)
+          const read = await extract(
+            deps,
+            url,
+            ctx.signal,
+            ctx.addUsage,
+            directTimedOut ? deps.extractAfterTimeoutMs : undefined,
+          )
           const withTitle = { ...read, ...(kept.found?.read.title ? { title: kept.found.read.title } : {}) }
           const why = incompleteReason(read.finalUrl, read.text)
           if (!why) {
@@ -807,6 +862,8 @@ export const createFetch = (deps: ResolvedWebDeps) => {
         const ownerAsked =
           blocked === 'needs-human' && (await askOnce(deps.handoff, new URL(url).hostname, Date.now(), page))
         if (ownerAsked) failures.push('the owner was asked to solve it')
+        // Every leg failed at a wall: the next read of the host is answered from here for the handoff interval.
+        if (host && blocked && WALL_REASONS.includes(blocked)) walls.remember(host, blocked)
         throw fail(
           'UPSTREAM_ERROR',
           `web.fetch: ${blocked ? `blocked (${blocked}) · ` : ''}${failures.join(' · ')} · ${nextStep(blocked, pageStatus, failures, ownerAsked)}`,

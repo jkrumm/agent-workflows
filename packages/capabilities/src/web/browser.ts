@@ -42,16 +42,21 @@ const COMMAND_MS = 15_000
 const LOAD_WAIT_MS = 20_000
 /** How long a challenge may take to clear by itself (Cloudflare's usually does within seconds in a headed browser). */
 const SETTLE_MS = 20_000
-const POLL_MS = 1_000
+/**
+ * The poll interval is the floor of every read (two equal polls end it): 1 s before, 400 ms now. A challenge is only
+ * ever returned when `SETTLE_MS` is over, never from a poll, so a faster poll cannot turn a page into a false challenge;
+ * the early exit it speeds up is guarded by `HYDRATED_CHARS`, the equal text and the request in flight.
+ */
+const POLL_MS = 400
 /**
  * A page counts as rendered when its text is at least this long, has not changed between two polls and the page has no
  * request in flight (the API call a client-rendered listing waits for). A shorter text is still hydrating; a longer one
  * that is still growing is a consent banner or a header with the content yet to come. A request that never ends
- * (long polling, a stalled beacon) holds the read only until the text has been the same for `QUIET_POLLS` polls; a page
- * that keeps changing is returned as the settle time left it.
+ * (long polling, a stalled beacon) holds the read only until the text has been the same for `QUIET_POLLS` polls (3.2 s,
+ * the 3 s of three 1 s polls kept); a page that keeps changing is returned as the settle time left it.
  */
 const HYDRATED_CHARS = 200
-const QUIET_POLLS = 3
+const QUIET_POLLS = 8
 const MAX_TEXT_CHARS = 2_000_000
 const MAX_HTML_CHARS = 6_000_000
 /** Tabs open at once, across all runs of this process. */

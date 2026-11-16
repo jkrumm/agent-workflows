@@ -9,6 +9,7 @@ import { fakeWeb } from './fake.ts'
 import { askHumanHandoff, askOnce, fakeHandoff, resetHandoffLimit } from './handoff.ts'
 import type { WebDeps } from './deps.ts'
 import { BLOCK_REASONS, blockedReason, createWebCapabilities, fetchFacts } from './index.ts'
+import { ReadCache } from './fetch.ts'
 import {
   BrowserFailure,
   BrowserRefused,
@@ -549,18 +550,19 @@ describe('web.fetch', () => {
     const challenge =
       '<html><title>Just a moment...</title><script src="/cdn-cgi/challenge-platform/h/b"></script></html>'
     const n = net({
-      'https://example.com/cf': status(403, challenge),
-      'https://example.com/header': () => new Response('', { status: 403, headers: { 'cf-mitigated': 'challenge' } }),
-      'https://example.com/bot': status(429, 'Please verify you are human'),
-      'https://example.com/forbidden': status(403, 'nope'),
-      'https://example.com/login': status(401),
-      'https://example.com/down': status(503, 'maintenance'),
-      'https://example.com/boom': status(500),
-      'https://example.com/shop': status(400),
+      'https://cf.example.com/': status(403, challenge),
+      'https://header.example.com/': () => new Response('', { status: 403, headers: { 'cf-mitigated': 'challenge' } }),
+      'https://bot.example.com/': status(429, 'Please verify you are human'),
+      'https://forbidden.example.com/': status(403, 'nope'),
+      'https://login.example.com/': status(401),
+      'https://down.example.com/': status(503, 'maintenance'),
+      'https://boom.example.com/': status(500),
+      'https://shop.example.com/': status(400),
     })
     const { call } = run({ ...n.deps, env: {} })
-    const read = async (path: string) =>
-      (await failure(call('web.fetch', { url: `https://example.com/${path}` }))).message
+    // One host each: a wall is remembered per host, so a second read of one would be answered from memory.
+    const read = async (name: string, fresh = false) =>
+      (await failure(call('web.fetch', { url: `https://${name}.example.com/`, fresh }))).message
     expect(blockedReason(await read('cf'))).toBe('cloudflare-challenge')
     expect(blockedReason(await read('header'))).toBe('cloudflare-challenge')
     expect(blockedReason(await read('bot'))).toBe('bot-protection')
@@ -569,7 +571,7 @@ describe('web.fetch', () => {
     expect(blockedReason(await read('down'))).toBeUndefined()
     expect(blockedReason(await read('boom'))).toBeUndefined()
     expect(blockedReason(await read('shop'))).toBe('rejected')
-    expect(await read('cf')).toContain('blocked (cloudflare-challenge) · direct: HTTP 403 (cloudflare-challenge)')
+    expect(await read('cf', true)).toContain('blocked (cloudflare-challenge) · direct: HTTP 403 (cloudflare-challenge)')
   })
 
   describe('PDF', () => {
@@ -1861,13 +1863,19 @@ describe('web.fetch through a real browser', () => {
       }
     })
 
-    test('a request that never ends holds the read for three quiet polls, not the whole settle time', async () => {
+    test('a request that never ends holds the read for eight quiet polls, not the whole settle time', async () => {
       const browser = fakeBrowser([{ title: 'Shop', text: BANNER }], [], { requestOpenUntilPoll: 99 })
       try {
         const started = Date.now()
-        const page = await browser.read('https://shop.example.com/list', new AbortController().signal)
+        const page = await readViaCdp(
+          browser.base,
+          'https://shop.example.com/list',
+          new AbortController().signal,
+          { allowUrl: async () => true, allowAddress: () => true },
+          { settleMs: 400, pollMs: 10 },
+        )
         expect(page.text).toBe(BANNER.trim())
-        expect(Date.now() - started).toBeLessThan(380) // settleMs is 400, polls are 40 ms
+        expect(Date.now() - started).toBeLessThan(380) // settleMs is 400, polls are 10 ms
       } finally {
         browser.stop()
       }
@@ -3312,6 +3320,223 @@ describe('web.fetch: telemetry of the chain', () => {
     })
     expect(JSON.stringify(facts)).not.toMatch(/SECRET|frag|\/a\/b|pw/)
     expect(fetchFacts('not a url', { ok: false, error: 'boom' })).toEqual({})
+  })
+})
+
+describe('web.fetch: tuning of the chain', () => {
+  const WALL = '<title>Just a moment...</title> challenge-platform'
+  const REAL = 'Die Jura E4 kostet 549 Euro. '.repeat(20)
+  const read = (text: string) => ({ finalUrl: 'https://shop.example.com/', text })
+
+  test('the cache evicts the least recently read entry, and a read refreshes its place', () => {
+    const cache = new ReadCache({ maxEntries: 2, maxBytes: 1_000 })
+    cache.set('a', read('a'), 'direct', 0)
+    cache.set('b', read('b'), 'direct', 0)
+    expect(cache.get('a')).toBeDefined() // a is now the youngest, b the oldest
+    cache.set('c', read('c'), 'direct', 0)
+    expect(cache.get('b')).toBeUndefined()
+    expect(cache.get('a')).toBeDefined()
+    expect(cache.get('c')).toBeDefined()
+  })
+
+  test('the cache evicts by bytes too, oldest read first', () => {
+    const cache = new ReadCache({ maxEntries: 10, maxBytes: 10 })
+    cache.set('a', read('aaaaaa'), 'direct', 0)
+    cache.set('b', read('bbbbbb'), 'direct', 0)
+    expect(cache.get('a')).toBeUndefined()
+    expect(cache.get('b')).toBeDefined()
+  })
+
+  describe('a walled host is remembered', () => {
+    /** A browser that meets the wall until `pass()` is called; every read is recorded. */
+    function wallBrowser() {
+      const urls: string[] = []
+      let passing = false
+      return {
+        urls,
+        pass: () => (passing = true),
+        read: async (url: string) => {
+          urls.push(url)
+          return passing
+            ? { finalUrl: url, title: 'Shop', text: REAL, challenge: false }
+            : { finalUrl: url, title: 'Prove your humanity', text: 'Please verify', challenge: true }
+        },
+      }
+    }
+    const setup = () => {
+      const browser = wallBrowser()
+      const n = net({
+        'https://shop.example.com/': status(403, WALL),
+        'https://api.tavily.com/extract': json({ results: [] }),
+      })
+      const handoff = fakeHandoff()
+      const { call } = run({ ...n.deps, env: { TAVILY_API_KEY: 't' }, browser: browser.read, handoff })
+      return { browser, n, call, handoff }
+    }
+
+    beforeEach(resetHandoffLimit)
+
+    test('the next read of the host answers at once with the same reason, without a browser or Tavily call', async () => {
+      const { browser, n, call } = setup()
+      const first = await failure(call('web.fetch', { url: 'https://shop.example.com/a' }))
+      expect(blockedReason(first.message)).toBe('needs-human')
+      const sent = n.calls.length
+      expect(browser.urls).toHaveLength(1)
+
+      const started = Date.now()
+      const again = await failure(call('web.fetch', { url: 'https://shop.example.com/other' }))
+      expect(Date.now() - started).toBeLessThan(2_000)
+      expect(blockedReason(again.message)).toBe('needs-human')
+      expect(again.message).toContain('known wall')
+      expect(again.message).toMatch(/use web\.search for another source$/)
+      expect(n.calls).toHaveLength(sent)
+      expect(browser.urls).toHaveLength(1)
+      expect(
+        fetchFacts('https://shop.example.com/other', {
+          ok: false,
+          error: again.message,
+          data: (again as { data?: unknown }).data,
+        }),
+      ).toMatchObject({
+        host: 'shop.example.com',
+        blocked: 'needs-human',
+        legs: [],
+      })
+    })
+
+    test('another host is read as before', async () => {
+      const { browser, call } = setup()
+      await failure(call('web.fetch', { url: 'https://shop.example.com/a' }))
+      await failure(call('web.fetch', { url: 'https://shop.example.com/b' }))
+      await failure(call('web.fetch', { url: 'https://other.example.org/x' })).catch(() => undefined)
+      expect(browser.urls).toEqual(['https://shop.example.com/a']) // other.example.org has no fake route: a failure of its own, no browser
+    })
+
+    test('a passing read clears it: fresh reads the host again, and the next read goes through the chain', async () => {
+      const { browser, call } = setup()
+      await failure(call('web.fetch', { url: 'https://shop.example.com/a' }))
+      browser.pass()
+      const out = (await call('web.fetch', { url: 'https://shop.example.com/b', fresh: true })) as { via: string }
+      expect(out.via).toBe('browser')
+      const next = (await call('web.fetch', { url: 'https://shop.example.com/c' })) as { via: string; cached: boolean }
+      expect([next.via, next.cached]).toEqual(['browser', false])
+      expect(browser.urls).toEqual([
+        'https://shop.example.com/a',
+        'https://shop.example.com/b',
+        'https://shop.example.com/c',
+      ])
+    })
+
+    test('it ends with the handoff interval', async () => {
+      const { browser, call } = setup()
+      await failure(call('web.fetch', { url: 'https://shop.example.com/a' }))
+      setSystemTime(new Date(Date.now() + 31 * 60_000))
+      try {
+        await failure(call('web.fetch', { url: 'https://shop.example.com/b' }))
+      } finally {
+        setSystemTime()
+      }
+      expect(browser.urls).toHaveLength(2)
+    })
+
+    test('a wall Tavily read past is not remembered', async () => {
+      const browser = wallBrowser()
+      const n = net({
+        'https://shop.example.com/': status(403, WALL),
+        'https://api.tavily.com/extract': json({
+          results: [{ url: 'https://shop.example.com/a', raw_content: REAL }],
+        }),
+      })
+      const { call } = run({ ...n.deps, env: { TAVILY_API_KEY: 't' }, browser: browser.read })
+      expect(((await call('web.fetch', { url: 'https://shop.example.com/a' })) as { via: string }).via).toBe(
+        'tavily-extract',
+      )
+      await call('web.fetch', { url: 'https://shop.example.com/b' })
+      expect(browser.urls).toHaveLength(2)
+    })
+
+    test('a bot wall with no browser is remembered under its own reason', async () => {
+      const n = net({
+        'https://shop.example.com/': status(403, WALL),
+        'https://api.tavily.com/extract': json({ results: [] }),
+      })
+      const { call } = run({ ...n.deps, env: { TAVILY_API_KEY: 't' } })
+      const first = await failure(call('web.fetch', { url: 'https://shop.example.com/a' }))
+      const sent = n.calls.length
+      const again = await failure(call('web.fetch', { url: 'https://shop.example.com/b' }))
+      expect(blockedReason(first.message)).toBe('cloudflare-challenge')
+      expect(blockedReason(again.message)).toBe('cloudflare-challenge')
+      expect(n.calls).toHaveLength(sent)
+    })
+  })
+
+  describe('Tavily after a direct timeout', () => {
+    const timeout = () => {
+      throw Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' })
+    }
+    const hangs: Handler = (_url, init) =>
+      new Promise((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => reject(init.signal!.reason), { once: true })
+      })
+
+    test('waits no longer than its budget, then fails as one more timed-out leg', async () => {
+      const n = net({ 'https://slow.example.com/': timeout, 'https://api.tavily.com/extract': hangs })
+      const { call } = run({ ...n.deps, env: { TAVILY_API_KEY: 't' }, extractAfterTimeoutMs: 100 })
+      const started = Date.now()
+      const error = await failure(call('web.fetch', { url: 'https://slow.example.com/a' }))
+      expect(Date.now() - started).toBeLessThan(1_500)
+      expect(error.message).toContain('tavily-extract: timed out after 0.1 s')
+      expect(error.message).toContain('host slow or down')
+      const data = (error as { data?: { legs: { leg: string; outcome: string }[] } }).data
+      expect(data?.legs.map((l) => [l.leg, l.outcome])).toEqual([
+        ['direct', 'timeout'],
+        ['tavily-extract', 'timeout'],
+      ])
+    })
+
+    test('a retry cannot stretch past the budget', async () => {
+      const n = net({
+        'https://slow.example.com/': timeout,
+        'https://api.tavily.com/extract': () => {
+          throw new Error('connection reset')
+        },
+      })
+      const { call } = run({
+        ...n.deps,
+        env: { TAVILY_API_KEY: 't' },
+        retry: { attempts: 5, backoffMs: 400 },
+        extractAfterTimeoutMs: 100,
+      })
+      const started = Date.now()
+      const error = await failure(call('web.fetch', { url: 'https://slow.example.com/a' }))
+      expect(Date.now() - started).toBeLessThan(1_500)
+      expect(error.message).toContain('tavily-extract: timed out after 0.1 s')
+    })
+
+    test('an Extract inside the budget still rescues the page', async () => {
+      const n = net({
+        'https://slow.example.com/': timeout,
+        'https://api.tavily.com/extract': json({ results: [{ url: 'https://slow.example.com/a', raw_content: REAL }] }),
+      })
+      const { call } = run({ ...n.deps, env: { TAVILY_API_KEY: 't' }, extractAfterTimeoutMs: 100 })
+      expect(((await call('web.fetch', { url: 'https://slow.example.com/a' })) as { via: string }).via).toBe(
+        'tavily-extract',
+      )
+    })
+
+    test('a failure that is no timeout keeps the full Extract wait', async () => {
+      const n = net({
+        'https://shop.example.com/': status(500),
+        'https://api.tavily.com/extract': async (url, init) => {
+          await Bun.sleep(250) // past the 100 ms budget a timeout would have left
+          return json({ results: [{ url: 'https://shop.example.com/a', raw_content: REAL }] })(url, init)
+        },
+      })
+      const { call } = run({ ...n.deps, env: { TAVILY_API_KEY: 't' }, extractAfterTimeoutMs: 100 })
+      expect(((await call('web.fetch', { url: 'https://shop.example.com/a' })) as { via: string }).via).toBe(
+        'tavily-extract',
+      )
+    })
   })
 })
 

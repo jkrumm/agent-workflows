@@ -31,6 +31,8 @@ export interface WebDeps {
   pageHold?: PageHold
   /** Asks the owner to pass a bot wall the browser cannot. Default: `ask-human.sh` (see `handoff.ts`). */
   handoff?: HumanHandoff
+  /** How long Tavily Extract may take, retries included, once the plain read of the page timed out. Default 15 s. */
+  extractAfterTimeoutMs?: number
 }
 
 /** The addresses a URL's host was vetted to, so the connection goes to one of them and DNS is not asked again. */
@@ -49,7 +51,15 @@ export interface ResolvedWebDeps {
   /** The kept tabs of the browser, decided per call like `browser`; `policy` keeps vetting every request of a kept page. */
   pageHold: (policy: RequestPolicy) => PageHold | undefined
   handoff: HumanHandoff
+  extractAfterTimeoutMs: number
 }
+
+/**
+ * Tavily's whole turn after the plain read of the page timed out: the host is slow or down, and Extract fetches from
+ * the same host (47 `direct: timed out` failures in 30 days, every one followed by an Extract call that failed too,
+ * after up to 10 s + 30 s; the Extract p50 is 14.8 s).
+ */
+const EXTRACT_AFTER_TIMEOUT_MS = 15_000
 
 export function resolveWebDeps(deps: WebDeps = {}): ResolvedWebDeps {
   const warn = deps.warn ?? ((message: string) => console.warn(message))
@@ -60,6 +70,7 @@ export function resolveWebDeps(deps: WebDeps = {}): ResolvedWebDeps {
     retry: deps.retry ?? {},
     warn,
     handoff: deps.handoff ?? askHumanHandoff({ env: deps.env ?? process.env, warn }),
+    extractAfterTimeoutMs: deps.extractAfterTimeoutMs ?? EXTRACT_AFTER_TIMEOUT_MS,
     pageHold: (policy) =>
       deps.pageHold ?? pageHoldFromEnv(keyOf(deps.env ?? process.env, 'AGW_BROWSER_CDP_URL'), policy),
     browser: (policy) => deps.browser ?? browserFromEnv(keyOf(deps.env ?? process.env, 'AGW_BROWSER_CDP_URL'), policy),
