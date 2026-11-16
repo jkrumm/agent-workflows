@@ -75,13 +75,14 @@ export async function failedResponse(res: Response, wire: string): Promise<Attem
 }
 
 /**
- * The attempt for a fetch that threw: a hang guard or an abort is spent wait (not retried, not `transport`); anything
- * else never reached the vendor (a refused or reset connection) and is retryable, marked `transport` so the exhausted
- * call is an outage a route's fallback answers (`isOutageError`).
+ * The attempt for a request that threw: a hang guard or an abort is spent wait (not retried, not `transport`); anything
+ * else is retryable. One that never got a response (a refused or reset connection) is marked `transport`, so the
+ * exhausted call is an outage a route's fallback answers (`isOutageError`); a throw after the response began (a stream
+ * cut mid-answer) is retried but not marked: the vendor may have billed it.
  */
-export function requestFailure(error: unknown): Attempt {
+export function requestFailure(error: unknown, responded = false): Attempt {
   const spent = isAbort(error)
-  return new Attempt(describe(error), !spent, undefined, undefined, spent ? undefined : true)
+  return new Attempt(describe(error), !spent, undefined, undefined, spent || responded ? undefined : true)
 }
 
 /** A transport failure that a route's fallback answers: the classifier over a failed call's status and message. */
@@ -95,16 +96,18 @@ export function isBalanceError(error: unknown): boolean {
 const OUTAGE_STATUS = new Set([502, 503, 504])
 
 /**
- * A failed call whose primary route is out: the retries ran out on 502/503/504 (a 503 that is a balance refusal is
- * `isBalanceError`, checked first by the caller) or on a connection that never reached the vendor (`transport`: no
- * response; a hang guard or an idle stop is not one, the wait is already spent). A route's fallback answers it, once.
- * 429 and 500 stay with the retries: no 429 in the 14-day ledger audit, and a 500 is as likely the request as the host.
+ * A failed call whose primary route is out: the retries ran out (`exhausted`: a fail-fast answer, such as the 503 that
+ * wraps an `invalid_request_error`, never qualifies) on a 502/503/504 that is not a balance refusal, or on a connection
+ * that never reached the vendor (`transport`; a hang guard or an idle stop is spent wait, not an outage). A route's
+ * fallback answers it, once. 429 and 500 stay with the retries: no 429 in the 14-day ledger audit, and a 500 is as
+ * likely the request as the host.
  */
 export function isOutageError(error: unknown): boolean {
   if (!(error instanceof CapabilityError) || error.code !== 'UPSTREAM_ERROR' || isBalanceError(error)) return false
-  const data = error.data as { status?: unknown; transport?: unknown } | undefined
-  if (data?.transport === true) return true
-  return typeof data?.status === 'number' && OUTAGE_STATUS.has(data.status)
+  const data = error.data as { status?: unknown; transport?: unknown; exhausted?: unknown } | undefined
+  if (data?.exhausted !== true) return false
+  if (data.transport === true) return true
+  return typeof data.status === 'number' && OUTAGE_STATUS.has(data.status)
 }
 
 /**
@@ -154,6 +157,7 @@ export async function withRetries<T>(options: HttpOptions, signal: AbortSignal, 
           ...(failure.requestId === undefined ? {} : { requestId: failure.requestId }),
           ...(failure.userError ? { userError: failure.userError } : {}),
           ...(failure.transport ? { transport: true as const } : {}),
+          ...(failure.retryable ? { exhausted: true as const } : {}),
         })
       }
       await sleep(backoffMs * 3 ** i, signal)

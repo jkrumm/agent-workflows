@@ -214,6 +214,19 @@ describe('provider-balance fallback', () => {
     expect(warnings.map((w) => w.message)).toEqual(['provider unavailable; falling back'])
   })
 
+  test('a 503 that wraps an invalid_request_error fails fast and is no outage: no fallback', async () => {
+    iu.on(
+      'messages',
+      () =>
+        new Response('{"error":{"type":"invalid_request_error","message":"response_format: bad"}}', { status: 503 }),
+    )
+    const error = await caught(call('llm.classify', classify))
+    expect(error).toMatchObject({ code: 'UPSTREAM_ERROR', data: { status: 503 } })
+    expect(isOutageError(error)).toBe(false)
+    expect(iu.requests.map((r) => r.body.model)).toEqual([primary.model])
+    expect(warnings).toEqual([])
+  })
+
   test('a hang guard is spent wait: no retry and no fallback', async () => {
     const hung = () => Promise.reject(new DOMException('timed out', 'TimeoutError'))
     const error = await caught(call('llm.classify', classify, undefined, undefined, hung))

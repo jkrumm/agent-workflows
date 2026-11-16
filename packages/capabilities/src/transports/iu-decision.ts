@@ -1,16 +1,7 @@
 import { z } from 'zod'
 import { type Env, gatewayConfig } from './config.ts'
 import { gatewayHeaders } from './headers.ts'
-import {
-  Attempt,
-  DEFAULTS,
-  describe,
-  failedResponse,
-  type HttpOptions,
-  isAbort,
-  readJson,
-  withRetries,
-} from './http.ts'
+import { Attempt, DEFAULTS, failedResponse, type HttpOptions, readJson, requestFailure, withRetries } from './http.ts'
 import type { DecisionAnswer, DecisionPort, DecisionRequest, DecisionResult, OnUsage } from './port.ts'
 
 // The wire is `POST <origin>/decisions/v1/systemone`, as the official TypeSafe SDK sends it (checked
@@ -63,7 +54,7 @@ export function iuDecision(options: HttpOptions & { env?: Env } = {}): DecisionP
           })
         } catch (error) {
           if (error instanceof Attempt) throw error
-          throw new Attempt(describe(error), !isAbort(error))
+          throw requestFailure(error)
         }
         if (!res.ok) throw await failedResponse(res, 'iu-decision')
         return readResponse(await readJson(res, 'iu-decision'), request.model, onUsage)

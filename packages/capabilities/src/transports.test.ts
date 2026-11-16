@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { CapabilityError } from './errors.ts'
 import { chatStream, type FakeGateway, messageResponse, sse, startFakeGateway } from '@agent-workflows/testing/gateway'
-import { anthropicWire, iuDecision, iuOpenai, type JsonSchema } from './transports/index.ts'
+import { anthropicWire, isOutageError, iuDecision, iuOpenai, type JsonSchema } from './transports/index.ts'
 
 let iu: FakeGateway
 beforeEach(() => {
@@ -421,6 +421,32 @@ describe('body-read failures', () => {
     const decision = await failure(iuDecision({ env: env(), backoffMs: 0, fetch: fetcher }).decide(request, never()))
     expect(decision.message).toContain('could not be read')
     expect(calls).toBe(6)
+  })
+
+  test('a stream that resets after the 200 is retried but is no outage; a refused connection is one', async () => {
+    const cut = () =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"half"}}]}\n\n'))
+              controller.error(new Error('ECONNRESET mid-stream'))
+            },
+          }),
+          { headers: { 'content-type': 'text/event-stream' } },
+        ),
+      )
+    const midStream = await failure(iuOpenai({ env: env(), backoffMs: 0, fetch: cut }).complete(chatRequest, never()))
+    expect(midStream.data).toMatchObject({ exhausted: true })
+    expect(midStream.data).not.toHaveProperty('transport')
+    expect(isOutageError(midStream)).toBe(false)
+
+    const refused = () => Promise.reject(new TypeError('fetch failed'))
+    const neverConnected = await failure(
+      iuOpenai({ env: env(), backoffMs: 0, fetch: refused }).complete(chatRequest, never()),
+    )
+    expect(neverConnected.data).toMatchObject({ transport: true, exhausted: true })
+    expect(isOutageError(neverConnected)).toBe(true)
   })
 
   test('a cut JSON body is retried, then succeeds when the next attempt is whole', async () => {

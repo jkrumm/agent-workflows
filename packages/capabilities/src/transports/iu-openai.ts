@@ -46,12 +46,14 @@ export function iuOpenai(options: HttpOptions & { env?: Env } = {}): ChatPort {
     complete: async (request, signal, onUsage) => {
       const { token, openaiBase } = gatewayConfig(options.env ?? process.env)
       return withRetries(options, signal, async () => {
+        const payload = JSON.stringify(body(request))
         const idle = new AbortController()
         let timer: ReturnType<typeof setTimeout> | undefined
         const arm = () => {
           clearTimeout(timer)
           timer = setTimeout(() => idle.abort(), options.idleTimeoutMs ?? DEFAULTS.idleTimeoutMs)
         }
+        let responded = false
         try {
           arm()
           const res = await doFetch(`${openaiBase}/chat/completions`, {
@@ -61,9 +63,10 @@ export function iuOpenai(options: HttpOptions & { env?: Env } = {}): ChatPort {
               authorization: `Bearer ${token}`,
               'content-type': 'application/json',
             },
-            body: JSON.stringify(body(request)),
+            body: payload,
             signal: AbortSignal.any([signal, idle.signal]),
           })
+          responded = true
           if (!res.ok) throw await failedResponse(res, 'iu-openai')
           return await readStream(res, request.model, arm, onUsage)
         } catch (error) {
@@ -74,7 +77,7 @@ export function iuOpenai(options: HttpOptions & { env?: Env } = {}): ChatPort {
             )
           }
           if (error instanceof Attempt) throw error
-          throw requestFailure(error)
+          throw requestFailure(error, responded)
         } finally {
           clearTimeout(timer)
         }

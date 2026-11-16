@@ -38,6 +38,7 @@ export function anthropicWire(options: HttpOptions & { env?: Env } = {}): ChatPo
     complete: async (request, signal, onUsage) => {
       const { token, anthropicBase } = gatewayConfig(options.env ?? process.env)
       return withRetries(options, signal, async () => {
+        const payload = JSON.stringify(body(request))
         let res: Response
         try {
           res = await doFetch(`${anthropicBase}/v1/messages`, {
@@ -49,7 +50,7 @@ export function anthropicWire(options: HttpOptions & { env?: Env } = {}): ChatPo
               'content-type': 'application/json',
               'x-agw-fallback': 'none',
             },
-            body: JSON.stringify(body(request)),
+            body: payload,
             signal: AbortSignal.any([signal, AbortSignal.timeout(options.hangGuardMs ?? DEFAULTS.hangGuardMs)]),
           })
         } catch (error) {
@@ -64,9 +65,10 @@ export function anthropicWire(options: HttpOptions & { env?: Env } = {}): ChatPo
 }
 
 function body(request: ChatRequest) {
-  const thinking = request.effort !== undefined && request.effort !== 'none'
   // Haiku 5.5 thinks when `thinking` is absent (probed 2026-11-16, docs/gateway.md §Thinking): effort `none` says so.
-  const thinkingOff = request.effort === 'none'
+  const thinking =
+    request.effort === undefined ? undefined : request.effort === 'none' ? { type: 'disabled' } : { type: 'adaptive' }
+  const effort = request.effort !== undefined && request.effort !== 'none' ? request.effort : undefined
   return {
     model: request.model,
     max_tokens: request.maxOutputTokens,
@@ -85,11 +87,11 @@ function body(request: ChatRequest) {
       },
     ],
     ...(request.system ? { system: request.system } : {}),
-    ...(thinking ? { thinking: { type: 'adaptive' } } : thinkingOff ? { thinking: { type: 'disabled' } } : {}),
-    ...(thinking || request.jsonSchema
+    ...(thinking ? { thinking } : {}),
+    ...(effort || request.jsonSchema
       ? {
           output_config: {
-            ...(thinking ? { effort: request.effort } : {}),
+            ...(effort ? { effort } : {}),
             ...(request.jsonSchema ? { format: { type: 'json_schema', schema: request.jsonSchema } } : {}),
           },
         }
