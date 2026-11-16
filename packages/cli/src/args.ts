@@ -2,6 +2,7 @@ import { readFileSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { usage } from './exit.ts'
 import type { Command, Field, Schema } from './spec.ts'
+import { isWhenFlag, parseWhen } from './when.ts'
 
 export const BIN = 'agw'
 
@@ -9,6 +10,8 @@ export interface Globals {
   format?: 'json' | 'plain'
   commit: boolean
   idempotencyKey?: string
+  /** `--wait` / `--budget`: seconds this call waits on a run, over `AGW_WAIT_BUDGET_S`. */
+  waitS?: number
   help: boolean
 }
 
@@ -72,7 +75,7 @@ export function coerce(field: Field, raw: string, label = `--${field.flag}`): un
   const bad = (why: string) => usage(`${label} ${why}, got: ${raw}`, `${BIN} schema <command…> prints the input schema`)
   switch (fieldType(field.schema)) {
     case 'string':
-      return pathAware(field, raw)
+      return isWhenFlag(field.name) ? parseWhen(raw) : pathAware(field, raw)
     case 'scalar':
       return raw
     case 'number':
@@ -128,11 +131,19 @@ function jsonFile(label: string, path: string): { found: true; value: unknown } 
   }
 }
 
+/** The flag that sets how long this call waits on a run: `--wait` on a workflow verb, `--budget` on `run wait`. */
+export function waitFlag(command: Command): 'wait' | 'budget' | undefined {
+  if (command.x.kind === 'workflow') return 'wait'
+  return command.x.kind === 'run' && command.words.join(' ') === 'run wait' ? 'budget' : undefined
+}
+
 function globalFlags(command: Command): string[] {
+  const wait = waitFlag(command)
   return [
     'format',
     ...(command.x.mutating ? ['commit'] : []),
     ...(command.x.kind === 'workflow' || command.x.mutating ? ['idempotency-key'] : []),
+    ...(wait ? [wait] : []),
   ]
 }
 
@@ -154,10 +165,27 @@ export function usageLine(command: Command): string {
     return field?.required && command.x.stdin !== name ? `<${name}>` : `[${name}]`
   })
   const flags = flagFields(command).map((f) => (f.required ? flagSyntax(f) : `[${flagSyntax(f)}]`))
-  const globals = globalFlags(command).map((g) =>
-    g === 'format' ? '[--format json|plain]' : g === 'commit' ? '[--commit]' : '[--idempotency-key <key>]',
-  )
+  const globalSyntax: Record<string, string> = {
+    format: '[--format json|plain]',
+    commit: '[--commit]',
+    'idempotency-key': '[--idempotency-key <key>]',
+    wait: '[--wait <seconds>]',
+    budget: '[--budget <seconds>]',
+  }
+  const globals = globalFlags(command).map((g) => globalSyntax[g] as string)
   return [BIN, ...command.words, ...positional, ...flags, ...globals].join(' ')
+}
+
+/** A text command whose answer can be cut: names the cap and where the cut is reported. */
+function capNote(command: Command): string {
+  const cap = command.fields.find((f) => f.flag === 'max-chars')
+  const answer = command.x.kind === 'workflow' ? command.output?.properties?.output : command.output
+  if (!cap || !answer?.properties?.truncated) return ''
+  const limits = [
+    cap.schema.default !== undefined ? `default ${String(cap.schema.default)}` : '',
+    typeof cap.schema.maximum === 'number' ? `max ${String(cap.schema.maximum)}` : '',
+  ].filter(Boolean)
+  return `text is cut at --max-chars (${limits.join(', ')}); a cut answer says so on stderr, so no head or tail is needed: raise --max-chars to read more`
 }
 
 /** `below`: the commands that could sit under this one; their next words are listed as its subcommands. */
@@ -170,6 +198,7 @@ export function helpText(command: Command, below: Command[] = []): string {
       isBoolean(f) ? '' : typeLabel(f),
       f.required ? 'required' : '',
       f.schema.default !== undefined ? `default ${JSON.stringify(f.schema.default)}` : '',
+      typeof f.schema.maximum === 'number' ? `max ${f.schema.maximum}` : '',
       command.x.stdin === f.name ? (f.required ? 'read from stdin when omitted' : 'pass - to read from stdin') : '',
     ].filter(Boolean)
     return `  ${label.padEnd(22)} ${facts.join(', ')}${f.schema.description ? ` — ${f.schema.description}` : ''}`
@@ -185,9 +214,10 @@ export function helpText(command: Command, below: Command[] = []): string {
     )
   const notes = [
     command.x.mutating ? 'mutating: needs --commit when stdin is not a TTY' : '',
-    command.x.kind === 'workflow'
-      ? 'waits up to AGW_WAIT_BUDGET_S (default 110 s), then exits 10 with the resume command'
+    waitFlag(command)
+      ? `waits up to --${waitFlag(command)} <seconds> (else AGW_WAIT_BUDGET_S, default 110 s), then exits 10 with one resume command sized to the workflow's typical wall time`
       : '',
+    capNote(command),
   ].filter(Boolean)
   const n = command.words.length
   const subcommands = [
@@ -238,7 +268,13 @@ export function parseArgs(command: Command, tokens: string[]): Parsed {
     if (globals.has(name)) {
       if (name === 'commit') parsed.globals.commit = inline === undefined || parseBoolean('--commit', inline)
       else if (name === 'idempotency-key') parsed.globals.idempotencyKey = value()
-      else {
+      else if (name === 'wait' || name === 'budget') {
+        const raw = value()
+        const seconds = Number(raw)
+        if (raw.trim() === '' || !Number.isFinite(seconds) || seconds < 0)
+          throw usage(`--${name} must be a number of seconds, got: ${raw}`)
+        parsed.globals.waitS = seconds
+      } else {
         const format = value()
         if (format !== 'json' && format !== 'plain') throw usage(`--format must be json or plain, got: ${format}`)
         parsed.globals.format = format

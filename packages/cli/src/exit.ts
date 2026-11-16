@@ -31,8 +31,13 @@ export const EXIT_MEANING: Record<ExitKind, string> = {
   rate_limited: '429; retry after details.retryAfterS',
   contract_mismatch: 'the host serves another contract and the command does not parse against it',
   pending:
-    'the run is still going when the wait budget ran out or the wait was interrupted by SIGINT/SIGTERM; stdout has its state, hint the resume command',
+    'the run is still going when the wait budget ran out or the wait was interrupted by SIGINT/SIGTERM; stdout has its state, hint the one resume command (agw run wait <runId> --budget <n>): run it once, do not loop',
 }
+
+/** Head of an error line: `{"error":{"kind":..,"code":..,"message":..,"hint":..` stays under 400 bytes with these. */
+export const HEAD_BYTES = 400
+const MESSAGE_HEAD = 170
+const HINT_HEAD = 150
 
 export interface ErrorFields {
   code?: string | null
@@ -69,7 +74,18 @@ export class AgwError extends Error {
   // Not `line()`: that name collides with JavaScriptCore's `Error.line` under Bun (spike 7).
   toErrorLine(): string {
     const { kind, code, message, hint, details } = this
-    return JSON.stringify({ error: { kind, code, message, hint, details } })
+    // Agents read the first few hundred bytes of an output: kind, message and hint are always inside them, so a long
+    // one is cut there and its whole text moves behind them, into `details`.
+    const cut = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text)
+    const shortMessage = cut(message, MESSAGE_HEAD)
+    const shortHint = cut(hint, HINT_HEAD)
+    const rest = {
+      ...(shortMessage === message ? {} : { message }),
+      ...(shortHint === hint ? {} : { hint }),
+    }
+    return JSON.stringify({
+      error: { kind, code, message: shortMessage, hint: shortHint, details: { ...rest, ...details } },
+    })
   }
 }
 

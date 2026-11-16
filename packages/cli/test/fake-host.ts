@@ -160,6 +160,34 @@ export const FIXTURE_WORKFLOWS: Workflow[] = [
     outcome: () => ({ durationS: 5 }),
   },
   {
+    id: 'fixture.window',
+    summary: 'Echoes the time flags it was given',
+    input: {
+      type: 'object',
+      properties: { since: { type: 'string' }, iuSince: { type: 'string' }, label: { type: 'string' } },
+    },
+    outcome: (input) => ({
+      output: { since: input.since ?? null, iuSince: input.iuSince ?? null, label: input.label ?? null },
+    }),
+  },
+  {
+    id: 'fixture.text',
+    summary: 'A long text that is cut at maxChars',
+    input: {
+      type: 'object',
+      properties: { maxChars: { type: 'integer', default: 100, maximum: 500, description: 'Cut the text here' } },
+    },
+    output: {
+      type: 'object',
+      properties: { text: { type: 'string' }, truncated: { type: 'boolean' } },
+      required: ['text', 'truncated'],
+    },
+    plainField: 'text',
+    outcome: (input) => ({
+      output: { text: 'lorem '.repeat(200).slice(0, Number(input.maxChars ?? 100)), truncated: true },
+    }),
+  },
+  {
     id: 'fixture.fail',
     summary: 'A run that ends failed',
     input: { type: 'object', properties: {} },

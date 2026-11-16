@@ -245,6 +245,25 @@ export class Journal {
     return rows[0]?.input_hash ?? null
   }
 
+  /**
+   * The p95 wall time, in seconds, of the workflow's latest `window` done runs that are their own root; `null` below
+   * `minSample` runs. A caller that waits on a run sizes its wait from it.
+   */
+  async wallP95S(workflow: string, window = 200, minSample = 5): Promise<number | null> {
+    const { rows } = await this.query<{ n: number; p95: number | null }>(
+      `select count(*)::int as n,
+         percentile_cont(0.95) within group (order by extract(epoch from (finished_at - started_at))) as p95
+       from (
+         select started_at, finished_at from ${this.runs}
+         where workflow = $1 and id = root_id and status = 'done' and started_at is not null and finished_at is not null
+         order by finished_at desc limit $2
+       ) t`,
+      [workflow, window],
+    )
+    const row = rows[0]
+    return row && row.n >= minSample && row.p95 !== null ? Number(row.p95) : null
+  }
+
   async getRun(id: string): Promise<RunRow | null> {
     const { rows } = await this.query<RunRow>(`select ${RUN_COLUMNS} from ${this.runs} where id = $1`, [id])
     return rows[0] ?? null

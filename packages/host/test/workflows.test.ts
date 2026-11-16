@@ -20,6 +20,32 @@ afterAll(async () => {
 
 const run = async (id: string) => (await t.pool.query(`select * from "${t.schema}".runs where id = $1`, [id])).rows[0]
 
+describe('a live run carries its workflow typical wall time', () => {
+  test('202 states hold typicalWallS (rounded seconds) when the store knows it; an ended run holds none', async () => {
+    const typical = await startTestHost({
+      prefix: 'wfp95',
+      wrapStore: (store) => ({ ...store, typicalWallS: async (id) => (id === 'hold.open' ? 7.4 : null) }),
+    })
+    try {
+      const started = await typical.json(await typical.call('/workflows/hold/open', { body: {} }))
+      expect(started.status).toBe(202)
+      expect(started.body.typicalWallS).toBe(7)
+      const waited = await typical.json(
+        await typical.call(`/runs/${started.body.runId}/wait`, { method: 'POST', headers: { prefer: 'wait=0.2' } }),
+      )
+      expect(waited.body.typicalWallS).toBe(7)
+      const quick = await typical.json(
+        await typical.call('/workflows/echo/say', { body: { text: 'hi' }, headers: { prefer: 'wait=10' } }),
+      )
+      expect(quick.status).toBe(200)
+      expect(quick.body.typicalWallS).toBeUndefined()
+      await typical.call(`/runs/${started.body.runId}/cancel`, { method: 'POST' })
+    } finally {
+      await typical.close()
+    }
+  })
+})
+
 describe('workflow start', () => {
   test('a run that ends within the wait is 200 done with its output', async () => {
     const { status, body } = await t.json(

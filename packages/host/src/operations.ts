@@ -72,6 +72,12 @@ const RunStateSchema = z.object({
     .literal(true)
     .optional()
     .describe('An ended run whose post hooks (the run record among them) are not delivered yet; ask again'),
+  typicalWallS: z
+    .number()
+    .optional()
+    .describe(
+      "A run that has not ended: the p95 wall time in seconds of the workflow's recent done runs (absent while there are too few). The CLI sizes its resume budget from it",
+    ),
   recordFailed: z
     .literal(true)
     .optional()
@@ -106,8 +112,16 @@ export interface HostWorkflow {
   internal?: true
 }
 
-/** The CLI's own flags always win (`--format`, `--commit`, `--idempotency-key`, `--help`): no input may take them. */
-export const RESERVED_FLAGS = ['format', 'commit', 'idempotencyKey', 'idempotency-key', 'help'] as const
+/** The CLI's own flags always win (`--format`, `--commit`, `--idempotency-key`, `--wait`, `--budget`, `--help`): no input may take them. */
+export const RESERVED_FLAGS = [
+  'format',
+  'commit',
+  'idempotencyKey',
+  'idempotency-key',
+  'wait',
+  'budget',
+  'help',
+] as const
 
 export function assertNoReservedFlags(owner: string, input: z.ZodObject) {
   for (const name of Object.keys(input.shape)) {
@@ -344,9 +358,15 @@ export function toRunState(run: StoredRun): RunState {
   return { ...state, cost, unpricedCalls }
 }
 
-function respond(context: HostContext, state: RunState): RunState {
-  context.response.status = isTerminal(state.status) ? 200 : 202
-  return state
+/** 200 for an ended run, 202 for a live one, which also carries its workflow's typical wall time when the store knows it. */
+async function respond(context: HostContext, state: RunState, store?: RunStore): Promise<RunState> {
+  if (isTerminal(state.status)) {
+    context.response.status = 200
+    return state
+  }
+  context.response.status = 202
+  const typicalWallS = await store?.typicalWallS?.(state.workflowId).catch(() => null)
+  return typicalWallS == null ? state : { ...state, typicalWallS: Math.round(typicalWallS) }
 }
 
 const waitHeaders = [
@@ -478,7 +498,7 @@ function buildWorkflow(
         deps.logger.error('run state read failed after start; answering 202', { runId, error: errorText(error) })
         return null
       })
-      return respond(context, state ?? { runId, workflowId: workflow.id, status: 'pending' })
+      return respond(context, state ?? { runId, workflowId: workflow.id, status: 'pending' }, deps.store)
     })
 }
 
@@ -532,7 +552,7 @@ export function runOperations(deps: OperationDeps): Record<'status' | 'wait' | '
         // a pure read: the record as it is, never a hold
         const run = await deps.store.get(input.runId)
         if (!run) throw notFound(input.runId)
-        return respond(context, toRunState(run))
+        return respond(context, toRunState(run), deps.store)
       },
     }),
     wait: runOp({
@@ -552,7 +572,7 @@ export function runOperations(deps: OperationDeps): Record<'status' | 'wait' | '
           recordWaitMs: RECORD_WAIT_MS,
         })
         if (!state) throw notFound(input.runId)
-        return respond(context, state)
+        return respond(context, state, deps.store)
       },
     }),
     cancel: runOp({
@@ -574,7 +594,7 @@ export function runOperations(deps: OperationDeps): Record<'status' | 'wait' | '
           signal,
         })
         if (!state) throw notFound(input.runId)
-        return respond(context, state)
+        return respond(context, state, deps.store)
       },
     }),
   }

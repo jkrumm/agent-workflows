@@ -343,6 +343,11 @@ export class Runtime {
     }
   }
 
+  /** The p95 wall time (seconds) of the workflow's recent done runs; null while there are too few to say. */
+  wallP95S(workflowId: string): Promise<number | null> {
+    return this.journal.wallP95S(workflowId)
+  }
+
   /** The run's current state, from any process; null when no such run exists. */
   async getRun(runId: string): Promise<RunSnapshot | null> {
     const run = await this.journal.getRun(runId)
