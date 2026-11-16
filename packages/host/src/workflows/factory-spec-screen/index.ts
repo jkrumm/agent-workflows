@@ -36,6 +36,6 @@ export function createFactorySpecScreen(deps: { registry: SpecScreenCaller }): H
     workflow,
     summary:
       "Whether a Spec is the owner's to read (pass) or its lead's to decide (settle), with a one-line reason; the request JSON comes on stdin",
-    cli: { stdin: 'request', defaultFormat: 'json' },
+    cli: { stdin: 'request', defaultFormat: 'json', serverOnly: true },
   }
 }

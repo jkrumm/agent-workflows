@@ -486,6 +486,86 @@ describe('agw against the fake host', () => {
     expect(unknown.code).toBe(EXIT.usage)
   })
 
+  describe('schema --index', () => {
+    // The fixture contract: the real capabilities (one `image generate` is `x-cli.hidden`) plus a server-only workflow.
+    const SERVER = 'svc job'
+    let own: FakeHost
+    let b: Sandbox
+
+    beforeAll(async () => {
+      own = await startFakeHost({
+        workflows: [
+          ...FIXTURE_WORKFLOWS,
+          {
+            id: 'svc.job',
+            summary: 'Only a server calls this',
+            serverOnly: true,
+            input: { type: 'object', properties: {} },
+          },
+        ],
+      })
+      b = sandbox({ AGW_URL: own.url, AGW_API_SECRET: own.secret })
+      expect((await agw(b, ['schema', '--refresh'])).code).toBe(0)
+    })
+    afterAll(() => own.stop())
+
+    const contract = async () =>
+      (await agw(b, ['schema'])).json() as {
+        commands: { command: string; summary: string }[]
+        hidden?: { command?: string }[]
+      }
+    const line = (c: { command: string; summary: string }) => `${c.command}\t${c.summary}`
+
+    test('a group prints exactly its commands of the contract, `command<TAB>summary`, sorted, and nothing else', async () => {
+      const { commands } = await contract()
+      const llm = commands
+        .filter((c) => c.command.split(' ')[0] === 'llm')
+        .sort((x, y) => (x.command < y.command ? -1 : 1))
+      expect(llm.length).toBeGreaterThan(1)
+      const r = await agw(b, ['schema', '--index', 'llm'])
+      expect(r.code).toBe(0)
+      expect(r.stdout).toBe(llm.map((c) => `${line(c)}\n`).join(''))
+      const two = await agw(b, ['schema', '--index', 'llm', 'fixture'])
+      expect(two.stdout.trimEnd().split('\n').length).toBeGreaterThan(llm.length)
+      const json = await agw(b, ['schema', '--index', 'llm', '--format', 'json'])
+      expect(JSON.parse(json.stdout)).toEqual(llm.map(({ command, summary }) => ({ command, summary })))
+    })
+
+    test('the default index leaves out hidden and server-only commands; --all prints every command', async () => {
+      const { commands, hidden } = await contract()
+      const index = (await agw(b, ['schema', '--index'])).stdout.trimEnd().split('\n')
+      const names = index.map((l) => l.split('\t')[0])
+      expect(names).toEqual([...names].sort())
+      expect(names).not.toContain(SERVER)
+      expect(hidden?.length).toBeGreaterThan(0)
+      for (const h of hidden ?? []) expect(names).not.toContain(h.command as string)
+      expect(index).toHaveLength(commands.length - 1)
+      const all = (await agw(b, ['schema', '--index', '--all'])).stdout.trimEnd().split('\n')
+      expect(all).toHaveLength(commands.length)
+      expect(all).toContain(`${SERVER}\tOnly a server calls this`)
+      // a server-only group named without --all is told how to get it
+      const bare = await agw(b, ['schema', '--index', 'svc'])
+      expect(bare.code).toBe(EXIT.usage)
+      expect(bare.error?.hint).toContain('--index --all svc')
+      expect((await agw(b, ['schema', '--index', '--all', 'svc'])).stdout).toBe(`${SERVER}\tOnly a server calls this\n`)
+    })
+
+    test('an unknown group exits 2 and names the groups; --all without --index is a usage error', async () => {
+      const r = await agw(b, ['schema', '--index', 'nope', 'llm'])
+      expect(r.code).toBe(EXIT.usage)
+      expect(r.stdout).toBe('')
+      expect(r.error?.message).toContain("'nope'")
+      expect(r.error?.hint).toMatch(/^groups: .*\bllm\b.*\bsvc\b/)
+      expect((await agw(b, ['schema', '--all'])).code).toBe(EXIT.usage)
+    })
+
+    test('--help lists the flag', async () => {
+      const r = await agw(b, ['schema', '--help'])
+      expect(r.stdout).toContain('--index')
+      expect(r.stdout).toContain('--all')
+    })
+  })
+
   test("schema prints a workflow's output type, $refs inlined; a run command keeps the open output", async () => {
     const b = box()
     const echo = (await agw(b, ['schema', 'fixture', 'echo'])).json() as {

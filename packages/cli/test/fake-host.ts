@@ -29,6 +29,8 @@ export interface Workflow {
   kind?: string
   /** Leaves `x-cli.resume` out. */
   noResume?: boolean
+  /** Emits `x-cli.serverOnly`: a command only a server calls. */
+  serverOnly?: boolean
   /** Runs inline when absent; `{ durationS, fail }` drive the fixture's run, `respond` replaces the answer. */
   outcome?: (input: Json) => { durationS?: number; fail?: string; output?: unknown; respond?: Response }
 }
@@ -219,6 +221,7 @@ function workflowOperation(w: Workflow) {
       ...(w.stdin ? { stdin: w.stdin } : {}),
       ...(w.plainField ? { plainField: w.plainField } : {}),
       kind: w.kind ?? 'workflow',
+      ...(w.serverOnly ? { serverOnly: true } : {}),
       ...(w.noResume ? {} : { resume: { command: ['run', 'wait'], positional: ['runId'] } }),
     },
   }

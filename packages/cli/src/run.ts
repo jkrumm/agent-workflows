@@ -22,11 +22,17 @@ interface RunState {
   [key: string]: unknown
 }
 
-const SCHEMA_HELP = `usage: ${BIN} schema [command…] [--refresh] [--exit-codes] [--format json|plain]
+const SCHEMA_HELP = `usage: ${BIN} schema [command…] [--index [group…] [--all]] [--refresh] [--exit-codes] [--format json|plain]
 
 Offline: reads the cached contract; fetches one only when there is none.
   ${BIN} schema                 every command, the contract sha, skipped operations with their reason, and hidden ones
   ${BIN} schema <command…>      that operation's input schema, output schema and x-cli
+  ${BIN} schema --index [group…]
+                            one line per command, \`command<TAB>summary\`, sorted; nothing else, so it pastes into a prompt.
+                            Group arguments (the first word of a command) keep only those groups; an unknown group exits 2.
+                            Commands only a server calls (\`x-cli.serverOnly\`) are left out
+  --all                     with --index: every command, server-only ones too
+  --format json             with --index: the same rows as an array of {command, summary}
   --refresh                 fetch the host's contract first
   --exit-codes              the exit-code table; needs neither a cache nor a host
 `
@@ -468,22 +474,27 @@ class Runner {
     const words: string[] = []
     let refresh = false
     let exitCodes = false
-    let format: 'json' | 'plain' = 'json'
+    let index = false
+    let all = false
+    let format: 'json' | 'plain' | undefined
     for (let i = 0; i < tokens.length; i++) {
       const token = tokens[i] as string
       if (token === '--help' || token === '-h') {
         this.io.out(SCHEMA_HELP)
         return EXIT.ok
       } else if (token === '--refresh') refresh = true
+      else if (token === '--index') index = true
+      else if (token === '--all') all = true
       else if (token === '--exit-codes') exitCodes = true
       else if (token === '--format' || token.startsWith('--format=')) {
         const value = token.includes('=') ? token.slice(9) : tokens[++i]
         if (value !== 'json' && value !== 'plain') throw usage(`--format must be json or plain, got: ${value}`)
         format = value
       } else if (token.startsWith('-'))
-        throw usage(`unknown flag ${token}`, 'valid flags: --refresh --exit-codes --format --help')
+        throw usage(`unknown flag ${token}`, 'valid flags: --index --all --refresh --exit-codes --format --help')
       else words.push(token)
     }
+    if (all && !index) throw usage('--all goes with --index', `${BIN} schema --index --all`)
     const print = (value: unknown) =>
       this.io.out(`${format === 'plain' ? JSON.stringify(value, null, 2) : JSON.stringify(value)}\n`)
 
@@ -499,6 +510,8 @@ class Runner {
     }
     if (refresh) await this.platform.refreshAll()
     else await this.platform.load({ fetchMissing: true })
+
+    if (index) return this.schemaIndex({ groups: words, all, format })
 
     const { multi } = this.platform
     // With one process the output is what it always was; with more, every entry names its process.
@@ -556,6 +569,31 @@ class Runner {
       )
     }
     print(below.map((d) => this.describe(d.command, d.host)))
+    return EXIT.ok
+  }
+
+  /**
+   * `agw schema --index [group…]`: one `command<TAB>summary` line per command and nothing else (no header, no JSON), or
+   * the same rows as JSON. `x-cli.serverOnly` commands are left out unless `all`; hidden operations are no commands.
+   */
+  private schemaIndex({ groups, all, format }: { groups: string[]; all: boolean; format?: 'json' | 'plain' }): number {
+    const commands = this.platform.commands
+    const known = [...new Set(commands.map((c) => c.words[0] as string))].sort()
+    const unknown = groups.filter((g) => !known.includes(g))
+    if (unknown.length)
+      throw usage(`unknown group ${unknown.map((g) => `'${g}'`).join(', ')}`, `groups: ${known.join(' ')}`)
+    const rows = commands
+      .filter((c) => (all || c.x.serverOnly !== true) && (!groups.length || groups.includes(c.words[0] as string)))
+      .map((c) => ({ command: c.words.join(' '), summary: c.summary }))
+      .sort((a, b) => (a.command < b.command ? -1 : a.command > b.command ? 1 : 0))
+    if (!all && groups.length && !rows.length)
+      throw usage(
+        `${groups.join(', ')} only holds commands a server calls`,
+        `${BIN} schema --index --all ${groups.join(' ')}`,
+      )
+    this.io.out(
+      format === 'json' ? `${JSON.stringify(rows)}\n` : rows.map((r) => `${r.command}\t${r.summary}\n`).join(''),
+    )
     return EXIT.ok
   }
 

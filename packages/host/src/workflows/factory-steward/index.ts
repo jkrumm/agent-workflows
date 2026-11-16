@@ -40,6 +40,6 @@ export function createFactorySteward(deps: { registry: StewardCaller }): HostWor
     workflow,
     summary:
       'Decide what a stalled Issue needs: wake it, requeue it, or raise a Decision; the stall JSON comes on stdin',
-    cli: { stdin: 'stall', defaultFormat: 'json' },
+    cli: { stdin: 'stall', defaultFormat: 'json', serverOnly: true },
   }
 }

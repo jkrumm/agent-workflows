@@ -36,6 +36,6 @@ export function createFactoryScreen(deps: { registry: ScreenCaller }): HostWorkf
   return {
     workflow,
     summary: 'Screen a held signal for the Judge: promote, dismiss or leave; the request JSON comes on stdin',
-    cli: { stdin: 'request', defaultFormat: 'json' },
+    cli: { stdin: 'request', defaultFormat: 'json', serverOnly: true },
   }
 }

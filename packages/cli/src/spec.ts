@@ -25,6 +25,7 @@ export interface XCli {
   kind: 'capability' | 'workflow' | 'run'
   resume?: { command: string[]; positional: string[] }
   hidden?: boolean
+  serverOnly?: boolean
 }
 
 interface Parameter {
@@ -162,6 +163,7 @@ function readXCli(raw: Partial<XCli>): XCli | string {
     ...(typeof raw.stdin === 'string' ? { stdin: raw.stdin } : {}),
     ...(typeof raw.plainField === 'string' ? { plainField: raw.plainField } : {}),
     kind,
+    ...(raw.serverOnly === true ? { serverOnly: true } : {}),
     ...(resumeWords?.length ? { resume: { command: resumeWords, positional: names(raw.resume?.positional) } } : {}),
   }
 }
