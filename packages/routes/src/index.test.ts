@@ -569,8 +569,8 @@ describe('fallback', () => {
     }
   })
 
-  // The Requesty check covers the routes Wave 9 moved (route and fallback); no route runs a Requesty model any more. They run on the GPT stack and fall back to the other GPT model.
-  test('the routes moved off Requesty (classify) and their fallbacks name no Requesty model', () => {
+  // The Requesty check covers the cheap seat and its fallback; no route runs a Requesty model any more. It runs on Claude and falls back to a GPT model.
+  test('the cheap seat and its fallback name no Requesty model', () => {
     const requesty = /^(eu\/)?deepseek-v4\.1-flash|^DeepSeek-V4|^pplx-decider|^kimi-k3|^kimi-k2\.7/i
     for (const id of ['cheap.title'] as const) {
       const route = resolveRoute(id, {})
