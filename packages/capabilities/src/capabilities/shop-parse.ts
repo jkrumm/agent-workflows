@@ -158,13 +158,16 @@ export function isKnownPage(html: string): boolean {
 /**
  * Why a response is a wall rather than a page, or null. A status of 429 is a rate limit; a robot-check text on a page
  * that is not a search or product page (a real page is 300 KB or more and never holds it as its subject) is the captcha
- * wall, whatever the status; a redirect to the sign-in flow is a login wall. Never a retry signal: the caller stops.
+ * wall, whatever the status; a redirect to the sign-in flow is a login wall; a 503 that is not a known page and not the
+ * robot check is the shop shedding load (it answered nine searches in 27 s with one on 2026-11-16), a rate limit too.
+ * Never a retry signal: the caller stops.
  */
 export function detectBlock(input: { status: number; html: string; finalUrl: string }): BlockKind | null {
   if (input.status === 429) return 'rate-limited'
   if (/\/ap\/(signin|cvf)\b/.test(input.finalUrl)) return 'login-required'
   if (!isKnownPage(input.html) && ROBOT_MARKERS.test(input.html)) return 'bot-protection'
   if (input.status === 403) return 'forbidden'
+  if (input.status === 503 && !isKnownPage(input.html)) return 'rate-limited'
   return null
 }
 
