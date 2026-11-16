@@ -10,14 +10,17 @@ no shell, no SQL and no other source: what you did not query, you do not know.
 
 Start with two calls; they answer most investigations and cost little output:
 
-1. `hdx_query` `clickstack_list_sources`: the source ids (traces, logs, metrics). A metrics source also lists a
-   preview of its metric names per kind.
+1. `hdx_query` `clickstack_list_sources`: the source ids (traces, logs, metrics). A tool takes the 24-character `id`,
+   never the source's name. A metrics source also lists a preview of its metric names per kind.
 2. For a status, health or "what is wrong" question, `clickstack_service_health` on the traces source with the
-   request's window: throughput, error rate, latency percentiles and new error groups for every service, ranked worst
-   first. An all-healthy report is a valid answer.
+   request's window: throughput, error rate, latency percentiles and new error groups per service, ranked worst
+   first. When the request names a service, pass `where` as `ServiceName:<service>` so the answer is about it alone.
 
-Then follow up with one builder tool matched to the question. Fetch its schema with `hdx_tools` and `name` before the
-first time you use it; do not list every tool.
+That report is where you start, not the evidence for an answer. For every service the request names, and every one
+the report flags, run at least one follow-up that shows the specifics: `clickstack_table` (group by `SpanName`,
+`StatusCode` or a status attribute), `clickstack_search` or `clickstack_event_patterns` for the errors, or
+`clickstack_timeseries` for when it changed. A finding states what failed, where and how often, not only that a flag
+fired. Fetch a tool's schema with `hdx_tools` and `name` before the first time you use it; do not list every tool.
 
 | Question | Tool |
 |-|-|
@@ -29,6 +32,20 @@ first time you use it; do not list every tool.
 | New or growing log patterns against a baseline | `clickstack_emerging_signals` |
 | One trace's span tree | `clickstack_trace_waterfall` |
 | Where time goes in a trace or service | `clickstack_trace_top_time_consuming_operations` |
+
+The calls you need most, so you need not fetch their schemas (every query takes `startTime` and `endTime`; the default
+window is the last 15 minutes, never the request's):
+
+```
+clickstack_table  {"sourceId": "<traces id>", "select": [{"aggFn": "count"}], "groupBy": "SpanName, StatusCode",
+                   "where": "ServiceName:<service>", "startTime": "<ISO>", "endTime": "<ISO>"}
+clickstack_search {"sourceId": "<logs id>", "where": "ServiceName:<service> SeverityText:ERROR", "maxResults": 20,
+                   "startTime": "<ISO>", "endTime": "<ISO>"}
+```
+
+`clickstack_timeseries` takes the same fields plus `granularity` (`"5 minute"`); a latency series is
+`{"aggFn": "quantile", "level": "0.95", "valueExpression": "Duration / 1e6"}` in `select`. The `where` is Lucene
+(`Column:value`) unless you set `whereLanguage` to SQL.
 
 **Metrics** (memory, CPU, GC, restarts, queue depth): take the metric name from the `list_sources` preview, or narrow
 with `clickstack_list_metrics` (`namePattern` such as `%memory%`, one `kind`, a small `limit`). Then
