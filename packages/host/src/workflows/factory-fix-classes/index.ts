@@ -1,6 +1,7 @@
 import { defineWorkflow } from '@agent-workflows/runtime'
 import type { HostWorkflow } from '../../operations.ts'
 import type { HostRegistry } from '../index.ts'
+import { factoryFixClassesScorer } from './scorer.ts'
 import { FactoryFixClassesInput, FactoryFixClassesOutput } from './schema.ts'
 
 const FACTORY_FIX_CLASSES_WORKFLOW_ID = 'factory-fix-classes'
@@ -21,6 +22,7 @@ export function createFactoryFixClasses(deps: { registry: FixClassesCaller }): H
     version: FACTORY_FIX_CLASSES_VERSION,
     input: FactoryFixClassesInput,
     output: FactoryFixClassesOutput,
+    scorer: factoryFixClassesScorer,
     async run(ctx, { request }) {
       return ctx.step('sort', ({ callContext }) => deps.registry.call('factory.fixclasses', { request }, callContext))
     },
