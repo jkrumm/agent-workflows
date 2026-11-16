@@ -22,7 +22,6 @@ test('the reads are declared by the host only: no command is served by both proc
   const hostEnv = {
     PATH: process.env.PATH ?? '',
     HOME: home,
-    AGW_ARGO_PUSH: '0',
     AGW_API_SECRET: SECRET,
     AGW_MACHINE: 'test-machine',
     AGW_PG_URL: PG_URL,

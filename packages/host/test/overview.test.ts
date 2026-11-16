@@ -1,13 +1,12 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { messageResponse, startFakeGateway } from '@agent-workflows/testing/gateway'
 import { resolveRoute } from '@agent-workflows/routes'
-import { createArgoPush } from '../src/fleet/argo.ts'
 import type { FactoryFleet, FactorySession } from '../src/fleet/factory.ts'
-import { argoBuild, createFleet } from '../src/fleet/index.ts'
+import { createFleet } from '../src/fleet/index.ts'
 import { fleetOperations } from '../src/fleet/operations.ts'
 import { createQuota } from '../src/fleet/quota.ts'
 import { createOverview } from '../src/workflows/overview/index.ts'
-import { pgLatestOverview, pgRunPurpose } from '../src/workflows/overview/latest.ts'
+import { pgLatestOverview } from '../src/workflows/overview/latest.ts'
 import { type Body, startTestHost, type TestHost } from './support.ts'
 
 let activityAt = () => Date.now() - 3_600_000
@@ -37,8 +36,6 @@ const verdict = (id: string, recommendation: string) => ({
 
 let sessions: FactorySession[] = []
 let factoryDown: string | null = null
-const warned: { message: string; meta?: Record<string, unknown> }[] = []
-let purposeLookup: (runId: string) => Promise<string | null> = async () => null
 let answer: () => Response
 const factoryFleet = (): FactoryFleet => ({
   asks: [{ id: 'human:q1', kind: 'human', text: 'sign it', at: '2026-11-03T00:00:00.000Z' }],
@@ -50,8 +47,6 @@ const factoryFleet = (): FactoryFleet => ({
 let t: TestHost
 // each test reads a fresh snapshot: the clock moves past the 45 s cache between tests
 let clock = Date.now()
-const pushed: { url: string; body: Body }[] = []
-let argoStatus = 200
 let latest: () => Promise<unknown> = async () => null
 
 const runs = async () => Number((await t.pool.query(`select count(*) as n from "${t.schema}".runs`)).rows[0].n)
@@ -74,17 +69,6 @@ beforeAll(async () => {
     config: { staleAfterHours: 24 },
     now: () => clock,
   })
-  const argo = createArgoPush({
-    url: 'https://argo.example.com/api',
-    secret: 'tok',
-    machine: 'host-1',
-    build: argoBuild(fleet),
-    logger: { warn: () => {} },
-    fetcher: (async (url: string, init: RequestInit) => {
-      pushed.push({ url, body: JSON.parse(String(init.body)) })
-      return new Response('{}', { status: argoStatus })
-    }) as unknown as typeof fetch,
-  })
   const iu = startFakeGateway({ messages: () => answer() })
   t = await startTestHost({
     prefix: 'overview',
@@ -94,15 +78,11 @@ beforeAll(async () => {
       createOverview({
         registry: { call: (...args: unknown[]) => Reflect.apply(t.registry.call, t.registry, args) } as never,
         fleet,
-        argo,
-        purposeOf: (runId) => purposeLookup(runId),
-        warn: (message, meta) => warned.push({ message, meta }),
       }),
     ],
     reads: fleetOperations(fleet),
   })
   latest = pgLatestOverview(t.pool, t.schema)
-  purposeLookup = pgRunPurpose(t.pool, t.schema)
 })
 afterAll(() => t.close())
 
@@ -115,10 +95,6 @@ beforeEach(() => {
       input_tokens: 200,
       output_tokens: 60,
     })
-  argoStatus = 200
-  purposeLookup = pgRunPurpose(t.pool, t.schema)
-  pushed.length = 0
-  warned.length = 0
   t.iu.requests.length = 0
 })
 
@@ -195,7 +171,7 @@ describe('overview workflow', () => {
         body.runId,
       ])
     ).rows
-    expect(steps.map((s) => s.step_id)).toEqual(['classify', 'push'])
+    expect(steps.map((s) => s.step_id)).toEqual(['classify'])
     // the route's own rate prices it (the Messages wire reports no cost)
     const rate = resolveRoute('overview.classify', {}).rate
     expect(Number(steps[0]?.cost)).toBeCloseTo(
@@ -215,24 +191,6 @@ describe('overview workflow', () => {
     expect(text).toContain('— standing of s1')
     expect(text).toContain('· overview ')
     expect(text).not.toContain('overview none')
-  })
-
-  test('the Argo body is the merged payload of the run that just ended, plus the machine', async () => {
-    await startOverview()
-    expect(pushed).toHaveLength(1)
-    expect(pushed[0]?.url).toBe('https://argo.example.com/api/agents/overview')
-    const sent = pushed[0]?.body as Body
-    expect(sent.machine).toBe('host-1')
-    expect(sent.overview).toMatchObject({ model: resolveRoute('overview.classify', {}).model })
-    expect(sent.projects[0].agents[0]).toMatchObject({ id: 's1', recommendation: 'answer' })
-    expect(typeof sent.generatedAt).toBe('number')
-  })
-
-  test('a rejecting Argo never fails the run', async () => {
-    argoStatus = 500
-    const { body } = await startOverview()
-    expect(body.status).toBe('done')
-    expect(pushed).toHaveLength(1)
   })
 
   test('an agent the model skipped is a synthesized watch placeholder, an invented id is dropped', async () => {
@@ -260,20 +218,19 @@ describe('overview workflow', () => {
     expect(t.iu.requests).toHaveLength(0)
   })
 
-  test('an unreadable factory fails the run with the cause: nothing is classified, nothing is pushed', async () => {
+  test('an unreadable factory fails the run with the cause: nothing is classified', async () => {
     factoryDown = 'factory read overview failed (exit 3): FACTORY_TOKEN is not set'
     const { body } = await startOverview()
     expect(body.status).toBe('failed')
     expect(JSON.stringify(body)).toContain('FACTORY_TOKEN is not set')
     expect(t.iu.requests).toHaveLength(0)
-    expect(pushed).toHaveLength(0)
   })
 
   test('an agent active after the run is marked stale instead of showing an old verdict', async () => {
     await startOverview()
     activityAt = () => Date.now() + 60_000
     sessions = [session('s1', 'waiting'), session('s2', 'working')] // the factory reports the later activity
-    clock += 60_000 // past the snapshot cache the run's own push filled
+    clock += 60_000 // past the snapshot cache the run filled
     try {
       const { body } = await t.json(await post('/agents'))
       expect(body.data.projects[0].agents[0]).toMatchObject({ recommendation: null, recommendationStale: true })
@@ -283,7 +240,7 @@ describe('overview workflow', () => {
   })
 })
 
-describe('overview workflow: what is journaled and what is pushed', () => {
+describe('overview workflow: what is journaled', () => {
   test('the journal keeps the ids, a facts hash and the verdicts: no headline, no human ask', async () => {
     const { body } = await startOverview()
     const { rows } = await t.pool.query(
@@ -314,23 +271,7 @@ describe('overview workflow: what is journaled and what is pushed', () => {
     expect(JSON.stringify(read.data.humanQueue)).toContain('sign it')
   })
 
-  test('a failing purpose lookup never fails the run, and nothing is pushed', async () => {
-    purposeLookup = async () => {
-      throw new Error('connection terminated')
-    }
-    const { body } = await startOverview()
-    expect(body.status).toBe('done')
-    expect(pushed).toHaveLength(0)
-    // not fatal, not silent: the failure is logged with the run id
-    expect(warned).toEqual([
-      {
-        message: 'overview push effect failed',
-        meta: { runId: body.runId, error: 'Error: connection terminated' },
-      },
-    ])
-  })
-
-  test('the cache behind `agents` and the timer is prod runs only', async () => {
+  test('the cache behind `agents` is prod runs only', async () => {
     const prod = (await startOverview()).body
     const stamp = async () => ((await latest()) as { generatedAt: number }).generatedAt
     expect(await stamp()).toBe(prod.output.generatedAt)
@@ -338,14 +279,6 @@ describe('overview workflow: what is journaled and what is pushed', () => {
     const build = (await startOverview({}, { 'x-agw-purpose': 'build' })).body
     expect(build.output.generatedAt).not.toBe(prod.output.generatedAt)
     expect(await stamp()).toBe(prod.output.generatedAt) // the newer build run is not served
-  })
-
-  test('only a prod run pushes: a build or verify run puts nothing into the owner’s fleet view', async () => {
-    expect((await startOverview({}, { 'x-agw-purpose': 'build' })).body.status).toBe('done')
-    expect((await startOverview({}, { 'x-agw-purpose': 'verify' })).body.status).toBe('done')
-    expect(pushed).toHaveLength(0)
-    expect((await startOverview()).body.status).toBe('done') // the default purpose is prod
-    expect(pushed).toHaveLength(1)
   })
 })
 

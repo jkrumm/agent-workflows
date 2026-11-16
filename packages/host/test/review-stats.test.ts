@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { Pool } from 'pg'
 import { freshSchema, PG_URL, testRuntime } from '@agent-workflows/testing/pg'
 import { createReviewService, ReviewError } from '../src/review/index.ts'
-import { weekStartOf, weeklyReviewStats } from '../src/review/stats.ts'
+import { weekStartOf } from '../src/review/stats.ts'
 import { gitRunner } from '../src/review/route.ts'
 import { fakeReviewer, lines, makeRepo, write } from './support/review-repo.ts'
 
@@ -368,64 +368,5 @@ describe('review stats --bucket week', () => {
     const out = await service.stats({ repo: WK })
     expect(out.bucket).toBeUndefined()
     expect(out.weeks).toBeUndefined()
-  })
-
-  test('weeklyReviewStats asks for 12 weeks including the current one, and all-time by prompt', async () => {
-    const calls: unknown[] = []
-    const fake = {
-      async stats(input: unknown) {
-        calls.push(input)
-        return {
-          since: null,
-          by: 'tier' as const,
-          groups: [],
-          weeks: [{ weekStart: '2026-01-05', groups: [] }],
-          total: {},
-        }
-      },
-    }
-    // Wednesday 2026-01-07: the current week starts 2026-01-05, 11 weeks earlier is 2025-10-20
-    const out = await weeklyReviewStats(fake as never, new Date('2026-01-07T12:00:00Z'))
-    expect(calls).toEqual([{ by: 'tier', bucket: 'week', since: '2025-10-20T00:00:00.000Z' }, { by: 'prompt' }])
-    expect(out.weeks).toEqual([{ weekStart: '2026-01-05', groups: [] }])
-    expect(out.byPrompt).toEqual([])
-  })
-})
-
-describe('review service onSubmitted', () => {
-  async function submitWith(onSubmitted: () => void, reply?: string) {
-    const hooked = createReviewService({
-      pool,
-      schema: db.schema,
-      stateDir,
-      git: gitRunner,
-      env: { ...process.env },
-      onSubmitted,
-    })
-    const root = makeRepo({ 'src/a.ts': lines(60) })
-    repos.push(root)
-    write(root, 'src/a.ts', lines(62))
-    const { jobId, jobDir } = await hooked.prepare({ cwd: root })
-    if (!jobId || !jobDir) throw new Error('not ready')
-    return hooked.submit({ jobId, attempt: 1, reply: reply ?? fakeReviewer(jobDir, []) })
-  }
-
-  test('runs after a successful submit, and a throwing hook does not fail it', async () => {
-    let calls = 0
-    await submitWith(() => {
-      calls++
-      throw new Error('boom')
-    })
-    expect(calls).toBe(1)
-  })
-
-  test('does not run after a failed submit', async () => {
-    let calls = 0
-    let failed = false
-    await submitWith(() => calls++, '{ not a review').catch(() => {
-      failed = true
-    })
-    expect(failed).toBe(true)
-    expect(calls).toBe(0)
   })
 })

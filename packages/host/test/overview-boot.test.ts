@@ -6,8 +6,7 @@ import { boot } from '../src/boot.ts'
 import { loadConfig } from '../src/config.ts'
 import { freshSchema, PG_URL, SECRET } from './support.ts'
 
-// The whole wiring in one boot: the reads, the workflow and the contract come out of `hostProcess`, with the Argo timer
-// switched off (`AGW_ARGO_PUSH=0`) and the factory CLI pointed at a binary that does not exist, so the test reads nothing of the host.
+// The whole wiring in one boot: the reads, the workflow and the contract come out of `hostProcess`, with the factory CLI pointed at a binary that does not exist, so the test reads nothing of the host.
 
 test('a booted host serves agents, quota and quota-report beside the overview workflow, and journals none of the reads', async () => {
   const fresh = freshSchema('overviewboot')
@@ -16,7 +15,6 @@ test('a booted host serves agents, quota and quota-report beside the overview wo
     PATH: process.env.PATH ?? '',
     HOME: home,
     XDG_STATE_HOME: home,
-    AGW_ARGO_PUSH: '0',
     AGW_FACTORY_BIN: join(home, 'no-factory'),
     AGW_CLAUDE_ACCOUNT_BIN: join(home, 'no-claude-account'),
     AGW_API_SECRET: SECRET,

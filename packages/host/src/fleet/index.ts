@@ -1,11 +1,4 @@
 import type { Logger } from '@agent-workflows/runtime'
-import {
-  type ArgoPushOptions as ArgoOptions,
-  type ArgoPush,
-  createArgoPush,
-  createReviewStatsPush,
-  type ReviewStatsPushOptions,
-} from './argo.ts'
 import { emptySnapshot, mapFleet } from './derive.ts'
 import { commandRunner, type FactoryRead, type FleetConfig, fleetConfig, readFactoryFleet } from './factory.ts'
 import { enrichmentOf, mergeOverviewIntoSnapshot, parseStoredOverview } from './overview.ts'
@@ -14,15 +7,13 @@ import { type AgentEnrichment, parseCols, renderText } from './render.ts'
 import type { AccountQuota, OverviewOutput, OverviewPayload, Snapshot } from './schema.ts'
 
 export { buildAgentFacts, type ClassifyInput, classifyInput, reconcileKnown, reconcileOverview } from './overview.ts'
-export { startArgoSchedule } from './argo.ts'
 export { fleetConfig } from './factory.ts'
-export type { ArgoPush } from './argo.ts'
 export type { Quota } from './quota.ts'
 
 /**
- * The snapshot cache: a herdr pane, Hermes and the Argo push all read within seconds of each other, and one snapshot
+ * The snapshot cache: a herdr pane and Hermes read within seconds of each other, and one snapshot
  * is one factory read (two `factory read` calls). Consumers poll about every 31 s (measured on the legacy gateway: 20 s missed the window
- * on nearly every request), so 45 s shares one build and still stays under the ten-minute push. The promise is cached,
+ * on nearly every request), so 45 s shares one build. The promise is cached,
  * so concurrent first callers share one build.
  */
 const SNAPSHOT_CACHE_MS = 45_000
@@ -42,7 +33,7 @@ export type SnapshotRead = { snapshot: Snapshot; unreadable: string | null }
 
 export interface MergedView {
   snapshot: Snapshot
-  /** The warning of a failed factory read, else null: the Argo push and the classify step must not act on it. */
+  /** The warning of a failed factory read, else null: the classify step must not act on it. */
   unreadable: string | null
   accounts: Record<string, AccountQuota>
   payload: OverviewPayload
@@ -54,7 +45,7 @@ export interface Fleet {
   snapshot(options?: { fresh?: boolean; staleAfterHours?: number }): Promise<Snapshot>
   /** {@link Fleet.snapshot} with the outcome of the factory read: the callers that act on the fleet need to tell empty from unreadable. */
   read(options?: { fresh?: boolean; staleAfterHours?: number }): Promise<SnapshotRead>
-  /** The snapshot, merged with the newest overview run and the quota: `agw agents`' data and the Argo body. */
+  /** The snapshot, merged with the newest overview run and the quota: `agw agents`' data. */
   view(options?: { overview?: OverviewOutput }): Promise<MergedView>
   quota: Quota
 }
@@ -131,22 +122,13 @@ export async function renderView(fleet: Fleet, options: { color?: boolean; cols?
   })
 }
 
-/** The Argo push's `build` over a fleet: the merged payload and whether the factory read failed (the push then skips). */
-export function argoBuild(fleet: Pick<Fleet, 'view'>): ArgoOptions['build'] {
-  return async (overview) => {
-    const view = await fleet.view(overview ? { overview } : {})
-    return { payload: view.payload, unreadable: view.unreadable }
-  }
-}
-
 export interface HostFleetOptions {
   env: Record<string, string | undefined>
   logger: Logger
-  machine: string
   latestOverview: () => Promise<unknown>
 }
 
-/** The production fleet of the host process plus its Argo push (the push is off without `ARGO_URL` and `ARGO_API_SECRET`). */
+/** The production fleet of the host process. */
 export function hostFleet(options: HostFleetOptions) {
   const config = fleetConfig(options.env)
   const warn = (message: string, meta?: Record<string, unknown>) => options.logger.warn(message, meta)
@@ -157,39 +139,5 @@ export function hostFleet(options: HostFleetOptions) {
     latestOverview: options.latestOverview,
     config,
   })
-  const argo = createArgoPush({
-    url: options.env.ARGO_URL,
-    secret: options.env.ARGO_API_SECRET,
-    machine: options.machine,
-    build: argoBuild(fleet),
-    logger: hostLogger(options.logger),
-  })
-  return { fleet, argo, config }
-}
-
-const hostLogger = (logger: Logger) => ({
-  warn: (message: string, meta?: Record<string, unknown>) => logger.warn(message, meta),
-  // The runtime's logger has no info level; an outcome that went well is still one line (a quiet fleet is a fact).
-  info: (message: string, meta?: Record<string, unknown>) => console.log(`[agw-host] ${message}`, meta ?? ''),
-})
-
-/** The weekly review-stats push of the host process (off like the overview push without `ARGO_URL` and `ARGO_API_SECRET`). */
-export function hostReviewStatsPush(options: {
-  env: Record<string, string | undefined>
-  logger: Logger
-  machine: string
-  build: ReviewStatsPushOptions['build']
-}): Pick<ArgoPush, 'push'> {
-  return createReviewStatsPush({
-    url: options.env.ARGO_URL,
-    secret: options.env.ARGO_API_SECRET,
-    machine: options.machine,
-    build: options.build,
-    logger: hostLogger(options.logger),
-  })
-}
-
-/** `AGW_ARGO_PUSH=0|off|false|no` turns the ten-minute timer off (tests); on by default. */
-export function argoTimerEnabled(env: Record<string, string | undefined>): boolean {
-  return !['0', 'off', 'false', 'no'].includes(env.AGW_ARGO_PUSH?.trim().toLowerCase() ?? '')
+  return { fleet, config }
 }

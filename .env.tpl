@@ -13,14 +13,11 @@ GITHUB_TOKEN=op://vps/research-gateway/GITHUB_TOKEN
 # https://hyperdx.<domain> from. Local needs no ref: its key is read from ~/.config/hyperdx/local.env at call time.
 HYPERDX_PROD_ACCESS_KEY=op://vps/clickstack/AGENT_ACCESS_KEY
 HYPERDX_DOMAIN=op://vps/config/DOMAIN
-# Argo bearer (the agents overview push). ARGO_URL is deployment config.
-ARGO_API_SECRET=op://common/api/SECRET
 # The factory (software-factory) is the one producer of agent state: `agw agents` reads `factory read overview` and
 # `factory read sessions --live`, which need this token in their environment (exit 3 without it).
 FACTORY_TOKEN=op://mini/software-factory/FACTORY_TOKEN
 # Host (scripts/launch.sh). The API secret is also what `make deploy` writes into the CLI's env file.
 AGW_API_SECRET=op://mini/agent-workflows/API_SECRET
-ARGO_URL=op://mini/agent-workflows/ARGO_URL
 # Span export. The key is a separate var: secrets-run resolves whole-value refs only, launch.sh builds the header.
 OTEL_EXPORTER_OTLP_ENDPOINT=op://mini/agent-workflows/OTEL_EXPORTER_OTLP_ENDPOINT
 OTEL_EXPORTER_OTLP_AUTHORIZATION=op://vps/argo/HYPERDX_API_KEY_PROD

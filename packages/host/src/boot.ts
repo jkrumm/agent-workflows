@@ -26,15 +26,14 @@ import {
   startFrictionJob,
 } from './friction/index.ts'
 import { type LearningsStore, pgLearningsStore, withLearnedFacts, withLearningsFingerprint } from './learnings/index.ts'
-import { argoTimerEnabled, hostFleet, hostReviewStatsPush, startArgoSchedule } from './fleet/index.ts'
+import { hostFleet } from './fleet/index.ts'
 import { fleetOperations } from './fleet/operations.ts'
 import { createImageDoor, type ImageDoor, type ImageDoorOptions, type ServerHandle } from './image-door/index.ts'
 import { createReviewService, reviewOperations } from './review/index.ts'
-import { weeklyReviewStats } from './review/stats.ts'
 import { gitRunner } from './review/route.ts'
 import { type HostOperation, type HostWorkflow, IDLE_TIMEOUT_S, MAX_REQUEST_BODY_BYTES } from './operations.ts'
 import { evalMineAutoPorts, pgLabelStepCosts } from './workflows/eval-mine/history.ts'
-import { pgLatestOverview, pgRunPurpose } from './workflows/overview/latest.ts'
+import { pgLatestOverview } from './workflows/overview/latest.ts'
 import { ghCli } from './workflows/retrospective/gh.ts'
 import { RETRO_WORKFLOW_ID } from './workflows/retrospective/index.ts'
 import { pgJournalReader } from './workflows/retrospective/sample.ts'
@@ -518,7 +517,6 @@ export interface HostBootOptions extends BootOptions {
 export function hostProcess(config: HostConfig, door?: ImageDoorOptions): ProcessDefinition {
   let journal: ReturnType<typeof pgJournalReader> | undefined
   let fleet: ReturnType<typeof hostFleet> | undefined
-  let reviewStatsPush: ReturnType<typeof hostReviewStatsPush> | undefined
   let reviewOps: Record<string, HostOperation> = {}
   let imageDoor: ImageDoor | undefined
   let runtime: Runtime | undefined
@@ -532,7 +530,7 @@ export function hostProcess(config: HostConfig, door?: ImageDoorOptions): Proces
     async workflows({ config: base, env, registry, toolGate, stateDir, logger, readPool, learnings, onClose }) {
       journal = pgJournalReader(readPool, base.schema)
       // The agents overview: its factory reader and quota are shared by `agw agents`, the `overview` workflow and the push.
-      fleet = hostFleet({ env, logger, machine: base.machine, latestOverview: pgLatestOverview(readPool, base.schema) })
+      fleet = hostFleet({ env, logger, latestOverview: pgLatestOverview(readPool, base.schema) })
       const gh = config.retroFileIssues && config.retroIssueRepo ? ghCli({ repo: config.retroIssueRepo }) : undefined
       // Issues may name only paths this repo tracks; a release is a `git archive` of the commit (see tracked.ts).
       const repoRoot = resolve(import.meta.dir, '../../..')
@@ -578,9 +576,7 @@ export function hostProcess(config: HostConfig, door?: ImageDoorOptions): Proces
       reviewPool.on('error', (err) => console.warn('[agw-host] review ledger pool: idle connection error', err.message))
       onClose(() => reviewPool.end())
       const quota = fleet.fleet.quota
-      // Late-bound: the push reads through the service, which calls it back after each submit.
       const reviewService = createReviewService({
-        onSubmitted: () => void reviewStatsPush?.push('run'),
         pool: reviewPool,
         schema: base.schema,
         stateDir,
@@ -590,12 +586,6 @@ export function hostProcess(config: HostConfig, door?: ImageDoorOptions): Proces
           const reading = (await quota.accounts())[account]
           return reading ? { fiveHour: reading.five_hour_pct, sevenDay: reading.seven_day_pct } : null
         },
-      })
-      reviewStatsPush = hostReviewStatsPush({
-        env,
-        logger,
-        machine: base.machine,
-        build: () => weeklyReviewStats(reviewService, new Date()),
       })
       reviewOps = reviewOperations(reviewService)
       // The audio process's suites and scorers: `agw eval run|compare` replay its workflows, which it drives.
@@ -607,7 +597,7 @@ export function hostProcess(config: HostConfig, door?: ImageDoorOptions): Proces
           toolGate,
           logger,
           retro: { journal, learnings, gh, tracked },
-          fleet: { fleet: fleet.fleet, argo: fleet.argo, purposeOf: pgRunPurpose(readPool, base.schema) },
+          fleet: { fleet: fleet.fleet },
           research: { ledger: pgToolLedger(ledgerPool, base.schema) },
           costHistory: {
             labelStepCosts: pgLabelStepCosts(readPool, base.schema),
@@ -651,14 +641,6 @@ export function hostProcess(config: HostConfig, door?: ImageDoorOptions): Proces
       return {
         start() {
           evalJobs.start()
-          if (fleet && argoTimerEnabled(env)) {
-            const push = startArgoSchedule({ push: fleet.argo })
-            onClose(async () => push.stop())
-          }
-          if (reviewStatsPush && argoTimerEnabled(env)) {
-            const push = startArgoSchedule({ push: reviewStatsPush })
-            onClose(async () => push.stop())
-          }
           const retrospective = workflows.find((entry) => entry.workflow.id === RETRO_WORKFLOW_ID)
           if (!config.retroWeekly || !retrospective || !journal) return
           const schedule = startRetroSchedule({

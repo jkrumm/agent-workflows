@@ -108,14 +108,6 @@ groups: [{key, ...metrics}]}], total}`: weeks ascending, a week without jobs is 
 without `--bucket`, a finding counted in the week (and group) of the job that first reported it, `total` over every row
 selected. Without `--bucket` the output has no `bucket` or `weeks`.
 
-**The weekly push to Argo.** The host posts `{machine, generatedAt (epoch ms), source: 'agw review stats --bucket week
---by tier', weeks, byPrompt}` to `{ARGO_URL}/agents/review-stats`: `weeks` is the last 12 ISO weeks by tier (the current,
-partial week included, oldest first), `byPrompt` is `--by prompt` over all time. It goes out every ten minutes and after
-each successful `agw review submit` (fire-and-forget: it never delays or fails the submit). Same transport and off-switch
-as the overview push (`ARGO_URL` https or loopback http, `ARGO_API_SECRET` bearer, no redirect, 15 s timeout; unset: off;
-`AGW_ARGO_PUSH=0` turns the timer off). A non-2xx answer, including 404 while Argo has no such endpoint yet, is one
-warn-level log line (`event: argo_push`, `target: review-stats`) and changes nothing else.
-
 | `--by` | Key |
 |-|-|
 | `tier` | the job's tier |
