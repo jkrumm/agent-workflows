@@ -370,6 +370,7 @@ describe('commands path', () => {
       'bunx tsc --noEmit',
       'pytest -q',
       'cargo audit',
+      'make check',
     ]
     const { result } = await run({ exec, input: { cwd, commands } })
     expect(result.output).toEqual({
@@ -380,8 +381,9 @@ describe('commands path', () => {
         { name: 'typecheck', passed: true },
         { name: 'test', passed: true },
         { name: 'cargo', passed: true },
+        { name: 'check', passed: true },
       ],
-      summary: 'All 5 steps passed',
+      summary: 'All 6 steps passed',
     })
   })
 
