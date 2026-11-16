@@ -171,6 +171,12 @@ export const FIXTURE_WORKFLOWS: Workflow[] = [
     }),
   },
   {
+    id: 'fixture.duration',
+    summary: 'Echoes a since flag the host reads as a duration',
+    input: { type: 'object', properties: { since: { type: 'string', 'x-agw-duration': true } } },
+    outcome: (input) => ({ output: { since: input.since ?? null } }),
+  },
+  {
     id: 'fixture.text',
     summary: 'A long text that is cut at maxChars',
     input: {

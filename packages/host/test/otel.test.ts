@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { z } from 'zod'
 import { AGENT_SAFE_HDX, createCapabilities, createRegistry } from '@agent-workflows/capabilities'
 import { fakeTransports } from '@agent-workflows/testing/transports'
 import type { Json } from '@agent-workflows/runtime'
@@ -336,6 +337,11 @@ describe('otel workflow on a fake host', () => {
     expect(OtelInput.safeParse({ investigation: 'checkout errors', extra: 1 }).success).toBe(false)
     expect(OtelInput.safeParse({ investigation: 'checkout errors', env: 'staging' }).success).toBe(false)
     expect(OTEL_VERSION).toMatch(/^\d{4}-\d{2}-\d{2}\.\d+$/)
+  })
+
+  test('--since is marked for the CLI to pass through as typed (3d must not become an instant)', () => {
+    const schema = z.toJSONSchema(OtelInput, { io: 'input' })
+    expect(schema.properties?.since).toMatchObject({ 'x-agw-duration': true })
   })
 
   test('--since is a duration or two strict ISO-8601 instants with a zone, the first before the second', () => {
