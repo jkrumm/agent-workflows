@@ -1,6 +1,7 @@
 import { MAX_PAGE_CHARS, NARRATIVE_LIMITS, NARRATIVE_SECTIONS } from '@agent-workflows/capabilities'
 import { isAbsolute } from 'node:path'
 import { z } from 'zod'
+import { durationAgo, SINCE_HINT } from '../../since.ts'
 import { BOOTSTRAP_COMMIT_LIMIT, BOOTSTRAP_DAYS, SINCE_COMMIT_LIMIT } from './gather.ts'
 
 export { NARRATIVE_SECTIONS }
@@ -30,6 +31,8 @@ const SinceSchema = z
   .string()
   .max(100)
   .transform((value, ctx) => {
+    const ago = durationAgo(value, Date.now())
+    if (ago) return ago.toISOString()
     const match = SINCE_FORMAT.exec(value)
     const parsed =
       match && realValues(value)
@@ -38,7 +41,7 @@ const SinceSchema = z
     if (Number.isNaN(parsed)) {
       ctx.addIssue({
         code: 'custom',
-        message: 'since must be an ISO date or timestamp, e.g. 2026-10-01 or 2026-10-01T00:00:00Z',
+        message: `since must be ${SINCE_HINT}`,
       })
       return z.NEVER
     }
@@ -83,7 +86,7 @@ export const NarrativeInput = z
     since: SinceSchema.nullable()
       .default(null)
       .describe(
-        'ISO timestamp or date: only commits and session prose strictly after this count. A date alone is midnight and a ' +
+        'ISO timestamp or date, or a duration back from now (30m, 24h, 7d, 2w): only commits and session prose strictly after this count. A date alone is midnight and a ' +
           'time without an offset is UTC; the value is normalised to a UTC timestamp. Anything unparseable is refused, not ' +
           'silently read as "no sessions". null bootstraps from history: ' +
           `the last ${BOOTSTRAP_COMMIT_LIMIT} commits or ${BOOTSTRAP_DAYS} days, whichever is smaller.`,

@@ -1,13 +1,14 @@
 // Review v4, agw's side: prepare | submit | dispose | status | route | covered | stats over the review ledger. No LLM call
 // anywhere here; the reviewer agent runs in the caller's session. README.md.
 import { createExec } from '../process.ts'
+import { parseSince, SINCE_HINT } from '../since.ts'
 import type { ReviewContext, QuotaReading } from './context.ts'
 import { covered } from './covered.ts'
 import { findingRecord, type ReviewPool, reviewLedger } from './ledger.ts'
 import { prepare, removeWorktree } from './prepare.ts'
 import { repoIdentity, resolveRoot } from './repo.ts'
 import { type GitRunner, routeRange } from './route.ts'
-import { type FindingRecordValue, ReviewError, type ReviewOutputV4Value } from './schema.ts'
+import { DISPOSITIONS, type FindingRecordValue, ReviewError, type ReviewOutputV4Value } from './schema.ts'
 import { computeStats } from './stats.ts'
 import { submit } from './submit.ts'
 import type { z } from 'zod'
@@ -16,6 +17,7 @@ import type {
   CancelOutput,
   CoveredOutput,
   DisposeInput,
+  DisposeOutput,
   PrepareInput,
   PrepareOutput,
   RouteInput,
@@ -47,7 +49,7 @@ export interface ReviewService {
   prepare(input: z.output<typeof PrepareInput>): Promise<z.output<typeof PrepareOutput>>
   cancel(input: z.output<typeof CancelInput>): Promise<z.output<typeof CancelOutput>>
   submit(input: { jobId: string; attempt: number; reply: string; account?: string }): Promise<ReviewOutputV4Value>
-  dispose(input: z.output<typeof DisposeInput>): Promise<FindingRecordValue>
+  dispose(input: z.output<typeof DisposeInput>): Promise<z.output<typeof DisposeOutput>>
   status(input: z.output<typeof StatusInput>): Promise<z.output<typeof StatusOutput>>
   route(input: z.output<typeof RouteInput>): Promise<z.output<typeof RouteOutput>>
   covered(input: { cwd: string; range: string }): Promise<z.output<typeof CoveredOutput>>
@@ -55,6 +57,9 @@ export interface ReviewService {
 }
 
 const RECENT_JOBS = 10
+/** A thread whose fix loop stopped is named for this long, newest first, so an old branch does not crowd it. */
+const STALLED_DAYS = 14
+const STALLED_LIMIT = 10
 
 const threadKeyOf = (job: { scope: Record<string, unknown> }) =>
   typeof job.scope.threadKey === 'string' ? { threadKey: job.scope.threadKey } : {}
@@ -98,11 +103,44 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
     async dispose(input) {
       const job = await ledger.job(input.jobId)
       if (!job) throw new ReviewError(`unknown job ${input.jobId}`)
-      const finding = await ledger.finding(input.findingId)
-      if (!finding || finding.repo !== job.repo || finding.thread !== job.thread) {
-        throw new ReviewError(`finding ${input.findingId} is not in the thread of job ${input.jobId}`)
+      const reason = input.reason ?? null
+      if (input.allOpen !== undefined) {
+        if (input.findingId !== undefined || input.disposition !== undefined) {
+          throw new ReviewError('give finding ids and a disposition, or --all-open <disposition>, not both')
+        }
+        if (input.allOpen === 'open') throw new ReviewError('--all-open open changes nothing: the findings are open')
+        const open = (await ledger.threadFindings(job.repo, job.thread)).filter((f) => f.disposition === 'open')
+        const disposed = await ledger.disposeMany(
+          open.map((f) => f.id),
+          input.allOpen,
+          reason,
+          now(),
+        )
+        return { disposed: disposed.map(findingRecord) }
       }
-      return findingRecord(await ledger.dispose(finding.id, input.disposition, input.reason ?? null, now()))
+      if (input.findingId === undefined || input.disposition === undefined) {
+        throw new ReviewError(
+          `give <findingId>[,<findingId>...] and a disposition (${DISPOSITIONS.join('|')}), or --all-open <disposition>`,
+        )
+      }
+      const ids = [
+        ...new Set(
+          input.findingId
+            .split(',')
+            .map((id) => id.trim())
+            .filter(Boolean),
+        ),
+      ]
+      if (ids.length === 0) throw new ReviewError('no finding id given')
+      const found = await Promise.all(ids.map((id) => ledger.finding(id)))
+      ids.forEach((id, i) => {
+        const finding = found[i]
+        if (!finding || finding.repo !== job.repo || finding.thread !== job.thread) {
+          throw new ReviewError(`finding ${id} is not in the thread of job ${input.jobId}`)
+        }
+      })
+      const disposed = (await ledger.disposeMany(ids, input.disposition, reason, now())).map(findingRecord)
+      return ids.length === 1 && !input.findingId.includes(',') ? (disposed[0] as FindingRecordValue) : { disposed }
     },
 
     async status(input) {
@@ -140,8 +178,20 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
       if (!input.cwd) throw new ReviewError('give a job id or --cwd')
       const repo = await repoIdentity(ports.git, await resolveRoot(ports.git, input.cwd))
       const at = now().getTime()
-      const jobs = await ledger.recentJobs(repo, RECENT_JOBS)
+      const [jobs, stalled] = await Promise.all([
+        ledger.recentJobs(repo, RECENT_JOBS),
+        ledger.stalledThreads(repo, new Date(at - STALLED_DAYS * 86_400_000), STALLED_LIMIT),
+      ])
       return {
+        stalled: stalled.map((j) => ({
+          thread: j.thread,
+          ...threadKeyOf(j),
+          jobId: j.id,
+          round: j.round,
+          tier: j.tier,
+          openImportant: j.openImportant,
+          ageS: Math.max(0, Math.round((at - (j.submittedAt ?? j.createdAt).getTime()) / 1000)),
+        })),
         jobs: jobs.map((j) => ({
           id: j.id,
           state: j.state,
@@ -158,9 +208,9 @@ export function createReviewService(ports: ReviewServicePorts): ReviewService {
     },
 
     async stats(input) {
-      const since = input.since === undefined ? null : new Date(input.since)
-      if (since !== null && Number.isNaN(since.getTime())) {
-        throw new ReviewError(`since must be an ISO datetime, got "${input.since}"`)
+      const since = input.since === undefined ? null : parseSince(input.since, now().getTime())
+      if (input.since !== undefined && since === null) {
+        throw new ReviewError(`since must be ${SINCE_HINT}, got "${input.since}"`)
       }
       const rows = await ledger.statsRows({ since, repo: input.repo ?? null })
       return computeStats({

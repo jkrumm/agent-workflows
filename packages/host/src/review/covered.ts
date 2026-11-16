@@ -188,10 +188,14 @@ export async function covered(ctx: ReviewContext, input: { cwd: string; range: s
     // a job with no recorded files is not known to be unrelated
     const overlaps = (job: Job) => job.files.length === 0 || job.files.some((f) => touched.has(f))
 
+    // The commit's files a job's reply left out: a review that did not read them does not cover the commit
+    const skipped = (job: Job) => (job.output?.unreviewed ?? []).filter((f) => touched.has(f))
+
     // J.base ≤ c^ and the thread's tier up to J.round reaches the required one
     const lineage = candidates.filter((job) => reaches(job.base, parent))
     const related = lineage.filter(overlaps)
-    const eligible = lineage.filter((job) => atLeast(coverTier(job), required.tier))
+    const atRequired = lineage.filter((job) => atLeast(coverTier(job), required.tier))
+    const eligible = atRequired.filter((job) => skipped(job).length === 0)
     const atTier = eligible.some(overlaps)
 
     // The ways a job's head can cover the commit, cheapest first and each over every eligible job before the next one
@@ -225,6 +229,8 @@ export async function covered(ctx: ReviewContext, input: { cwd: string; range: s
     const base = { sha, subject, required: required.tier, rule: required.rule, coveredBy }
     if (coveredBy !== null) return base
     if (blocking.size > 0) return { ...base, reason: 'open-important', findings: [...blocking].sort() }
+    const left = [...new Set(atRequired.filter(overlaps).flatMap(skipped))].sort()
+    if (left.length > 0) return { ...base, reason: 'unreviewed', unreviewed: left }
     const nearest = related.slice(-RELATED_LIMIT).map((j) => j.id)
     if (related.length === 0) return { ...base, reason: 'no-review' }
     return { ...base, reason: atTier ? 'stale' : 'tier-too-low', related: nearest }

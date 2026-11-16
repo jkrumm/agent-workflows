@@ -151,6 +151,8 @@ export interface ResolvedScope {
   label: string
   /** pr/branch: the review clone, already checked out at head. */
   clone: string | null
+  /** What resolution did that the caller did not ask for: the base moved to the merge base. */
+  note?: string
 }
 
 /** The scope's base and head. pr/branch fetch into a throwaway clone (`cloneForRef`, keyed by `cloneKey`). */
@@ -215,8 +217,15 @@ export async function resolveScope(
   }
   const range = splitRange(scope)
   if (range) {
-    const base = await commitOf(git, root, range.from || 'HEAD')
-    return at(base, await commitOf(git, root, range.to || 'HEAD'), `Scope: ${scope}`)
+    const from = await commitOf(git, root, range.from || 'HEAD')
+    const to = await commitOf(git, root, range.to || 'HEAD')
+    if (await isAncestor(git, root, from, to)) return at(from, to, `Scope: ${scope}`)
+    // `a` moved past the point `b` branched from (origin/master after master advanced): a plain a..b would show master's
+    // own commits reversed. The change is what `b` added since the merge base.
+    const mergeBase = (await tryGit(git, root, ['merge-base', from, to]))?.trim()
+    if (!mergeBase) throw new ReviewError(`no merge base between ${range.from || 'HEAD'} and ${range.to || 'HEAD'}`)
+    const note = `${range.from || 'HEAD'} is not an ancestor of ${range.to || 'HEAD'}: diffed from the merge base ${mergeBase.slice(0, 12)} (${range.from || 'HEAD'}...${range.to || 'HEAD'})`
+    return { ...at(mergeBase, to, `Scope: ${scope}, from the merge base ${mergeBase.slice(0, 12)}`), note }
   }
   const ref = await commitOf(git, root, scope)
   const head = await commitOf(git, root, 'HEAD')
