@@ -43,6 +43,7 @@ export type RunRow = {
   /** The run record's sums, written by `runPost`: `numeric` arrives as a string; null until then or when nothing was priced. */
   cost: string | null
   unpriced_calls: number | null
+  tool_calls: number | null
   /** Who admitted the run (a door token's name, or a self-declared sub-caller of the API secret); null: the host itself. */
   caller: string | null
   /** The repo the caller works in, as a bare name; null when none was declared. */
@@ -55,7 +56,7 @@ export type RunRow = {
 
 const RUN_COLUMNS = `id, workflow, parent_id, root_id, status, purpose, input, output, error, error_kind, traceparent,
   version_started, version_finished, started_at, finished_at, cancel_requested_at, admitted_at, post_hooks_at,
-  post_hooks_failed_at, cost, unpriced_calls, caller, project, workspace, arm`
+  post_hooks_failed_at, cost, unpriced_calls, tool_calls, caller, project, workspace, arm`
 
 export type CancelledStep = { run_id: string; step_id: string; kind: StepKind; handle: AgentHandleState | null }
 

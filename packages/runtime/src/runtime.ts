@@ -356,6 +356,7 @@ export class Runtime {
       error: run.error_kind ? { kind: run.error_kind, message: run.error ?? '' } : null,
       cost: run.cost === null ? null : Number(run.cost),
       unpricedCalls: run.unpriced_calls ?? 0,
+      toolCalls: run.tool_calls,
       postHooksDone: run.post_hooks_at !== null,
       postHooksFailed: run.post_hooks_failed_at !== null,
     }

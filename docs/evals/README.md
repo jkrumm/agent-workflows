@@ -41,3 +41,38 @@ Learned on 2026-10-29 to 10-31 (`2026-10-31-review-claude-direct.md`):
 - **Sonnet's effort barely reaches agent steps.** At `low` and `medium` Sonnet 5.5 spent 0 to 28 reasoning tokens per
   case in OpenCode sessions (adaptive thinking decides), while Haiku `high` spent hundreds: two Sonnet effort arms are
   close to one arm. Check reasoning tokens per arm, as above, before reading an effort difference into a score.
+
+## The research suite and its refresh
+
+`$AGW_EVAL_DIR/research/cases.jsonl` is built from real production questions and keeps production's depth mix: the case
+file is within 15 points of the prod mix per depth (the mix and the date are stated in the latest research baseline,
+`2026-11-16-research-baseline.md`). It replaced a suite of 19 quick, 8 standard and 1 deep case whose runs made a median of
+2 tool calls, where production standard makes about 35 and deep about 76: a prompt, budget or model change was judged on
+questions that exercise none of the behaviour that costs money.
+
+**Refresh: by hand, quarterly, and whenever the prod mix moves.** The nightly `eval-mine` job that added cases is
+retired, nothing else writes this file, and the suite goes stale on its own. The pull:
+
+1. Read the prod mix of the last 3 weeks from the journal: `agw.runs` with `workflow = 'research'`, `purpose = 'prod'`,
+   `input->>'depth'`; count, mean cost and mean `tool_calls` per depth. Set the target counts so the file's depth shares
+   stay within 15 points of it (3 quick, 18 standard, 11 deep in 2026-11).
+2. Pick the questions from `status = 'done'` runs that have no `context`, `contextRuns` or `followUp` in their input:
+   those carry background that may be private and do not stand alone. Drop any question that names a person, a private
+   repo, a host or work data; shorten a question that mentions the owner's own setup, never the facts asked for.
+3. Write `reference.expect` as the existing cases do (`any`, `all`, or `live: <registry>:<name>` for "what is the
+   latest version"). A golden is a handful of stable names and facts the answer must contain, taken from the question's
+   primary sources, never from the report that run produced (a past run is not ground truth). Check each pattern
+   against the run's report only to catch a pattern that can never match. The `supported` score judges the claims; the
+   golden only guards coverage.
+4. Replace the oldest prod-derived cases, keep ids stable for cases that stay, so `agw eval compare` keeps pairing them.
+   Record the pull date, the window and the prod mix in a new baseline report, and run the suite once on the then-current
+   route: a refreshed suite has no comparable older numbers.
+
+The case file and a `provenance.json` (case id → the prod run it came from) live under `$AGW_EVAL_DIR/research/`, never
+in this repo.
+
+**What a research run prints.** `agw eval run research --yes` reports `summary` overall and `summary.groups` per depth:
+cases scored, pass rate, every score's mean, cost (sum and mean per case), tool calls (sum and mean per case). The
+research scorer also writes every score under `<score>.<depth>` (`supported.deep`), so `agw eval compare research` reads a
+depth apart. Cost is the case run's record over its whole run tree; tool calls are those of the case run's own steps (a research run books its agent's calls there, and has no child runs), so a call budget shows its effect on
+them next to the quality scores. `--args '{"depth":"deep"}'` regroups the run under that depth.

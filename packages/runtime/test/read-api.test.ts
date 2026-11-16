@@ -70,6 +70,7 @@ describe('getRun and ping', () => {
         error: null,
         cost: null,
         unpricedCalls: 0,
+        toolCalls: null,
         postHooksDone: true,
         postHooksFailed: false,
       })
@@ -91,6 +92,7 @@ describe('getRun and ping', () => {
         error: null,
         cost: null,
         unpricedCalls: 0,
+        toolCalls: null,
         postHooksDone: false,
         postHooksFailed: false,
       })
@@ -133,6 +135,7 @@ describe('getRun and ping', () => {
         status: 'done',
         cost: null,
         unpricedCalls: 0,
+        toolCalls: null,
         postHooksDone: false,
       })
       releasePost()

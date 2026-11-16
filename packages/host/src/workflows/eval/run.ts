@@ -121,11 +121,23 @@ export const CaseResult = z.object({
       "The case run's recorded cost (with its child runs'): 0 when every step was free, null when unknown (a call nobody priced)",
     ),
   unpricedCalls: z.number().int().optional().describe('Calls the cost misses: a lower bound while above 0'),
+  toolCalls: z
+    .number()
+    .int()
+    .nullable()
+    .optional()
+    .describe(
+      "The case run's tool calls (its own steps, not its child runs'; the run record's count); null when the record has none",
+    ),
+  group: z
+    .string()
+    .optional()
+    .describe("The suite's grouping of the case (research: its depth); summary.groups folds by it"),
   reason: z.string().optional(),
 })
 export type CaseResult = z.infer<typeof CaseResult>
 
-export const RunSummary = z.object({
+const GroupSummary = z.object({
   scored: z.number().int(),
   skipped: z.number().int(),
   errors: z.number().int(),
@@ -137,7 +149,16 @@ export const RunSummary = z.object({
     .describe(
       "The case runs' recorded costs summed (0: every step free); null when no case cost is known. This run's own `cost` adds the judge calls",
     ),
+  meanCostUsd: z.number().nullable().describe('costUsd over the cases with a priced cost'),
+  toolCalls: z.number().int().nullable().describe("The case runs' tool calls summed; null when no case has a count"),
+  meanToolCalls: z.number().nullable().describe('toolCalls over the cases with a count'),
   unpricedCalls: z.number().int().describe('Calls no case cost includes: the total is a lower bound while above 0'),
+})
+
+export const RunSummary = GroupSummary.extend({
+  groups: z
+    .record(z.string(), GroupSummary)
+    .describe('The same figures per case group (research: per depth); empty when the suite declares no groups'),
 })
 
 export const evalRunOutput = (ids: [string, ...string[]]) =>
@@ -181,9 +202,11 @@ export function select(cases: EvalCase[], ids: string | undefined, limit: number
   return limit === undefined ? selected : selected.slice(0, limit)
 }
 
-export function summarize(cases: CaseResult[]) {
+function fold(cases: CaseResult[]) {
   const scored = cases.filter((c) => c.status === 'scored')
   const priced = cases.flatMap((c) => (typeof c.costUsd === 'number' ? [c.costUsd] : []))
+  const counted = cases.flatMap((c) => (typeof c.toolCalls === 'number' ? [c.toolCalls] : []))
+  const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0)
   const sums = new Map<string, { sum: number; n: number }>()
   for (const c of scored) {
     for (const [name, value] of Object.entries(c.scores ?? {})) {
@@ -197,8 +220,23 @@ export function summarize(cases: CaseResult[]) {
     errors: cases.filter((c) => c.status === 'error').length,
     passRate: scored.length ? scored.filter((c) => c.pass).length / scored.length : null,
     means: Object.fromEntries([...sums].map(([name, c]) => [name, c.sum / c.n])),
-    costUsd: priced.length ? priced.reduce((a, b) => a + b, 0) : null,
+    costUsd: priced.length ? sum(priced) : null,
+    meanCostUsd: priced.length ? sum(priced) / priced.length : null,
+    toolCalls: counted.length ? sum(counted) : null,
+    meanToolCalls: counted.length ? sum(counted) / counted.length : null,
     unpricedCalls: cases.reduce((n, c) => n + (c.unpricedCalls ?? 0), 0),
+  }
+}
+
+/** The run's figures, overall and per case group (a case without a group is in the overall only). */
+export function summarize(cases: CaseResult[]) {
+  const byGroup = new Map<string, CaseResult[]>()
+  for (const c of cases) if (c.group !== undefined) byGroup.set(c.group, [...(byGroup.get(c.group) ?? []), c])
+  return {
+    ...fold(cases),
+    groups: Object.fromEntries(
+      [...byGroup].sort(([a], [b]) => (a < b ? -1 : 1)).map(([name, rows]) => [name, fold(rows)]),
+    ),
   }
 }
 
@@ -366,12 +404,14 @@ export async function replay(deps: ReplayDeps, job: Job): Promise<CaseResult[]> 
   const runIds = results.flatMap((r) => (r.runId ? [r.runId] : []))
   const scored = runIds.length ? await runtime.scoredRuns({ workflow: target.id, source: 'regression', runIds }) : []
   const fingerprints = new Map(scored.map((r) => [r.runId, r.fingerprint]))
-  return results.map((r) =>
-    r.runId && fingerprints.has(r.runId) ? { ...r, fingerprint: fingerprints.get(r.runId) } : r,
-  )
+  return results.map((r) => {
+    const group = byId.get(r.caseId)?.group?.(job.args)
+    const withGroup = group === undefined ? r : { ...r, group }
+    return r.runId && fingerprints.has(r.runId) ? { ...withGroup, fingerprint: fingerprints.get(r.runId) } : withGroup
+  })
 }
 
-type Spent = Pick<RunSnapshot, 'cost' | 'unpricedCalls'>
+type Spent = Pick<RunSnapshot, 'cost' | 'unpricedCalls' | 'toolCalls'>
 
 /** A case's result from its run and its regression score; a scorer error is an error result, never a verdict. */
 function scoredResult(
@@ -381,7 +421,14 @@ function scoredResult(
   final: FinalScore | null,
   spent: Spent,
 ): CaseResult {
-  const base = { caseId, runId, runStatus: end.status, costUsd: spent.cost, unpricedCalls: spent.unpricedCalls }
+  const base = {
+    caseId,
+    runId,
+    runStatus: end.status,
+    costUsd: spent.cost,
+    unpricedCalls: spent.unpricedCalls,
+    toolCalls: spent.toolCalls,
+  }
   if (!final) return { ...base, status: 'error', reason: `run ${end.status}` }
   if (final.error !== undefined || final.pass === null) {
     return { ...base, status: 'error', reason: `scorer: ${final.error ?? 'no verdict'}` }
@@ -407,13 +454,14 @@ async function recorded(deps: ReplayDeps, runId: string, signal: AbortSignal): P
   for (;;) {
     const run = await runtime.getRun(runId)
     if (!run) throw new Error(`case run ${runId} vanished`)
-    if (run.postHooksDone && !run.postHooksFailed) return { cost: run.cost, unpricedCalls: run.unpricedCalls }
+    if (run.postHooksDone && !run.postHooksFailed)
+      return { cost: run.cost, unpricedCalls: run.unpricedCalls, toolCalls: run.toolCalls }
     if (run.postHooksFailed || Date.now() >= deadline) {
       const why = run.postHooksFailed
         ? 'its record was given up on'
         : `its record was not written within ${deps.recordSettleMs / 1000} s`
       deps.logger.warn(`eval case run ${runId}: ${why}; its cost is reported as a lower bound`, { cost: run.cost })
-      return { cost: run.cost, unpricedCalls: Math.max(1, run.unpricedCalls) }
+      return { cost: run.cost, unpricedCalls: Math.max(1, run.unpricedCalls), toolCalls: run.toolCalls }
     }
     signal.throwIfAborted()
     await Bun.sleep(deps.casePollMs)
@@ -445,7 +493,14 @@ async function settleCase(
     // The run was driven by another process, possibly of another release: its scorer is the version this host holds.
     const version = !standing && foreign ? ((await runtime.getRun(runId))?.version ?? null) : job.target.version
     if (version !== job.target.version) {
-      const base = { caseId, runId, runStatus: end.status, costUsd: spent.cost, unpricedCalls: spent.unpricedCalls }
+      const base = {
+        caseId,
+        runId,
+        runStatus: end.status,
+        costUsd: spent.cost,
+        unpricedCalls: spent.unpricedCalls,
+        toolCalls: spent.toolCalls,
+      }
       return {
         ...base,
         status: 'error',
@@ -455,7 +510,14 @@ async function settleCase(
     return scoredResult(caseId, runId, end, standing ? standing.final : await score(), spent)
   } catch (error) {
     if (job.signal.aborted) throw job.signal.reason
-    const base = { caseId, runId, runStatus: end.status, costUsd: spent.cost, unpricedCalls: spent.unpricedCalls }
+    const base = {
+      caseId,
+      runId,
+      runStatus: end.status,
+      costUsd: spent.cost,
+      unpricedCalls: spent.unpricedCalls,
+      toolCalls: spent.toolCalls,
+    }
     return { ...base, status: 'error', reason: errorText(error) }
   }
 }

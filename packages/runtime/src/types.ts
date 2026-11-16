@@ -389,6 +389,8 @@ export type RunSnapshot = {
    */
   cost: number | null
   unpricedCalls: number
+  /** Tool calls of the run's own steps (the record's `tool_calls`; unlike `cost`, child runs' calls are not summed in); null before the record. */
+  toolCalls: number | null
   postHooksDone: boolean
   postHooksFailed: boolean
 }

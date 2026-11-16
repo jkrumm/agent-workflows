@@ -73,7 +73,9 @@ agent's `tools` counts. `--depth` defaults to `standard`. A long run waits like 
   research process would add a second gate and a second ledger writer for nothing; it is not built.
 - **Scorer** (`scorer.ts`): `valid`, `complete`, `grounded` (code), `golden` (the case's `expect`, research-gateway
   `evals/lib.ts` semantics; `live:` via `web.package`), `supported` (judged: `web.fetch` + `decide` on up to 3 cited
-  pages), `judgedShare`. Cases are plain eval cases in `$AGW_EVAL_DIR/research/cases.jsonl`.
+  pages), `judgedShare`; each is also written as `<score>.<depth>` (`supported.deep`). Cases are plain eval cases in
+  `$AGW_EVAL_DIR/research/cases.jsonl` (the suite groups them by depth: `agw eval run research` prints supported, tool
+  calls and cost per depth; how the file is built and refreshed: `docs/evals/README.md` §The research suite).
 
 ## Route
 
