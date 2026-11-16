@@ -39,6 +39,11 @@ dead-workflow tiles are raw SQL with a fixed window anchored at `{endDateMillise
 on the dashboard and in the alert. To silence one: `agw hdx write clickstack_save_alert` with its id and a changed
 threshold, or delete the file and the live alert; `agw hdx query clickstack_get_alert '{}'` finds the id.
 
+The two cost tiles leave out `agw.run eval.run`: its journal `cost` is the sum of its case runs and judge calls, and each
+case run is also a root of its own (`parent_id` set, `root_id` = its own id), so counting both bills every eval case twice
+(2026-11-16: 11.09 of 49.81 USD). The case runs carry the spend; the judge calls, which are children of the eval run and
+no root, drop out of the tile (about 0.1 USD per 10 cases).
+
 ## Backtest
 
 Measured 2026-11-16 on prod spans, 2026-11-02 to 2026-11-16, each window evaluated on the alert's own clock.
