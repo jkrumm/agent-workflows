@@ -2929,9 +2929,16 @@ describe('the challenged page kept open for the owner', () => {
     const browser = fakeBrowser(WALL_PAGE, [{ url: 'http://10.0.0.1/', resourceType: 'Document' }], {})
     try {
       const policy: RequestPolicy = { allowUrl: async (url) => !url.includes('10.0.0.1'), allowAddress: () => true }
-      await expect(
-        keepViaCdp(browser.base, 'https://shop.example.com/', new AbortController().signal, policy),
-      ).rejects.toBeInstanceOf(BrowserRefused)
+      const error = await keepViaCdp(
+        browser.base,
+        'https://shop.example.com/',
+        new AbortController().signal,
+        policy,
+      ).then(
+        () => undefined,
+        (e: unknown) => e,
+      )
+      expect(error).toBeInstanceOf(BrowserRefused)
       expect(browser.decisions).toEqual([{ url: 'http://10.0.0.1/', allowed: false }])
       expect(browser.closed).toEqual(['tab-1'])
       expect(keptHosts()).toEqual([])
