@@ -266,7 +266,6 @@ export const NO_POPUPS = `(function (window, document) {
     // The element clicked, also inside a shadow root (where event.target is the shadow host).
     var node = (event.composedPath ? event.composedPath()[0] : null) || event.target
     if (!node || !node.closest) return
-    if (!node) return
     var link = node.closest("a[href], area[href]")
     if (link) {
       if (event.type === "auxclick" || event.button > 0 || event.ctrlKey || event.metaKey || event.shiftKey) {
