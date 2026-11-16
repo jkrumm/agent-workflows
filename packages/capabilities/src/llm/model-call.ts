@@ -239,11 +239,17 @@ async function completeOn(
   return completion
 }
 
-/** Best-effort JSON from a model answer: strips a code fence, slices first `{` to last `}`. `null` on failure. */
+/**
+ * Best-effort JSON from a model answer, in code, before any re-ask: a fenced block anywhere in the text (the one that
+ * holds the object, with prose before or after it), else the text as is, then the slice from the first `{` to the last
+ * `}`. `null` on failure.
+ */
 export function parseJsonLoose(raw: string): unknown {
   let s = raw.trim()
-  const fence = s.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/)
-  if (fence?.[1] !== undefined) s = fence[1].trim()
+  const fenced = [...s.matchAll(/```(?:json)?[ \t]*\r?\n?([\s\S]*?)\s*```/g)]
+    .map((m) => (m[1] ?? '').trim())
+    .find((body) => body.startsWith('{'))
+  if (fenced !== undefined) s = fenced
   const first = s.indexOf('{')
   const last = s.lastIndexOf('}')
   if (first >= 0 && last > first) s = s.slice(first, last + 1)

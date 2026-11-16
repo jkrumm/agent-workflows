@@ -1,6 +1,16 @@
 import { createHash } from 'node:crypto'
 import type { Depth } from './schema.ts'
 
+/**
+ * The tool-call budget per depth: every call to a research tool counts (a search, a page read, docs, a package, a video,
+ * `web_ask`). It is a figure in the prompt and a nudge from the gate (`ToolGrant.budget`), never a refusal: limits teach.
+ * Start values from the 2026-11-16 audit; the per-depth eval (`docs/evals/`) moves them.
+ */
+export const TOOL_BUDGET: Record<Depth, number> = { quick: 4, standard: 12, deep: 40 }
+
+const BUDGET_LINE = (depth: Depth) =>
+  `Tool-call budget: ${TOOL_BUDGET[depth]} calls in all (a search, a page read, docs, a package, a video and \`web_ask\` each count one). Stop earlier when the stop rule is met; at the budget write the report and list what stayed open under \`unverified\`.`
+
 /** How much work a depth asks for: research-gateway's depth profiles (`src/agent/depth.ts`), as one directive each. */
 const EFFORT: Record<Depth, string> = {
   quick:
@@ -83,7 +93,10 @@ export function researchTask(input: {
   earlier?: EarlierResearch
   siblings?: EarlierResearch[]
 }) {
-  const lines = [`## Question\n\n${input.query.trim()}`, `## Depth\n\n${EFFORT[input.depth]} ${LENGTH[input.depth]}`]
+  const lines = [
+    `## Question\n\n${input.query.trim()}`,
+    `## Depth\n\n${EFFORT[input.depth]} ${BUDGET_LINE(input.depth)} ${LENGTH[input.depth]}`,
+  ]
   if (input.earlier) lines.push(earlierSection(input.earlier))
   if (input.siblings?.length) lines.push(siblingsSection(input.siblings))
   if (input.context) lines.push(`## Given background\n\n${input.context.trim()}`)

@@ -19,6 +19,16 @@ agent's `tools` counts. `--depth` defaults to `standard`. A long run waits like 
   partial unique index on them stay in the table: nullable, never written or read by this code. The previous release,
   the rollback target of a failed deploy, still uses them; they are dropped by a later migration once no rollback
   target reads them.
+- **Call budget** (`TOOL_BUDGET` in `prompts.ts`: quick 4, standard 12, deep 40): the prompt gives the agent its depth's
+  figure and `agents/research/AGENTS.md` its stop rule (one primary source per part of the question plus the depth's
+  cross-check; at the budget write the report and list what stayed open under `unverified`). The tool gate counts the
+  run's calls and appends a `note` to the answer of the call that reaches the budget and of the one at 1.5x (the agent's
+  plugin shows it after the result). Nothing is refused: a budget is a figure and a nudge, never a stop below the runaway
+  cap (`docs/concept.md`). The figures are moved by the per-depth eval (`docs/evals/`).
+- **Draft parsing, before any re-ask**, in code: `parseJsonLoose` takes the fenced block that holds the object (prose
+  before or after it, braces in that prose included) or the first-`{`-to-last-`}` slice, and a citation without a URL
+  (`null`, missing, empty) moves to `unverified` (`reason: cited without a URL`) instead of failing the schema. Only an
+  answer that still is not the report JSON (prose only, a broken string) gets the one re-ask, which replays the session.
 - **Grounding** (`assemble`, in code): a citation whose URL the run neither retrieved nor saw as a search result is
   dropped to `unverified`; dropping 10 % or more, or retrieving nothing at all, makes the report `partial`.
   `grounding` counts before the drop. A run that read pages and has no citation left (none submitted, or all dropped) is

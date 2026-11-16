@@ -6,7 +6,7 @@ import { CapabilityCallError } from '@agent-workflows/capabilities'
 import type { Json, ScoreJudge } from '@agent-workflows/runtime'
 import { FakeAgentHost, type FakeSession } from '@agent-workflows/testing/agent-host'
 import type { HostRegistry } from '../src/workflows/index.ts'
-import { MAX_BODY_BYTES, ToolGate } from '../src/tool-gate/index.ts'
+import { BUDGET_NOTE, MAX_BODY_BYTES, ToolGate } from '../src/tool-gate/index.ts'
 import { matchExpect } from '../src/workflows/research/golden.ts'
 import {
   assemble,
@@ -16,6 +16,7 @@ import {
   RESEARCH_VERSION,
 } from '../src/workflows/research/index.ts'
 import { memoryToolLedger, pgToolLedger } from '../src/workflows/research/ledger.ts'
+import { TOOL_BUDGET } from '../src/workflows/research/prompts.ts'
 import { ResearchInput, ResearchOutput, type ResearchResult } from '../src/workflows/research/schema.ts'
 import { researchScorer } from '../src/workflows/research/scorer.ts'
 import { evidence, researchGrant } from '../src/workflows/research/tools.ts'
@@ -106,7 +107,13 @@ async function callTool(session: FakeSession, tool: string, args: Record<string,
     headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
     body: JSON.stringify({ sessionID: session.root.spec.key, args }),
   })
-  return (await response.json()) as { ok: boolean; result?: Json; error?: string; code?: string }
+  return (await response.json()) as {
+    ok: boolean
+    result?: Json
+    error?: string
+    code?: string
+    note?: string
+  }
 }
 
 const draft = (citations: { claim: string; url: string }[]) =>
@@ -296,6 +303,59 @@ describe('research workflow on a fake host', () => {
     )
     expect(never.result.status).toBe('failed')
     expect(never.result.error?.kind).toBe('invalid_output')
+  })
+
+  test('a fenced report with prose around it validates without a re-ask', async () => {
+    const fenced = `Here is the report:\n\n\`\`\`json\n${draft([{ claim: 'default 5432', url: PG_DOCS }])}\n\`\`\`\n\nLet me know {if} more is needed.`
+    const host = new FakeAgentHost(async (s) => {
+      if (s.turnOf) throw new Error('no re-ask expected')
+      await callTool(s, 'web_fetch', { url: PG_DOCS })
+      return { output: fenced }
+    })
+    const { runId, result } = await run({ query: 'Fenced report, no re-ask?', depth: 'quick' }, host)
+    expect(result.status).toBe('done')
+    expect(ResearchOutput.parse(result.output).citations).toHaveLength(1)
+    expect(await sql.step(runId, 'research:reask')).toBeUndefined()
+  })
+
+  test('a citation without a URL moves to unverified instead of costing a re-ask', async () => {
+    const withNull = JSON.stringify({
+      report: '## Bottom line\nThe default port is 5432.',
+      citations: [
+        { claim: 'default 5432', url: PG_DOCS, confidence: 'high' },
+        { claim: 'no page for this', url: null, confidence: 'low' },
+        { claim: 'no url key at all', confidence: 'low' },
+      ],
+      sources: [PG_DOCS],
+      unverified: [],
+    })
+    const host = new FakeAgentHost(async (s) => {
+      if (s.turnOf) throw new Error('no re-ask expected')
+      await callTool(s, 'web_fetch', { url: PG_DOCS })
+      return { output: `\`\`\`json\n${withNull}\n\`\`\`` }
+    })
+    const { runId, result } = await run({ query: 'Citation without a URL?', depth: 'quick' }, host)
+    expect(result.status).toBe('done')
+    const out = ResearchOutput.parse(result.output)
+    expect(out.citations.map((c) => c.claim)).toEqual(['default 5432'])
+    expect(out.unverified.map((u) => [u.topic, u.url, u.reason])).toEqual([
+      ['no page for this', null, 'cited without a URL'],
+      ['no url key at all', null, 'cited without a URL'],
+    ])
+    expect(await sql.step(runId, 'research:reask')).toBeUndefined()
+  })
+
+  test("the gate holds the depth's budget: the call that reaches it is answered with the note, none is refused", async () => {
+    const host = new FakeAgentHost(async (s) => {
+      if (s.turnOf) throw new Error('no re-ask expected')
+      const answers = []
+      for (let i = 0; i < TOOL_BUDGET.quick + 1; i++) answers.push(await callTool(s, 'web_search', { query: `q${i}` }))
+      expect(answers.every((a) => a.ok)).toBe(true)
+      expect(answers.map((a) => a.note)).toEqual([undefined, undefined, undefined, BUDGET_NOTE, undefined])
+      return { output: draft([{ claim: 'default 5432', url: PG_DOCS }]) }
+    })
+    const { result } = await run({ query: 'Budget on a quick run?', depth: 'quick' }, host)
+    expect(result.status).toBe('done')
   })
 
   test('a placeholder report gets the re-ask like a non-JSON answer, and is invalid_output when it stays one', async () => {

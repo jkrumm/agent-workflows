@@ -2,7 +2,30 @@ import { describe, expect, test } from 'bun:test'
 import { canonicalModel, DEFAULT_ROUTES, resolveRoute } from '@agent-workflows/routes'
 import type { Usage } from '../context.ts'
 import type { AttemptUsage, ChatPort, ChatResult, GatewayTransports } from '../transports/port.ts'
-import { complete, toUsage } from './model-call.ts'
+import { complete, parseJsonLoose, toUsage } from './model-call.ts'
+
+describe('parseJsonLoose', () => {
+  const object = { report: 'a {brace} inside', n: 1 }
+  const json = JSON.stringify(object)
+
+  test.each([
+    ['bare', json],
+    ['a json fence', `\`\`\`json\n${json}\n\`\`\``],
+    ['a bare fence', `\`\`\`\n${json}\n\`\`\``],
+    [
+      'a fence with prose before and after, braces included',
+      `Done {as asked}:\n\`\`\`json\n${json}\n\`\`\`\nNote {x} follows.`,
+    ],
+    ['prose around unfenced JSON', `Here you go: ${json} Anything else?`],
+  ])('%s', (_name, text) => {
+    expect(parseJsonLoose(text)).toEqual(object)
+  })
+
+  test('prose with no object and broken JSON are null', () => {
+    expect(parseJsonLoose('The port is 5432.')).toBeNull()
+    expect(parseJsonLoose('{"a": 1，"b": 2}')).toBeNull()
+  })
+})
 
 const tokens = { input: 10, output: 2, cacheRead: 0, reasoning: 0 }
 
