@@ -4,7 +4,7 @@ import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
 import { JsonRecord } from './run.ts'
 import type { EvalSlot } from './slot.ts'
-import { type Suites, suiteIds } from './suites.ts'
+import { type Suites, suiteIds, suiteWorkflow } from './suites.ts'
 
 export const EVAL_COMPARE_ID = 'eval.compare'
 
@@ -148,16 +148,17 @@ export function createEvalCompare(slot: EvalSlot, suites: Suites): HostWorkflow 
     async run(ctx, input) {
       const aArgs = input.aArgs ?? {}
       const bArgs = input.bArgs ?? {}
+      const served = suiteWorkflow(suites, input.workflow)
       if (
         input.a === input.b &&
-        (input.aWorkflow ?? input.workflow) === (input.bWorkflow ?? input.workflow) &&
+        (input.aWorkflow ?? served) === (input.bWorkflow ?? served) &&
         canonical(aArgs) === canonical(bArgs)
       ) {
         throw new WorkflowError('invalid_input', 'arms A and B are the same fingerprint and args')
       }
       return ctx.step('compare', async () => {
-        const a = await arm(slot, input.aWorkflow ?? input.workflow, 'A', input.a, aArgs)
-        const b = await arm(slot, input.bWorkflow ?? input.workflow, 'B', input.b, bArgs)
+        const a = await arm(slot, input.aWorkflow ?? served, 'A', input.a, aArgs)
+        const b = await arm(slot, input.bWorkflow ?? served, 'B', input.b, bArgs)
         if (
           a.info.workflow === b.info.workflow &&
           a.info.fingerprint === b.info.fingerprint &&

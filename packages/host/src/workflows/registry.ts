@@ -190,8 +190,9 @@ export function buildWorkflows(
     }
     // A module that built nothing on this host (no fleet, no database) may still declare its suite: the cases are
     // data, and running them there fails at start, not at boot. One that built other workflows only is a mistake.
-    if (module.suite && entries.length > 0 && !entries.some((e) => e.workflow.id === module.id))
-      throw new Error(`workflow modules: ${module.file}: declares a suite but serves no workflow "${module.id}"`)
+    const replayed = typeof module.suite === 'object' && module.suite.workflow ? module.suite.workflow : module.id
+    if (module.suite && entries.length > 0 && !entries.some((e) => e.workflow.id === replayed))
+      throw new Error(`workflow modules: ${module.file}: declares a suite but serves no workflow "${replayed}"`)
     built.push(...entries)
   }
   for (const module of own.filter((m) => m.phase !== 'last')) add(module, module.create(deps, { suites, peers: [] }))
