@@ -30,6 +30,39 @@ function seconds(raw: string | undefined, fallback: number, min: number): number
 
 export const waitBudgetS = (env: Env) => seconds(env.AGW_WAIT_BUDGET_S, DEFAULT_BUDGET_S, 0)
 
+/** How long a call waits for a process that refuses connections while a deploy restarts it (`0` = never wait). */
+const DEFAULT_RESTART_WAIT_S = 90
+/** A process that refuses connections with no deploy in progress gets this long to come back (KeepAlive's own restart). */
+const DOWN_WAIT_S = 30
+/** A deliberate-restart marker younger than this means a deploy is restarting the process. */
+const DEPLOYING_WINDOW_S = 180
+
+/**
+ * The longest a call waits out an unreachable process: the full bound (`AGW_RESTART_WAIT_S`, default 90) while a
+ * deploy marked its restart, and at most 30 s otherwise, so a process that is simply down fails soon.
+ */
+export function restartBoundS(env: Env, label: string, nowMs = Date.now()): { boundS: number; deploying: boolean } {
+  const full = seconds(env.AGW_RESTART_WAIT_S, DEFAULT_RESTART_WAIT_S, 0)
+  const deploying = markedAgeS(env, label, nowMs) <= DEPLOYING_WINDOW_S
+  return { boundS: deploying ? full : Math.min(full, DOWN_WAIT_S), deploying }
+}
+
+/**
+ * Seconds since the LaunchAgent `label` was last stopped on purpose: `scripts/deploy.sh` appends one epoch line per
+ * stop to `~/.local/state/devhost/deliberate-restart/<label>` (the dotfiles heartbeat reads the same file). Infinity
+ * when there is none or it cannot be read.
+ */
+function markedAgeS(env: Env, label: string, nowMs: number): number {
+  try {
+    const file = join(home(env), '.local', 'state', 'devhost', 'deliberate-restart', label)
+    const last = readFileSync(file, 'utf8').trim().split('\n').at(-1)
+    const epoch = Number(last)
+    return Number.isFinite(epoch) && epoch > 0 ? Math.max(0, nowMs / 1000 - epoch) : Number.POSITIVE_INFINITY
+  } catch {
+    return Number.POSITIVE_INFINITY
+  }
+}
+
 /** The deadline of one request that does not wait on a run: a capability call can run a model for minutes. */
 export const timeoutS = (env: Env) => seconds(env.AGW_TIMEOUT_S, DEFAULT_TIMEOUT_S, Number.MIN_VALUE)
 

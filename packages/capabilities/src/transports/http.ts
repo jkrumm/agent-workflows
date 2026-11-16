@@ -10,6 +10,11 @@ export interface HttpOptions {
   idleTimeoutMs?: number
   /** Non-streamed wires: a hang guard, never a budget (agent-limits). Default 30 minutes. */
   hangGuardMs?: number
+  /**
+   * How long a refused connection (nothing was sent: a gateway restarting) is retried, on top of `attempts`. Default
+   * 60 s, to outlast a deploy's restart of the gateway; 0 turns it off.
+   */
+  refusedWindowMs?: number
   fetch?: (url: string, init: RequestInit) => Promise<Response>
 }
 
@@ -18,7 +23,18 @@ export const DEFAULTS = {
   backoffMs: 500,
   idleTimeoutMs: 5 * 60_000,
   hangGuardMs: 30 * 60_000,
+  refusedWindowMs: 60_000,
 } as const
+
+/** The pause between tries of a refused connection: the backoff, doubled up to this, never under the floor. */
+const REFUSED_MAX_DELAY_MS = 3000
+const REFUSED_MIN_DELAY_MS = 100
+
+/** The one failure that proves a request never reached the server: the connection was refused. */
+export function isConnectRefused(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code
+  return code === 'ConnectionRefused' || code === 'ECONNREFUSED'
+}
 
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504])
 
@@ -34,6 +50,8 @@ export class Attempt extends Error {
     readonly transport?: true,
     /** The gateway's `x-agw-request-id` of the failed response: what a route fallback names as the call it replaces. */
     readonly requestId?: string,
+    /** The connection was refused: nothing was sent, so repeating it is safe and `withRetries` waits a restart out. */
+    readonly refused?: true,
   ) {
     super(message)
   }
@@ -82,7 +100,15 @@ export async function failedResponse(res: Response, wire: string): Promise<Attem
  */
 export function requestFailure(error: unknown, responded = false): Attempt {
   const spent = isAbort(error)
-  return new Attempt(describe(error), !spent, undefined, undefined, spent || responded ? undefined : true)
+  return new Attempt(
+    describe(error),
+    !spent,
+    undefined,
+    undefined,
+    spent || responded ? undefined : true,
+    undefined,
+    !spent && !responded && isConnectRefused(error) ? true : undefined,
+  )
 }
 
 /** A transport failure that a route's fallback answers: the classifier over a failed call's status and message. */
@@ -139,10 +165,17 @@ export async function readJson(res: Response, wire: string): Promise<unknown> {
   }
 }
 
-/** Run `attempt` until it succeeds, fails fast, or the attempts are used up; 0.5 s, 1.5 s, 4.5 s apart. */
+/**
+ * Run `attempt` until it succeeds, fails fast, or the attempts are used up; 0.5 s, 1.5 s, 4.5 s apart. A refused
+ * connection (`Attempt.refused`) sent nothing, so it is retried on its own clock for `refusedWindowMs` (a restart of
+ * the process on the other end) without using up an attempt.
+ */
 export async function withRetries<T>(options: HttpOptions, signal: AbortSignal, attempt: () => Promise<T>): Promise<T> {
   const attempts = options.attempts ?? DEFAULTS.attempts
   const backoffMs = options.backoffMs ?? DEFAULTS.backoffMs
+  const refusedWindowMs = options.refusedWindowMs ?? DEFAULTS.refusedWindowMs
+  let refusedSince: number | undefined
+  let refusals = 0
   for (let i = 0; ; i++) {
     if (signal.aborted) throw fail('CANCELLED', 'cancelled')
     try {
@@ -151,6 +184,16 @@ export async function withRetries<T>(options: HttpOptions, signal: AbortSignal, 
       if (signal.aborted) throw fail('CANCELLED', 'cancelled')
       if (error instanceof CapabilityError) throw error
       const failure = error instanceof Attempt ? error : new Attempt(describe(error), !isAbort(error))
+      if (failure.refused && failure.retryable) {
+        refusedSince ??= Date.now()
+        const delay = Math.min(Math.max(backoffMs * 2 ** refusals, REFUSED_MIN_DELAY_MS), REFUSED_MAX_DELAY_MS)
+        if (Date.now() - refusedSince + delay <= refusedWindowMs) {
+          refusals++
+          i-- // this try used no attempt
+          await sleep(delay, signal)
+          continue
+        }
+      }
       if (!failure.retryable || i >= attempts - 1) {
         throw fail('UPSTREAM_ERROR', failure.message, {
           ...(failure.status === undefined ? {} : { status: failure.status }),

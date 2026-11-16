@@ -12,6 +12,7 @@ import {
   HOST_PROCESS,
   type ProcessTarget,
   requireSecret,
+  restartBoundS,
   timeoutS,
 } from './config.ts'
 import { AgwError, kindForStatus } from './exit.ts'
@@ -134,6 +135,12 @@ export interface CallOptions {
   idempotencyKey?: string
   /** Aborts the request in flight (the caller was interrupted); the failure is a `network` error. */
   signal?: AbortSignal
+  /**
+   * Wait out a restart: a refused connection (nothing was sent) is retried for every request, a lost answer or a
+   * 502/503/504 only for a read or a request that carries an idempotency key. Default true; a caller that has its
+   * own loop (the run wait) or another process to ask first turns it off.
+   */
+  rideRestart?: boolean
 }
 
 interface ErrorBody {
@@ -169,8 +176,34 @@ function hintFor(kind: AgwError['kind'], env: Env, command: Command | undefined,
 /** The connection was never opened (refused, no such name): nothing reached the process, so another may be asked. */
 export class Unreachable extends AgwError {}
 
+/** The request may have reached the process but no answer came back (a reset, a cut body): a restart cuts a request like this. */
+export class LostAnswer extends AgwError {}
+
+/** The pause before retry n of a refused or lost request: 0.25 s doubling to 2 s. */
+const RESTART_BACKOFF_MS = 250
+const RESTART_BACKOFF_MAX_MS = 2000
+/** The wait is silent for this long, then says so once. */
+const RESTART_NOTICE_AFTER_MS = 1000
+/** Answers of a process that is up but not serving yet (a gateway in front of it, a boot): safe to repeat with a key. */
+const RESTART_STATUS = new Set([502, 503, 504])
+
+const pause = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve) => {
+    if (signal?.aborted) return resolve()
+    const done = () => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', done)
+      resolve()
+    }
+    const timer = setTimeout(done, ms)
+    signal?.addEventListener('abort', done, { once: true })
+  })
+
 /** The fetch error codes that prove no byte of the request left; a reset or a lost answer is not among them. */
 const NOTHING_SENT = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ConnectionRefused'])
+
+/** The host's LaunchAgent label: the name `scripts/deploy.sh` marks its deliberate restarts under. */
+const HOST_LABEL = 'com.jkrumm.agent-workflows-host'
 
 /** A hang guard on another process's contract fetch: it is a plain document, and a hung process must not stall host commands. */
 const CONTRACT_FETCH_S = 10
@@ -188,16 +221,26 @@ export class Host {
   #hidden: Hidden[] = []
   #sha = ''
   #refreshed = false
+  #waitedMs = 0
 
   /**
    * `target` is a process from `AGW_PROCESSES`; without one this is the host at `AGW_URL`. `shared` hands over the
    * credentials the platform already read, so the env file is read and the process list validated once per call.
+   * `notice` receives the one line a long restart wait prints.
    */
   constructor(
     readonly env: Env,
     private readonly target?: ProcessTarget,
     private readonly shared?: () => Credentials,
+    private readonly notice?: (text: string) => void,
   ) {}
+
+  /** Milliseconds this call spent waiting out a restart since the last time it was asked; the caller's own budget does not pay for them. */
+  takeWaitedMs(): number {
+    const waited = this.#waitedMs
+    this.#waitedMs = 0
+    return waited
+  }
 
   get name(): string {
     return this.target?.name ?? HOST_PROCESS
@@ -334,6 +377,66 @@ export class Host {
     Object.assign(headers, this.#caller)
 
     const deadlineS = options.deadlineS ?? (waitS === undefined ? timeoutS(this.env) : waitS + SLACK_S)
+    // A contract fetch with its own deadline (another process's) never waits: a hung process must not stall host commands.
+    const rides = options.rideRestart !== false && options.deadlineS === undefined
+    const retriesLost = Boolean(options.idempotencyKey) || method === 'GET'
+    let firstFailure: number | undefined // the bound counts from here, not from the request: a long run that is cut still gets its retries
+    let bound: { boundMs: number; deploying: boolean } | undefined
+    let noticed = false
+    let mayHaveLanded = false // an earlier attempt was cut or got a 5xx: the request may have reached the process
+    // A refused connection after an attempt that may have landed no longer proves nothing was sent.
+    const giveUp = (error: unknown) =>
+      mayHaveLanded && error instanceof Unreachable
+        ? new LostAnswer('network', error.message, { hint: error.hint, details: error.details })
+        : error
+    for (let failures = 0; ; failures++) {
+      try {
+        return await this.attempt({ method, url, path, headers, options, deadlineS })
+      } catch (error) {
+        const refused = error instanceof Unreachable
+        const status = error instanceof AgwError ? error.details.status : undefined
+        const again =
+          refused ||
+          (retriesLost && (error instanceof LostAnswer || (typeof status === 'number' && RESTART_STATUS.has(status))))
+        if (error instanceof LostAnswer || (typeof status === 'number' && status >= 500)) mayHaveLanded = true
+        if (!rides || !again || options.signal?.aborted) throw giveUp(error)
+        bound ??= (({ boundS, deploying }) => ({ boundMs: boundS * 1000, deploying }))(
+          restartBoundS(this.env, this.target ? `com.jkrumm.agent-workflows-${this.target.name}` : HOST_LABEL),
+        )
+        firstFailure ??= Date.now()
+        const elapsed = Date.now() - firstFailure
+        const delay = Math.min(RESTART_BACKOFF_MS * 2 ** failures, RESTART_BACKOFF_MAX_MS)
+        if (elapsed + delay > bound.boundMs) throw giveUp(error)
+        if (!noticed && elapsed + delay > RESTART_NOTICE_AFTER_MS) {
+          noticed = true
+          this.notice?.(
+            bound.deploying
+              ? `${this.label} restarting, waiting\n`
+              : `${this.label} unreachable, retrying for up to ${Math.round(bound.boundMs / 1000)}s\n`,
+          )
+        }
+        await pause(delay, options.signal)
+        this.#waitedMs += Date.now() - firstFailure - elapsed
+      }
+    }
+  }
+
+  /** One request and its answer: a transport failure or a non-2xx status is thrown as an {@link AgwError}. */
+  private async attempt({
+    method,
+    url,
+    path,
+    headers,
+    options,
+    deadlineS,
+  }: {
+    method: string
+    url: string
+    path: string
+    headers: Record<string, string>
+    options: CallOptions & { body?: unknown; command?: Command }
+    deadlineS: number
+  }): Promise<Reply> {
     const timeout = AbortSignal.timeout(deadlineS * 1000)
     const signal = options.signal ? AbortSignal.any([timeout, options.signal]) : timeout
     let response: Response
@@ -354,7 +457,7 @@ export class Host {
       const message = `${this.label} unreachable at ${url}: ${reason}`
       const code = (error as { code?: unknown } | null)?.code
       if (typeof code === 'string' && NOTHING_SENT.has(code)) throw new Unreachable('network', message, { hint })
-      throw new AgwError('network', message, { hint })
+      throw new LostAnswer('network', message, { hint })
     }
     let body: unknown = text
     try {

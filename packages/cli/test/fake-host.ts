@@ -239,6 +239,14 @@ export interface FakeHostOptions {
   runs?: RunStore
   /** Replaces the run id's schema: a process whose run operations drifted from the host's. */
   runIdSchema?: Json
+  /** Listen here instead of on a free port (a host that is down first and comes up later). */
+  port?: number
+  /** The first n workflow starts are recorded, then their answer is cut mid-body: the caller never sees it. */
+  lostAnswers?: number
+  /** The host stops listening right after it cuts an answer (a restart that does not come back). */
+  downAfterLost?: boolean
+  /** Answers the first n workflow starts with this status before anything is recorded (a process that is up but not serving). */
+  refuseStarts?: { count: number; status: number }
 }
 
 export interface FakeHost {
@@ -365,8 +373,10 @@ export async function startFakeHost(options: FakeHostOptions = {}): Promise<Fake
     return reply(run)
   }
 
+  let lostAnswers = options.lostAnswers ?? 0
+  let refused = options.refuseStarts?.count ?? 0
   const server = Bun.serve({
-    port: 0,
+    port: options.port ?? 0,
     hostname: '127.0.0.1',
     idleTimeout: 60,
     async fetch(request) {
@@ -406,6 +416,10 @@ export async function startFakeHost(options: FakeHostOptions = {}): Promise<Fake
       }
 
       const wf = url.pathname.startsWith('/workflows/') && workflows.get(url.pathname.slice(11).split('/').join('.'))
+      if (wf && request.method === 'POST' && refused > 0) {
+        refused--
+        return errorBody('SERVICE_UNAVAILABLE', options.refuseStarts?.status ?? 503, 'not serving yet')
+      }
       if (wf && request.method === 'POST') {
         const input = (text ? JSON.parse(text) : {}) as Json
         const required = ((wf.input.required ?? []) as string[]).filter(
@@ -433,6 +447,12 @@ export async function startFakeHost(options: FakeHostOptions = {}): Promise<Fake
           input: text,
         }
         runs.set(run.runId, run)
+        if (lostAnswers > 0) {
+          lostAnswers--
+          const cut = new ReadableStream({ start: (controller) => controller.error(new Error('connection cut')) })
+          if (options.downAfterLost) setTimeout(() => void server.stop(true), 20)
+          return new Response(cut, { headers: { 'content-type': 'application/json' } })
+        }
         return waitFor(run, request)
       }
       if (options.capabilities === false) return errorBody('NOT_FOUND', 404, 'Not found')

@@ -158,9 +158,9 @@ alone as up: credit is no property of a build. `ledger.flushError` carries the l
 
 ## Lifecycle
 
-SIGTERM stops accepting and lets requests finish for 50 s, an upload in progress included. It then cuts the rest: each
+SIGTERM stops accepting and lets requests finish for 100 s, an upload in progress included. It then cuts the rest: each
 writes its row and charge before the ledger closes, except an upload, which never went upstream. It flushes for 5 s and
-exits, within 60 s in all. The first reconcile holds the start for 30 s at most, then the gateway listens anyway.
+exits, within 107 s in all (the plist's `ExitTimeOut` is 120). The first reconcile holds the start for 30 s at most, then the gateway listens anyway.
 
 ## Tests
 

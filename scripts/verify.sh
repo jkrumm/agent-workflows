@@ -22,6 +22,9 @@ set -u
 ROOT="${AGW_ROOT:-$HOME/.agent-workflows}"
 REPO_DIR="$ROOT/repo"
 SHA_FILE="$ROOT/data/deployed-sha"
+# The sha the processes were started for: a deploy whose diff cannot change a process (scripts/deploy.sh) advances
+# deployed-sha and leaves them running; no file means every deploy so far restarted them.
+RUNNING_FILE="$ROOT/data/running-sha"
 HEALTH_URL="http://127.0.0.1:7791/health"
 AUDIO_URL="http://127.0.0.1:7792"
 IMAGE_DOOR_URL="http://127.0.0.1:7791/door/image"
@@ -63,8 +66,10 @@ deployed=$(cat "$SHA_FILE" 2>/dev/null) || fail "$SHA_FILE missing: nothing was 
 remote=$(git -C "$REPO_DIR" ls-remote origin refs/heads/master | awk '{print $1}')
 [[ -n "$remote" ]] || fail "cannot read origin/master from $REPO_DIR (run make deploy first)"
 [[ "$deployed" == "$remote" ]] || fail "deployed ${deployed[1,12]} is not origin/master ${remote[1,12]}"
-[[ "$version" == "$deployed" ]] || fail "the running host reports ${version[1,12]}, deployed is ${deployed[1,12]}"
-ok "deployed sha is origin/master (${deployed[1,12]})"
+running=$(tr -d '[:space:]' < "$RUNNING_FILE" 2>/dev/null)
+running="${running:-$deployed}"
+[[ "$version" == "$running" ]] || fail "the running host reports ${version[1,12]}, it was started for ${running[1,12]} (deployed ${deployed[1,12]})"
+ok "deployed sha is origin/master (${deployed[1,12]}); processes run ${running[1,12]}"
 
 password=$(secrets-run read "$PG_PASSWORD_REF" 2>/dev/null)
 [[ -n "$password" ]] || fail "cannot read $PG_PASSWORD_REF through secrets-run"
@@ -143,9 +148,9 @@ ok "journal: cap.llm.title run $cap_id done, cost $cap_cost, $cap_tokens input t
 
 # 6. the audio process: the same release, a run recorded through the CLI's process routing, and the door's auth
 audio_health=$(curl -fsS --max-time 5 "$AUDIO_URL/health") || fail "no answer from $AUDIO_URL/health"
-[[ "$(print -r -- "$audio_health" | jq -r '.status + " " + .version')" == "ok $deployed" ]] \
-  || fail "audio /health is not ok at ${deployed[1,12]}: $audio_health"
-ok "audio /health ok (version ${deployed[1,12]})"
+[[ "$(print -r -- "$audio_health" | jq -r '.status + " " + .version')" == "ok $running" ]] \
+  || fail "audio /health is not ok at ${running[1,12]}: $audio_health"
+ok "audio /health ok (version ${running[1,12]})"
 
 agw_json audio ping
 audio_run=$(print -r -- "$out" | jq -r '.runId // empty' 2>/dev/null)

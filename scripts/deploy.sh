@@ -25,6 +25,18 @@
 # the previous build's directory. A host or audio failure on a deploy that left the gateway running leaves it alone. data/gateway-build
 # and data/gateway-previous-build record the live and the previous build.
 #
+# What a caller sees. Between the bootout and /health, a process refuses connections, and the CLI (packages/cli, restart
+# bound) and the model transports (packages/capabilities, refused-connection window) wait that out. A background probe
+# (probe_start) asks every /health five times a second through the switch, and the deploy prints each process's gap, the
+# time its port refused or did not answer (also appended to data/deploy-gaps.log); every stop and every healthy is
+# stamped with the seconds since the switch began. A deploy that restarts nothing prints no gap.
+#
+# A deploy whose diff against the sha the processes run cannot change a running process restarts nothing (is_inert_path
+# is the one statement of which paths: docs, markdown notes, tests, CI config; agents/** is runtime, the host reads it at
+# boot): it records the sha in data/deployed-sha and leaves data/running-sha, the sha the processes were started for,
+# alone. It only applies when host, audio and the gateway answer healthy at that sha and door-tokens is unchanged; any
+# other state takes the full deploy. `make verify` compares /health with running-sha, `make version` reads deployed-sha.
+#
 # DRY_RUN=1 prints the plan and every rendered plist and touches nothing (no fetch, no launchd, no ~/.local/bin).
 #
 # Everything lives inside `main`, called on the last line: this file is tracked in the repo the deploy exports, and
@@ -32,6 +44,7 @@
 # release's copy once (pinned to the same sha), so the orchestration that runs matches the code being deployed.
 
 set -u
+zmodload zsh/datetime  # EPOCHREALTIME: the gap probe and the stamps
 
 # The processes, in start order. Each: a LaunchAgent label, a port, `deploy/<label>.plist.template` and its logs.
 # RELEASE_PROCESSES run from the release; PROCESSES is what this deploy stops, starts and awaits: those two, plus the
@@ -50,6 +63,9 @@ CURRENT="$ROOT/current"
 DATA_DIR="$ROOT/data"
 SHA_FILE="$DATA_DIR/deployed-sha"
 PREV_FILE="$DATA_DIR/previous-sha"
+# The sha the processes were started for (a skipped restart advances deployed-sha past it); absent: deployed-sha is it.
+RUNNING_FILE="$DATA_DIR/running-sha"
+GAPS_LOG="$DATA_DIR/deploy-gaps.log"
 KEEP_RELEASES=3
 # The gateway: builds live beside the releases, not in them.
 GATEWAY_ROOT="$ROOT/gateway"
@@ -92,6 +108,85 @@ act() {
 }
 
 read_sha() { [[ -f "$1" ]] && tr -d '[:space:]' < "$1"; }
+
+# The sha the live processes run: running-sha, else deployed-sha.
+read_running() { local sha; sha=$(read_sha "$RUNNING_FILE"); print -r -- "${sha:-$(read_sha "$SHA_FILE")}"; }
+
+# Seconds since the switch began, for the stamps in the log (T0 is set when the first process is stopped).
+T0=$EPOCHREALTIME
+stamp() { printf '%.1fs' $(( EPOCHREALTIME - T0 )); }
+
+# Whether a path can only change something no running process executes. The one statement of the rule: docs/**
+# (the eval write-ups and their cases included), the markdown notes of a directory (README.md, AGENTS.md, REVIEW.md;
+# not agents/**: the agents' AGENTS.md and skills are the prompts the host loads at boot), tests (*.test.ts, a test/
+# directory), CI config and the test-timing record. Any other markdown is data some package reads (the image playbook).
+is_inert_path() {  # $1 repo-relative path
+  case "$1" in
+    agents/*) return 1 ;;
+    docs/*|.github/*|.bun-test-timings.json) return 0 ;;
+    *.test.ts|*/test/*) return 0 ;;
+    README.md|AGENTS.md|REVIEW.md|*/README.md|*/AGENTS.md) return 0 ;;
+  esac
+  return 1
+}
+
+# The paths changed between two commits that can change a running process, one per line (none: the diff is inert).
+# Fails when the diff cannot be read (a sha the clone does not have): the caller then deploys in full.
+runtime_changes() {  # $1 git dir, $2 from sha, $3 to sha
+  local files f
+  files=$(git -C "$1" -c core.quotepath=false diff --name-only --no-renames "$2" "$3" 2>/dev/null) || return 1
+  for f in ${(f)files}; do is_inert_path "$f" || print -r -- "$f"; done
+  return 0
+}
+
+# What a caller sees of a deploy: the time each process's /health did not answer, from five probes a second. PROBE_FILE
+# gets one `<epoch> <process> up|down` line per change; a process that was down when the probe began has no gap.
+PROBE_FILE=""
+PROBE_PID=""
+probe_start() {
+  PROBE_FILE="$DATA_DIR/.gap.$$"
+  : > "$PROBE_FILE" || { PROBE_FILE=""; return 0; }
+  (
+    typeset -A last
+    local p code now
+    while :; do
+      for p in host audio gateway; do
+        code=$(curl -s -o /dev/null --max-time 1 -w '%{http_code}' "$(health_url "$p")" 2>/dev/null)
+        if [[ -z "$code" || "$code" == 000 ]]; then now=down; else now=up; fi
+        if [[ "${last[$p]:-}" != "$now" ]]; then print -r -- "$EPOCHREALTIME $p $now" >> "$PROBE_FILE"; last[$p]=$now; fi
+      done
+      sleep "${PROBE_INTERVAL_S:-0.2}"
+    done
+  ) &
+  PROBE_PID=$!
+}
+
+probe_stop() {
+  [[ -n "$PROBE_PID" ]] && { kill "$PROBE_PID" 2>/dev/null; wait "$PROBE_PID" 2>/dev/null; }
+  PROBE_PID=""
+  return 0
+}
+
+# Stops the probe and prints `gap host 7.4s audio 7.1s ...` for each process that was up, refused and answered again.
+probe_report() {  # $1 sha
+  [[ -n "$PROBE_FILE" && -f "$PROBE_FILE" ]] || return 0
+  probe_stop
+  local gaps p code
+  # The probe may not have ticked since the last process turned healthy: one more reading each (a repeated `up` is harmless).
+  for p in host audio gateway; do
+    code=$(curl -s -o /dev/null --max-time 1 -w '%{http_code}' "$(health_url "$p")" 2>/dev/null)
+    print -r -- "$EPOCHREALTIME $p $([[ -z "$code" || "$code" == 000 ]] && print down || print up)" >> "$PROBE_FILE"
+  done
+  gaps=$(awk '
+    $3 == "down" && up[$2] { since[$2] = $1; up[$2] = 0; next }
+    $3 == "up" { if ($2 in since) { printf "%s %.1fs\n", $2, $1 - since[$2]; delete since[$2] } up[$2] = 1 }
+    END { for (p in since) printf "%s still-down\n", p }' "$PROBE_FILE" | tr '\n' ' ')
+  rm -f "$PROBE_FILE"; PROBE_FILE=""
+  gaps="${gaps% }"
+  [[ -n "$gaps" ]] || return 0
+  log "gap (the time a process's /health did not answer): $gaps"
+  print -r -- "$(date -u +%FT%TZ) ${1[1,12]} $gaps" >> "$GAPS_LOG" 2>/dev/null || true
+}
 
 # Atomic: a reader must never see a partial file.
 write_atomic() {  # $1 path, $2 content
@@ -141,7 +236,8 @@ stop_process() {  # $1 process, $2 max seconds to wait for the unload
   launchctl bootout "gui/$(id -u)/${LABELS[$1]}" 2>/dev/null
   local i=0
   while (( i < $2 )) && loaded "$1"; do sleep 1; i=$((i + 1)); done
-  ! loaded "$1"
+  ! loaded "$1" || return 1
+  log "$(stamp) $1 stopped"
 }
 
 # Every process stopped (all are tried); fails naming the ones still loaded.
@@ -189,15 +285,15 @@ is_healthy() {  # $1 sha, $2 process
 
 wait_healthy() {  # $1 sha, $2... processes
   local sha=$1; shift
-  local i=0 p pending=("$@")
-  while (( i < HEALTH_WAIT_SECS )); do
+  local p pending=("$@") deadline=$(( EPOCHREALTIME + HEALTH_WAIT_SECS ))
+  while (( EPOCHREALTIME < deadline )); do
     local still=()
     for p in $pending; do
-      is_healthy "$sha" "$p" || still+=("$p")
+      if is_healthy "$sha" "$p"; then log "$(stamp) $p healthy"; else still+=("$p"); fi
     done
     pending=("${still[@]}")
     (( ${#pending} == 0 )) && return 0
-    sleep 1; i=$((i + 1))
+    sleep 0.2
   done
   print -u2 "[deploy] not healthy at ${sha[1,12]}: ${pending[*]}"
   return 1
@@ -553,6 +649,25 @@ dry_run_gateway() {  # $1 repo root, $2 sha
   act "on failure: the gateway goes back with the others, to build ${live:-none} (none: its plist is removed); after success write $GW_BUILD_FILE (${build:-<build>}), $GW_PREV_FILE (${live:-none}) and $GW_TOKENS_FILE (the door-tokens digest it started on), keep the newest $KEEP_GATEWAY_BUILDS builds plus both"
 }
 
+# A deploy that restarts nothing: the diff from the sha the processes run to $1 touches no runtime path, and every
+# process already answers healthy at that sha with door-tokens as the gateway started on it. Records $1 as deployed.
+# Returns 0 when it did, 1 when this is a deploy for the full path (anything it cannot prove stays a full deploy).
+deploy_without_restart() {  # $1 sha, $2 the sha the processes run ("" = none)
+  local sha=$1 running=$2 changed p
+  [[ -n "$running" ]] || return 1
+  [[ "$running" == "$sha" && "$(read_sha "$SHA_FILE")" == "$sha" ]] && return 1  # a redeploy of the live sha restarts
+  [[ -f "$RELEASES/$running/.complete" && -d "$REPO_DIR/.git" ]] || return 1
+  changed=$(runtime_changes "$REPO_DIR" "$running" "$sha") || return 1
+  if [[ -n "$changed" ]]; then log "the diff ${running[1,12]}..${sha[1,12]} touches runtime paths ($(print -r -- "$changed" | head -n 3 | tr '\n' ' ')...): full deploy"; return 1; fi
+  for p in host audio; do is_healthy "$running" "$p" || { log "$p is not healthy at ${running[1,12]}: full deploy"; return 1; }; done
+  GW_EXPECT=$(read_sha "$GW_BUILD_FILE")
+  { [[ -n "$GW_EXPECT" ]] && is_healthy "" gateway; } || { log "the gateway is not healthy: full deploy"; return 1; }
+  [[ -f "$DOOR_TOKENS" && -z "$(missing_door_callers)" ]] && ! door_tokens_changed "$(door_tokens_digest)" \
+    || { log "door-tokens differs from the one the gateway started on: full deploy"; return 1; }
+  write_atomic "$SHA_FILE" "$sha" || die "writing $SHA_FILE failed"
+  log "deploy OK: ${sha[1,12]} recorded as deployed, nothing restarted (the diff from ${running[1,12]}, which the processes run, touches no runtime path)"
+}
+
 main() {
   local repo_url sha old prev="" release unload_secs env_content p gw_note="" gw_state="left running"
 
@@ -579,12 +694,22 @@ main() {
   if [[ -n "$DRY_RUN" ]]; then
     local repo_root="${SELF_DIR:h}"
     sha=$(git -C "$repo_root" rev-parse origin/master 2>/dev/null || print "<origin/master sha>")
-    old=$(read_sha "$SHA_FILE")
+    old=$(read_running)
     [[ -n "$old" && "$old" != "$sha" && -f "$RELEASES/$old/.complete" ]] && prev="$old"
     [[ -n "$old" && "$old" != "$sha" && -z "$prev" ]] \
       && log "REFUSED: deployed-sha names ${old[1,12]}, but $RELEASES/$old has no .complete marker; the real deploy dies before stopping anything"
     release="$RELEASES/$sha"
     log "DRY RUN: nothing is changed. Release ${sha[1,12]}, live ${old:-none}, processes: ${PROCESSES[*]}"
+    if [[ -n "$old" ]]; then
+      local dry_changes
+      if dry_changes=$(runtime_changes "$repo_root" "$old" "$sha"); then
+        if [[ -z "$dry_changes" ]]; then
+          log "the diff ${old[1,12]}..${sha[1,12]} touches no runtime path: a real deploy restarts nothing while host, audio and the gateway are healthy at ${old[1,12]}, and records ${sha[1,12]} in $SHA_FILE"
+          return 0
+        fi
+        log "runtime paths in the diff ${old[1,12]}..${sha[1,12]}: ${(j: :)${(f)dry_changes}[1,5]}"
+      fi
+    fi
     log "preflight: would read $API_SECRET_REF through secrets-run (value never printed)"
     [[ -d "$REPO_DIR/.git" ]] || act git clone "${repo_url:-<origin url>}" "$REPO_DIR"
     act git -C "$REPO_DIR" fetch --prune origin master
@@ -651,6 +776,8 @@ main() {
   else
     sha="$AGW_DEPLOY_SHA"
   fi
+  # A diff that cannot change a running process restarts nothing (and builds nothing: no process will run it).
+  deploy_without_restart "$sha" "$(read_running)" && return 0
   release="$RELEASES/$sha"
   log "building release ${sha[1,12]}"
   build_release "$sha"
@@ -689,8 +816,8 @@ main() {
     gw_state="restarted"
   fi
 
-  # The release that is live now is the rollback target, unless it is the one being deployed again.
-  old=$(read_sha "$SHA_FILE")
+  # The release that is live now (the one the processes run) is the rollback target, unless it is the one being deployed again.
+  old=$(read_running)
   # A live sha whose release is gone or incomplete leaves no rollback target: a failed deploy would take the "first
   # deploy" path and leave the already stopped service down with its plists removed. Refused before anything is stopped.
   if [[ -n "$old" && "$old" != "$sha" && ! -f "$RELEASES/$old/.complete" ]]; then
@@ -700,6 +827,9 @@ main() {
 
   # --- switch
   log "deploying ${sha[1,12]} (live: ${old:-none}), stopping ${PROCESSES[*]}"
+  T0=$EPOCHREALTIME
+  probe_start
+  trap 'probe_stop; rm -rf "$LOCK"' EXIT
   if ! stop_all "$unload_secs"; then
     restore_unloaded "$old"
     die "a process is still loaded ${unload_secs}s after bootout (ExitTimeOut + 10); not bootstrapping over it. It may still be shutting down: retry the deploy. deployed-sha unchanged."
@@ -742,9 +872,11 @@ main() {
   fi
   write_env_file "$env_content"
   ln -sf "$CURRENT/packages/cli/bin/agw.ts" "$CLI_LINK" || die "linking $CLI_LINK failed"
+  write_atomic "$RUNNING_FILE" "$sha" || die "writing $RUNNING_FILE failed"
   write_atomic "$SHA_FILE" "$sha" || die "writing $SHA_FILE failed"
   prune_releases "$sha" "$(read_sha "$PREV_FILE")"
   prune_gateway_builds "$GW_BUILD" "$(read_sha "$GW_PREV_FILE")"
+  probe_report "$sha"
   log "deploy OK: ${sha[1,12]} healthy (${PROCESSES[*]}); gateway build $GW_BUILD ${gw_state}; agw -> $CLI_LINK, credentials in $ENV_FILE"
 }
 

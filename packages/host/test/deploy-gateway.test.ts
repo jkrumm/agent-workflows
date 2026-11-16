@@ -126,6 +126,7 @@ function setup() {
         AGW_DEPLOY_SHA: sha,
         AGW_DEPLOY_REEXEC: '1',
         HEALTH_WAIT_SECS: '3',
+        PROBE_INTERVAL_S: '1', // the gap probe's pace: coarse here, five stand-in curls a second only add load
       },
     })
     return { code: proc.exitCode, out: proc.stdout.toString(), err: proc.stderr.toString() }
@@ -187,7 +188,7 @@ describeZsh('deploy.sh gateway: the restart rule', () => {
       `<string>${join(t.aw, 'data', 'door-tokens')}</string>`,
       `<string>${join(t.aw, 'data', 'gateway')}</string>`,
       `<string>${t.home}/SourceRoot/dotfiles/config/claude-accounts.json</string>`,
-      '<key>ExitTimeOut</key>\n  <integer>90</integer>',
+      '<key>ExitTimeOut</key>\n  <integer>120</integer>',
     ]) {
       expect(rendered).toContain(expected)
     }
@@ -592,5 +593,220 @@ describeZsh('deploy.sh gateway: the build directory', () => {
     }
     expect(functions(t, `prune_gateway_builds "" ""`).code).toBe(0)
     expect(readdirSync(root).sort()).toEqual(['2'.repeat(16), '3'.repeat(16), '4'.repeat(16)])
+  })
+})
+
+// --- a deploy that cannot change a running process restarts nothing; a restart that does happen reports its gap
+
+const GIT = ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false']
+
+/** The clone the deploy diffs in (`$AW/repo`), with one commit per entry: path → content. Returns the shas, oldest first. */
+function commits(t: Setup, steps: Record<string, string>[]): string[] {
+  const repo = join(t.aw, 'repo')
+  mkdirSync(repo, { recursive: true })
+  const git = (...args: string[]) => {
+    const proc = Bun.spawnSync(['git', ...GIT, ...args], { cwd: repo })
+    if (proc.exitCode !== 0) throw new Error(`git ${args.join(' ')}: ${proc.stderr.toString()}`)
+    return proc.stdout.toString().trim()
+  }
+  git('init', '-q', '-b', 'master')
+  return steps.map((files, i) => {
+    for (const [path, content] of Object.entries(files)) {
+      mkdirSync(join(repo, path, '..'), { recursive: true })
+      writeFileSync(join(repo, path), content)
+    }
+    git('add', '-A')
+    git('commit', '-q', '-m', `c${i}`)
+    return git('rev-parse', 'HEAD')
+  })
+}
+
+const BASE = { 'packages/host/src/main.ts': 'v1', 'docs/concept.md': 'v1', 'README.md': 'v1' }
+
+/** A live deploy of the first commit, then the second one deployed. */
+function deployTwo(second: Record<string, string>) {
+  const t = setup()
+  const [first, next] = commits(t, [BASE, second]) as [string, string]
+  t.release(first, 'v1')
+  expect(t.deploy(first).code).toBe(0)
+  writeFileSync(join(t.home, 'launchctl.log'), '')
+  t.release(next, 'v1') // only a full deploy uses it: a skipped one builds nothing
+  return { t, first, next, result: t.deploy(next) }
+}
+
+describeZsh('deploy.sh: a deploy that cannot change a running process', () => {
+  test('a docs-only diff stops and starts nothing, records the sha as deployed and leaves running-sha', () => {
+    const { t, first, next, result } = deployTwo({
+      'docs/concept.md': 'v2',
+      'docs/evals/new.md': 'x',
+      'README.md': 'v2',
+    })
+    expect(result.code).toBe(0)
+    expect(result.out).toContain('nothing restarted')
+    const log = t.launchctlLog()
+    expect(log).not.toContain('bootout')
+    expect(log).not.toContain('bootstrap')
+    expect(t.data('deployed-sha')).toBe(next)
+    expect(t.data('running-sha')).toBe(first)
+    // The processes still run the first release; verify reads running-sha for that.
+    expect(t.loadedPlist(HOST)).toContain(first)
+  })
+
+  test('a test file, a test directory and CI config are inert too', () => {
+    const { t, result } = deployTwo({
+      'packages/host/src/main.test.ts': 'x',
+      'packages/host/test/new.ts': 'x',
+      '.github/workflows/ci.yml': 'x',
+    })
+    expect(result.out).toContain('nothing restarted')
+    expect(t.launchctlLog()).not.toContain('bootout')
+  })
+
+  test('the next deploy diffs against what runs, not against the last recorded sha: a runtime change after a skipped one restarts', () => {
+    const t = setup()
+    const [first, docs, code] = commits(t, [
+      BASE,
+      { 'docs/concept.md': 'v2' },
+      { 'packages/host/src/main.ts': 'v2' },
+    ]) as [string, string, string]
+    t.release(first, 'v1')
+    expect(t.deploy(first).code).toBe(0)
+    expect(t.deploy(docs).out).toContain('nothing restarted')
+    t.release(code, 'v1')
+    writeFileSync(join(t.home, 'launchctl.log'), '')
+    const result = t.deploy(code)
+    expect(result.code).toBe(0)
+    expect(touches(t.launchctlLog(), HOST, 'bootout')).toBe(1)
+    expect(t.data('running-sha')).toBe(code)
+    expect(t.data('deployed-sha')).toBe(code)
+    expect(t.data('previous-sha')).toBe(first)
+  })
+
+  test.each([
+    ['source', { 'packages/host/src/main.ts': 'v2' }],
+    ['an agent prompt, which the host reads at boot', { 'agents/check/AGENTS.md': 'v2' }],
+    ['a markdown file a package reads', { 'packages/capabilities/playbook/core.md': 'v2' }],
+    ['the deploy script', { 'scripts/deploy.sh': 'v2' }],
+  ])('%s restarts the processes in full', (_name, change) => {
+    const { t, next, result } = deployTwo(change)
+    expect(result.code).toBe(0)
+    expect(result.out).not.toContain('nothing restarted')
+    expect(touches(t.launchctlLog(), HOST, 'bootout')).toBe(1)
+    expect(t.data('running-sha')).toBe(next)
+    expect(t.data('deployed-sha')).toBe(next)
+  })
+
+  test('a process that is not healthy takes the full deploy even for a docs-only diff', () => {
+    const t = setup()
+    const [first, next] = commits(t, [BASE, { 'docs/concept.md': 'v2' }]) as [string, string]
+    t.release(first, 'v1')
+    expect(t.deploy(first).code).toBe(0)
+    t.release(next, 'v1')
+    t.markDown(7792)
+    writeFileSync(join(t.home, 'launchctl.log'), '')
+    const result = t.deploy(next)
+    expect(result.out).toContain('audio is not healthy')
+    expect(result.out).not.toContain('nothing restarted')
+    expect(touches(t.launchctlLog(), HOST, 'bootout')).toBeGreaterThanOrEqual(1) // the stand-in audio never answers: it rolls back
+  }, 60_000)
+
+  test('a diff the clone cannot read, or no running sha at all, is a full deploy', () => {
+    const t = setup()
+    t.release(PREV, 'v1')
+    expect(t.deploy(PREV).code).toBe(0)
+    t.release(NEW, 'v1')
+    writeFileSync(join(t.home, 'launchctl.log'), '')
+    expect(t.deploy(NEW).code).toBe(0)
+    expect(touches(t.launchctlLog(), HOST, 'bootout')).toBe(1)
+  })
+
+  test('verify reads running-sha: the host reports the sha it was started for, and deployed-sha is origin/master', () => {
+    const script = readFileSync(join(ROOT, 'scripts', 'verify.sh'), 'utf8')
+    expect(script).toContain('RUNNING_FILE="$ROOT/data/running-sha"')
+    expect(script).toContain('[[ "$version" == "$running" ]]')
+    expect(script).toContain('== "ok $running"')
+  })
+})
+
+describeZsh('deploy.sh: which paths are inert', () => {
+  test.each([
+    ['docs/concept.md', true],
+    ['docs/evals/2026-11-02-claude-seats.md', true],
+    ['README.md', true],
+    ['AGENTS.md', true],
+    ['REVIEW.md', true],
+    ['packages/host/README.md', true],
+    ['packages/host/src/review/README.md', true],
+    ['packages/host/src/main.test.ts', true],
+    ['packages/host/test/support.ts', true],
+    ['.github/workflows/ci.yml', true],
+    ['.bun-test-timings.json', true],
+    ['agents/check/AGENTS.md', false],
+    ['agents/check/skills/run-step/SKILL.md', false],
+    ['agents/check/agent.json', false],
+    ['packages/capabilities/playbook/core.md', false],
+    ['packages/audio/src/workflows/podcast/show-bible.md', false],
+    ['packages/testing/src/gateway.ts', false],
+    ['packages/host/src/main.ts', false],
+    ['scripts/deploy.sh', false],
+    ['deploy/com.jkrumm.agent-workflows-host.plist.template', false],
+    ['bun.lock', false],
+    ['Makefile', false],
+  ])('%s is inert: %p', (path, inert) => {
+    const t = setup()
+    const result = functions(t, `is_inert_path '${path}' && print inert || print runtime`)
+    expect(result.out.trim()).toBe(inert ? 'inert' : 'runtime')
+  })
+
+  test('runtime_changes lists only the paths that can change a process, none for an empty diff, and fails on an unknown sha', () => {
+    const t = setup()
+    const [a, b, c] = commits(t, [
+      BASE,
+      { 'docs/concept.md': 'v2', 'packages/host/src/main.ts': 'v2' },
+      { 'docs/concept.md': 'v3' },
+    ]) as [string, string, string]
+    const repo = join(t.aw, 'repo')
+    expect(functions(t, `runtime_changes ${repo} ${a} ${b}`).out.trim()).toBe('packages/host/src/main.ts')
+    expect(functions(t, `runtime_changes ${repo} ${b} ${c}`).out.trim()).toBe('')
+    expect(functions(t, `runtime_changes ${repo} ${a} ${a}`).code).toBe(0)
+    expect(functions(t, `runtime_changes ${repo} ${a} ${'f'.repeat(40)}`).code).toBe(1)
+  })
+})
+
+describeZsh('deploy.sh: the gap report', () => {
+  test('a process that was up, did not answer and answered again has its gap printed; one that never came back says so', () => {
+    const t = setup()
+    const probe = join(t.home, 'probe')
+    writeFileSync(
+      probe,
+      [
+        '100.0 host up',
+        '100.0 audio up',
+        '100.0 gateway down', // down when the probe began: no gap to report
+        '103.5 host down',
+        '103.9 audio down',
+        '110.9 host up',
+        '111.4 gateway up',
+      ]
+        .join('\n')
+        .concat('\n'),
+    )
+    const result = functions(
+      t,
+      `curl() { [[ "$*" == *7792* ]] && print 000 || print 200 }; PROBE_FILE=${probe}; DATA_DIR=${t.home}; GAPS_LOG=${t.home}/gaps.log; probe_report ${NEW}`,
+    )
+    expect(result.code).toBe(0)
+    expect(result.out).toContain("gap (the time a process's /health did not answer): host 7.4s audio still-down")
+    expect(readFileSync(join(t.home, 'gaps.log'), 'utf8')).toContain(`${NEW.slice(0, 12)} host 7.4s audio still-down`)
+  })
+
+  test('a restart stamps each stop and each healthy with the seconds since the switch began', () => {
+    const t = liveThenNew('v1', 'v2')
+    const result = t.deploy(NEW)
+    expect(result.code).toBe(0)
+    for (const process of ['host', 'audio', 'gateway']) {
+      expect(result.out).toMatch(new RegExp(`\\[deploy\\] \\d+\\.\\ds ${process} stopped`))
+      expect(result.out).toMatch(new RegExp(`\\[deploy\\] \\d+\\.\\ds ${process} healthy`))
+    }
   })
 })

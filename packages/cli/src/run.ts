@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { assertValues, BIN, coerceStdin, helpText, type Parsed, parseArgs, unsafePathField, usageLine } from './args.ts'
 import { type Env, waitBudgetS } from './config.ts'
 import { AgwError, EXIT, EXIT_MEANING, type ExitKind, usage } from './exit.ts'
-import { type Host, MAX_WAIT_S, type Reply } from './host.ts'
+import { type Host, MAX_WAIT_S, type Reply, Unreachable } from './host.ts'
 import { Platform } from './platform.ts'
 import { type Command, nextWords, resolveCommand, type Schema, waitPlan } from './spec.ts'
 
@@ -119,7 +119,7 @@ class Runner {
   #key: string | undefined
 
   constructor(readonly io: Io) {
-    this.platform = new Platform(io.env)
+    this.platform = new Platform(io.env, (text) => io.err(text))
   }
 
   private get host(): Host {
@@ -275,7 +275,7 @@ class Runner {
     const emit = (body: unknown) => io.out(`${render(body, format, command)}\n`)
     const plan = waitPlan(this.platform.commands, command)
     const budgetS = waitBudgetS(io.env)
-    const deadline = Date.now() + budgetS * 1000
+    let deadline = Date.now() + budgetS * 1000
 
     let reply: Reply
     // The process that answered the start: the wait loop stays on it, so a run is followed where it was started.
@@ -288,8 +288,10 @@ class Runner {
     } catch (error) {
       if (!(error instanceof AgwError)) throw error
       if (error.kind === 'contract_mismatch') throw new StaleContract(error, this.platform.sentTo(error) ?? this.host)
-      // Anything but a 4xx may have landed: the host can insert the run and then answer 500, or lose the answer.
-      if (startsWork && (error.kind === 'network' || serverFailure(error))) {
+      // The host already retried a refused connection, a lost answer and a 502/503/504 with this key for the restart
+      // bound. What is left may have landed: the host can insert the run and then answer 500, or lose the answer.
+      // A refused connection proves nothing was sent, so it carries no such hint.
+      if (startsWork && !(error instanceof Unreachable) && (error.kind === 'network' || serverFailure(error))) {
         throw new AgwError(error.kind, error.message, {
           code: error.code,
           hint: `the run may have started; retry with --idempotency-key ${this.#key}`,
@@ -298,6 +300,7 @@ class Runner {
       }
       throw error
     }
+    deadline += owner.takeWaitedMs() // a restart waited out before the start is not the run's wait budget
     if (!plan) {
       emit(reply.body)
       return EXIT.ok
@@ -410,6 +413,7 @@ class Runner {
         reply = await loop.owner.call(resumeCommand, loop.resumeValues, {
           waitS: Math.min(leftS, MAX_WAIT_S),
           signal: loop.stop,
+          rideRestart: false, // this loop backs off against the run's own deadline
         })
       } catch (error) {
         if (loop.stop.aborted) break

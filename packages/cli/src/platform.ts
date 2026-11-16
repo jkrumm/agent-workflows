@@ -50,8 +50,11 @@ export class Platform {
   /** The process a failed call went to, so a 412 refreshes that contract and no other. */
   readonly #sentTo = new WeakMap<object, Host>()
 
-  constructor(readonly env: Env) {
-    this.host = new Host(env, undefined, () => this.creds())
+  constructor(
+    readonly env: Env,
+    private readonly notice?: (text: string) => void,
+  ) {
+    this.host = new Host(env, undefined, () => this.creds(), notice)
   }
 
   /** Read and validated once per call, and shared by every process. */
@@ -64,7 +67,7 @@ export class Platform {
   get processes(): Host[] {
     this.#processes ??= [
       this.host,
-      ...this.creds().processes.map((target) => new Host(this.env, target, () => this.creds())),
+      ...this.creds().processes.map((target) => new Host(this.env, target, () => this.creds(), this.notice)),
     ]
     return this.#processes
   }
@@ -193,7 +196,8 @@ export class Platform {
   /**
    * Sends the command to the process that declared it. A shared run command tries the next process only when the
    * connection to the last was never opened: the journal answers for every run, so any process gives the same answer,
-   * and a request that may have landed is never sent twice.
+   * and a request that may have landed is never sent twice. Only the last owner waits out a restart (`rideRestart`):
+   * before that, another process that is up answers sooner than the one being restarted comes back.
    */
   async call(
     command: Command,
@@ -203,7 +207,8 @@ export class Platform {
     const owners = this.owners(command)
     for (const [i, { host, command: own }] of owners.entries()) {
       try {
-        return { reply: await host.call(own, values, options), host }
+        const last = i === owners.length - 1
+        return { reply: await host.call(own, values, last ? options : { ...options, rideRestart: false }), host }
       } catch (error) {
         if (error instanceof Unreachable && i < owners.length - 1) continue
         if (error !== null && typeof error === 'object') this.#sentTo.set(error, host)

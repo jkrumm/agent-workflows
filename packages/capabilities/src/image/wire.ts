@@ -1,5 +1,5 @@
 import { CapabilityError } from '../errors.ts'
-import { Attempt, describe, type HttpOptions, withRetries } from '../transports/http.ts'
+import { Attempt, describe, type HttpOptions, isConnectRefused, withRetries } from '../transports/http.ts'
 import { failedImageResponse } from './upstream.ts'
 
 /** The body of a response, read to the end only while it stays within `max` bytes; null once it would not. */
@@ -40,12 +40,6 @@ export async function readJsonBounded(res: Response, wire: string, max: number, 
   } catch {
     throw new Attempt(`${wire} body is not JSON (cut or garbled)`, retryable)
   }
-}
-
-/** The one failure that proves a request never reached the server: the connection was refused. */
-export function isConnectRefused(error: unknown): boolean {
-  const code = (error as { code?: unknown } | null)?.code
-  return code === 'ConnectionRefused' || code === 'ECONNREFUSED'
 }
 
 export interface SendOptions<T> {
