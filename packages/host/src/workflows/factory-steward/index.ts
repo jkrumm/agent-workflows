@@ -1,7 +1,8 @@
-import { guardSteward, stewardUnavailable } from '@agent-workflows/capabilities'
-import { Cancelled, defineWorkflow, InfraError, StepFailed } from '@agent-workflows/runtime'
+import { guardSteward, STEWARD_WORDINGS, type StewardWording, stewardUnavailable } from '@agent-workflows/capabilities'
+import { Cancelled, defineWorkflow, InfraError, StepFailed, WorkflowError } from '@agent-workflows/runtime'
 import type { HostWorkflow } from '../../operations.ts'
 import type { HostRegistry } from '../index.ts'
+import { factoryStewardScorer } from './scorer.ts'
 import { FactoryStewardInput, FactoryStewardOutput } from './schema.ts'
 
 const FACTORY_STEWARD_WORKFLOW_ID = 'factory-steward'
@@ -22,10 +23,19 @@ export function createFactorySteward(deps: { registry: StewardCaller }): HostWor
     version: FACTORY_STEWARD_VERSION,
     input: FactoryStewardInput,
     output: FactoryStewardOutput,
+    scorer: factoryStewardScorer,
     async run(ctx, { stall }) {
+      // An eval arm's prompt wording (`--arm` with `params.stewardWording`); production runs carry none and send the stall as is.
+      const wording = ctx.param('stewardWording', 'current')
+      if (!STEWARD_WORDINGS.some((w) => w === wording))
+        throw new WorkflowError(
+          'invalid_input',
+          `arm param stewardWording must be one of ${STEWARD_WORDINGS.join(', ')}`,
+        )
+      const call = wording === 'current' ? stall : { ...stall, wording: wording as StewardWording }
       try {
         const answer = await ctx.step('steward', ({ callContext }) =>
-          deps.registry.call('factory.steward', stall, callContext),
+          deps.registry.call('factory.steward', call, callContext),
         )
         // Outside the step: an answer journaled before the guard existed is held to it on replay too.
         return guardSteward(answer, stall)
