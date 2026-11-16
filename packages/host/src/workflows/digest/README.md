@@ -128,3 +128,10 @@ no dearer tier was tried. What this cannot say: 12 cases are a small set (one re
 replies are one reader's labels from four repos' sessions, the windows and sessions are written for the set, and `grounded`
 and `windowFacts` check that a text is about its item, not that it reads well. Measured 2026-11-02 on the capability through
 the gateway (credit pools first), not through a deployed host; `agw eval run digest` is the check after the deploy.
+
+**`judged`** (regression and drift, when the host gives the scorer a judge): for up to four items of a run (the first of each
+kind in input order) one boolean question to the `decide` judge (the IU decision API, about $0.00002 for the batch) against the
+item's own text: a heading, session or window answer is faithful (adds no claim the text lacks), a reply's `asks` equals the
+judge's reading of whether the message asks the reader something. It is the mean over the items the judge could answer, so a
+drift row of a sampled production run carries a correctness score beside `valid`. Reported, not gated: it is one model's reading
+(`docs/evals/2026-11-16-judged-drift.md`).
