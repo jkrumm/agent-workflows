@@ -596,10 +596,17 @@ async function extract(
 
 /** The reasons whose verdict is a wall that stays up for a while: remembered per host. */
 const WALL_REASONS: readonly BlockReason[] = ['needs-human', 'cloudflare-challenge', 'bot-protection']
+/**
+ * How long a host whose plain read answered `cloudflare-challenge` is read in the browser first. A plain read of such a
+ * host is a 403 that costs time, and the repeated 403s from one address are the pattern after which the challenge got slower.
+ */
+const CHALLENGED_HOST_MS = 24 * 60 * 60_000
 
 export const createFetch = (deps: ResolvedWebDeps) => {
   const cache = new ReadCache()
   const walls = new WallMemory<BlockReason>()
+  /** Hosts whose plain read met a Cloudflare challenge, remembered for 24 h in this process: read in the browser first, one tab at a time. */
+  const challengedHosts = new WallMemory<'cloudflare-challenge'>(CHALLENGED_HOST_MS)
   /** Reads under way by render flag and URL; a parallel caller of the same page waits on it instead of reading again. */
   const inFlight = new Map<string, Promise<Found>>()
   return defineCapability({
@@ -701,7 +708,9 @@ export const createFetch = (deps: ResolvedWebDeps) => {
         let challenged: string | undefined
         // A PDF is no page a browser reads as text: it goes the plain way even when a rendered read was asked for.
         const isPdf = /\.pdf(?:$|[?#])/i.test(url)
-        const rendered = render && browser !== undefined && !isPdf
+        // A host that answered the plain client with a Cloudflare challenge goes to the browser first, as a rendered read does.
+        const browserFirst = !!host && browser !== undefined && !isPdf && challengedHosts.recall(host) !== undefined
+        const rendered = (render || browserFirst) && browser !== undefined && !isPdf
         const keep = (read: Read, via: CachedRead['via'], why: string) => {
           if (kept.found && kept.found.read.text.length >= read.text.length) return
           kept.found = { read: { ...read, incomplete: why }, via, at: Date.now(), legs }
@@ -729,6 +738,7 @@ export const createFetch = (deps: ResolvedWebDeps) => {
             const outcome = directOutcome(error)
             timeline(leg, began, outcome)
             if (target === url && outcome === 'timeout') directTimedOut = true
+            if (host && error.blocked === 'cloudflare-challenge') challengedHosts.remember(host, 'cloudflare-challenge')
             // A page that is definitively gone is not worth a paid second opinion; another spelling of it may be missing alone.
             if (error.missing && target === url)
               throw fail(
@@ -753,7 +763,10 @@ export const createFetch = (deps: ResolvedWebDeps) => {
           let waitMs = 0
           let outcome: Leg['outcome'] = 'failed'
           try {
-            const page = await browser(target, ctx.signal, { onTabWait: (ms) => (waitMs = ms) })
+            const page = await browser(target, ctx.signal, {
+              onTabWait: (ms) => (waitMs = ms),
+              ...(host && challengedHosts.recall(host) ? { challengedHost: true } : {}),
+            })
             ctx.addUsage(webUsage('browser', 0))
             // A read that passes ends the handoff of its host: the tab kept for the owner is no longer needed.
             if (!page.challenge) void pageHold?.release(new URL(target).hostname).catch(() => undefined)
@@ -814,7 +827,9 @@ export const createFetch = (deps: ResolvedWebDeps) => {
           if (page) return page
         }
 
-        if (rendered) {
+        // A challenged host that the browser answered (a page, a wall) is not read plain after it: the 403 is known. The
+        // plain read is the way out only when the browser could not read at all.
+        if (rendered && !(browserFirst && !browserFailed)) {
           const page = await plain()
           if (page) return page
         }

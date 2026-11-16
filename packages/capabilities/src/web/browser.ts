@@ -18,6 +18,12 @@ export interface BrowserReadOptions {
   html?: boolean
   /** Told how long the read waited for one of the process's tab slots (0 when one was free): the queue is part of the browser leg's latency. */
   onTabWait?: (ms: number) => void
+  /**
+   * The host of the URL is known to sit behind a bot challenge: at most one tab of it is open at a time, so parallel reads
+   * produce one challenge and the others ride on its cookie. A host that is not marked is limited by the tab cap alone
+   * (ten pages of one script-rendered docs site are not serialised), unless a read of it is in a challenge right now.
+   */
+  challengedHost?: boolean
 }
 
 /**
@@ -40,8 +46,20 @@ export class BrowserRefused extends Error {}
 const TAB_REQUEST_MS = 10_000
 const COMMAND_MS = 15_000
 const LOAD_WAIT_MS = 20_000
-/** How long a challenge may take to clear by itself (Cloudflare's usually does within seconds in a headed browser). */
+/** How long a page that is no challenge gets to hydrate. */
 const SETTLE_MS = 20_000
+/**
+ * How long a page that is still a challenge (`isChallenge`) gets to clear by itself, from the start of the read. Cloudflare's
+ * non-interactive check cleared after 4 to 10 s in the research Chrome, two `agw web fetch` calls took 16.5 s and 23.6 s,
+ * and a few reads were still on `Just a moment...` after 30 and 39 s: 20 s sat inside that spread. The read ends the moment
+ * the challenge is gone and the page passes the rendered test; the page then gets `SETTLE_MS` of its own to hydrate.
+ *
+ * Hard limit: agw never sends input to a challenge widget and never answers a "verify you are human" check (no `Input.*`
+ * command is dispatched to a page, a test pins it). An interactive check never clears by itself, and passing it is the owner's,
+ * through the handoff (`handoff.ts`). No signal that tells an interactive check from one still working was proven reliable
+ * (the widget is a cross-origin frame outside the tab's session), so an interactive check costs this whole limit.
+ */
+const CHALLENGE_MS = 45_000
 /**
  * The poll interval is the floor of every read (two equal polls end it): 1 s before, 400 ms now. A challenge is only
  * ever returned when `SETTLE_MS` is over, never from a poll, so a faster poll cannot turn a page into a false challenge;
@@ -59,10 +77,30 @@ const HYDRATED_CHARS = 200
 const QUIET_POLLS = 8
 const MAX_TEXT_CHARS = 2_000_000
 const MAX_HTML_CHARS = 6_000_000
-/** Tabs open at once, across all runs of this process. */
-const MAX_TABS = 3
-/** Tabs kept open on a challenged page for the owner, across all hosts. They hold no slot of `MAX_TABS`. */
+/**
+ * Tabs open for reads at once: the machine-wide cap, because every `web.fetch` runs in the one host process and parallel
+ * research runs share it. `AGW_BROWSER_MAX_TABS` sets it (bounds `MIN_TABS` to `MAX_TABS_LIMIT`). It is a memory figure: a tab
+ * measured about 120 MiB (three loaded tabs added about 350 MiB to an idle Chrome), so 8 is about 1 GiB of tabs.
+ */
+const DEFAULT_MAX_TABS = 8
+const MIN_TABS = 1
+const MAX_TABS_LIMIT = 16
+/**
+ * Tabs kept open on a challenged page for the owner, across all hosts. They do not count against the tab cap and hold no
+ * slot of it, and they do not block a read of their host (it opens a tab of its own; a pass releases the kept one, a second
+ * keep of the host replaces it). The true ceiling is therefore the cap plus this: 11 tabs, about 1.3 GiB, by default.
+ */
 const MAX_KEPT = 3
+
+/** The tab cap from `AGW_BROWSER_MAX_TABS`: unset or empty is the default; anything but an integer from 1 to 16 is refused, naming the variable. */
+export function parseMaxTabs(raw: string | undefined): number {
+  const value = raw?.trim()
+  if (!value) return DEFAULT_MAX_TABS
+  const tabs = Number(value)
+  if (!/^\d+$/.test(value) || tabs < MIN_TABS || tabs > MAX_TABS_LIMIT)
+    throw new RangeError(`AGW_BROWSER_MAX_TABS must be an integer from ${MIN_TABS} to ${MAX_TABS_LIMIT}`)
+  return tabs
+}
 
 const CHALLENGE_TITLE =
   /just a moment|nur einen moment|prove your humanity|something has gone wrong|attention required|verify you are human|checking your browser|ddos protection|access denied|are you a robot|blocked by network security/i
@@ -80,10 +118,15 @@ let openTabs = 0
 const waiters: { wake: () => void; live: boolean }[] = []
 
 /** Runs `body` once one of the process's tab slots is free; a waiter that aborts leaves the queue, so no wakeup is lost on it. */
-async function withTab<T>(signal: AbortSignal, body: () => Promise<T>, onWait?: (ms: number) => void): Promise<T> {
+async function withTab<T>(
+  signal: AbortSignal,
+  maxTabs: number,
+  body: () => Promise<T>,
+  onWait?: (ms: number) => void,
+): Promise<T> {
   signal.throwIfAborted()
   const queuedAt = Date.now()
-  while (openTabs >= MAX_TABS) {
+  while (openTabs >= maxTabs) {
     const waiter = { wake: () => {}, live: true }
     await new Promise<void>((resolve, reject) => {
       const onAbort = () => {
@@ -115,6 +158,49 @@ async function withTab<T>(signal: AbortSignal, body: () => Promise<T>, onWait?: 
         break
       }
     }
+  }
+}
+
+/** Hosts whose tab is held by a read that needs the host to itself, each with the reads queued behind it (the key is the lock). */
+const hostQueues = new Map<string, { wake: () => void; live: boolean }[]>()
+/** Reads that are in a challenge right now, per host: a read that starts meanwhile takes the host lock too. */
+const challenging = new Map<string, number>()
+
+/**
+ * Runs `body` with the host to itself: one tab per walled host, so parallel reads produce one challenge and the rest
+ * ride on its cookie. The lock is taken before the global tab slot (`withTab` runs inside `body`), never after, so reads
+ * waiting on one walled host hold no slot. A waiter that aborts leaves the queue; the lock is handed on, never dropped.
+ */
+async function withHost<T>(host: string, signal: AbortSignal, body: () => Promise<T>): Promise<T> {
+  signal.throwIfAborted()
+  const queue = hostQueues.get(host)
+  if (queue) {
+    const waiter = { wake: () => {}, live: true }
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = () => {
+        waiter.live = false
+        reject(signal.reason)
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+      waiter.wake = () => {
+        signal.removeEventListener('abort', onAbort)
+        resolve()
+      }
+      queue.push(waiter)
+    }).catch((error) => {
+      const at = queue.indexOf(waiter)
+      if (at >= 0) queue.splice(at, 1)
+      throw error
+    })
+  } else hostQueues.set(host, [])
+  try {
+    return await body()
+  } finally {
+    const waiting = hostQueues.get(host)!
+    let next = waiting.shift()
+    while (next && !next.live) next = waiting.shift()
+    if (next) next.wake()
+    else hostQueues.delete(host)
   }
 }
 
@@ -437,12 +523,14 @@ export async function readViaCdp(
   url: string,
   signal: AbortSignal,
   policy: RequestPolicy,
-  timing: { settleMs?: number; pollMs?: number; openMs?: number } = {},
+  timing: { settleMs?: number; challengeMs?: number; pollMs?: number; openMs?: number; maxTabs?: number } = {},
   options: BrowserReadOptions = {},
 ): Promise<BrowserPage> {
+  const host = new URL(url).hostname
   const read = async () => {
     const tab = await openTab(base, signal)
     let session: Session | undefined
+    let inChallenge = false
     const onAbort = () => session?.close()
     try {
       signal.addEventListener('abort', onAbort, { once: true })
@@ -457,6 +545,9 @@ export async function readViaCdp(
       }
       signal.throwIfAborted()
       const guard = await guardPage(session, policy)
+      // The window of the headless mini is occluded, so a tab reports `hidden` and throttles its timers; a challenge that
+      // counts on them runs slower. Emulating focus makes the page `visible`. Best effort: a browser without it is read as before.
+      await session.send('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => undefined)
       await guard.navigate(url)
       signal.throwIfAborted()
 
@@ -466,7 +557,11 @@ export async function readViaCdp(
         if (!page.challenge && guard.status >= 400) throw new BrowserFailure(`the page answered HTTP ${guard.status}`)
         return page
       }
-      const deadline = Date.now() + (timing.settleMs ?? SETTLE_MS)
+      const began = Date.now()
+      const settleMs = timing.settleMs ?? SETTLE_MS
+      const challengeMs = timing.challengeMs ?? CHALLENGE_MS
+      // The hydration window starts when the challenge is gone: a page that cleared at 30 s still gets `settleMs` to render.
+      let settledFrom = began
       let last: BrowserPage | undefined
       let lastLength = -1
       let unchanged = 0
@@ -486,7 +581,13 @@ export async function readViaCdp(
           }
           const text = (snap.text ?? '').trim().slice(0, MAX_TEXT_CHARS)
           const title = snap.title ?? ''
-          last = { finalUrl: snap.url ?? url, title, text, challenge: isChallenge(title, text) }
+          const challenge = isChallenge(title, text)
+          if (last?.challenge && !challenge) settledFrom = Date.now()
+          last = { finalUrl: snap.url ?? url, title, text, challenge }
+          if (challenge && !inChallenge) {
+            inChallenge = true
+            challenging.set(host, (challenging.get(host) ?? 0) + 1)
+          }
           if (options.html) last.html = (snap.html ?? '').slice(0, MAX_HTML_CHARS)
         } catch (error) {
           // A navigation in flight destroys the page context for a moment; the next poll sees the new page.
@@ -502,7 +603,7 @@ export async function readViaCdp(
           (guard.inFlight.size === 0 || unchanged >= QUIET_POLLS)
         )
           return accept(last)
-        if (Date.now() >= deadline) break
+        if (Date.now() >= (last?.challenge ? began + challengeMs : settledFrom + settleMs)) break
         await Bun.sleep(timing.pollMs ?? POLL_MS)
       }
       if (!last) throw new BrowserFailure('the page could not be read')
@@ -511,9 +612,17 @@ export async function readViaCdp(
       signal.removeEventListener('abort', onAbort)
       session?.close()
       await closeTab(base, tab.id)
+      if (inChallenge) {
+        const left = (challenging.get(host) ?? 1) - 1
+        if (left > 0) challenging.set(host, left)
+        else challenging.delete(host)
+      }
     }
   }
-  return withTab(signal, read, options.onTabWait)
+  const maxTabs = timing.maxTabs ?? DEFAULT_MAX_TABS
+  const slotted = () => withTab(signal, maxTabs, read, options.onTabWait)
+  // A walled host (marked, or in a challenge right now) is read one tab at a time; the lock comes before the slot.
+  return options.challengedHost || challenging.has(host) ? withHost(host, signal, slotted) : slotted()
 }
 
 /** A tab kept on a challenged page: its guarding session stays attached until the tab is dropped. */
@@ -620,10 +729,14 @@ export const ownerPage = (hold: PageHold | undefined, url: string, signal: Abort
   }
 
 /** The browser reader `AGW_BROWSER_CDP_URL` configures: loopback http only (the endpoint is unauthenticated). */
-export function browserFromEnv(endpoint: string | undefined, policy: RequestPolicy): BrowserRead | undefined {
+export function browserFromEnv(
+  endpoint: string | undefined,
+  policy: RequestPolicy,
+  maxTabs?: number,
+): BrowserRead | undefined {
   const base = loopbackBase(endpoint)
   if (!base) return undefined
-  return (url, signal, options) => readViaCdp(base, url, signal, policy, {}, options)
+  return (url, signal, options) => readViaCdp(base, url, signal, policy, { maxTabs }, options)
 }
 
 /** The kept tabs of the browser `AGW_BROWSER_CDP_URL` configures; the same loopback rule as `browserFromEnv`. */
