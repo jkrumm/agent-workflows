@@ -172,7 +172,7 @@ export function createHdxCapabilities(deps: HdxDeps = {}) {
       } else {
         const result = shaped(
           promptGet,
-          await rpc(d, input.env, ctx.signal, 'prompts/get', { name: input.prompt }),
+          await rpc(d, input.env, ctx.signal, 'prompts/get', { name: input.prompt, arguments: {} }),
           input.env,
           'prompts/get',
         )

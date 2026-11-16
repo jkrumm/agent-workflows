@@ -54,7 +54,8 @@ function fakeHyperdx(override?: (seen: Seen, n: number) => Response | undefined)
         if (method === 'tools/list') return ok({ tools: TOOL_LIST })
         if (method === 'initialize') return ok({ instructions: 'Pick the narrowest tool.' })
         if (method === 'prompts/get')
-          return params.name === 'query_guide'
+          // prod's ClickStack validates the arguments object: undefined is -32602
+          return params.name === 'query_guide' && params.arguments !== null && typeof params.arguments === 'object'
             ? ok({ messages: [{ role: 'user', content: { type: 'text', text: 'Use mapValue syntax.' } }] })
             : new Response(sse({ jsonrpc: '2.0', id, error: { code: -32602, message: 'Unknown prompt' } }), {
                 headers: { 'content-type': 'text/event-stream' },
