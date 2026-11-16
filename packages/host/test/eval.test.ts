@@ -204,6 +204,8 @@ describe('agw eval run', () => {
 })
 
 describe('agw eval compare on synthetic runs', () => {
+  // post_hooks_at is set: `check` is registered, so the runtime would redeliver runPost for a done run without it, and
+  // the record middleware would rewrite its cost and unpriced_calls from its (absent) steps while compare reads it.
   const insert = async (
     id: string,
     fp: string,
@@ -215,8 +217,8 @@ describe('agw eval compare on synthetic runs', () => {
     sql.pool.query(
       `insert into "${db.schema}".runs (id, workflow, root_id, purpose, input, input_hash, lock_key, version_started,
          status, fingerprint, cost, wall_ms, tokens_input, tokens_output, tool_calls, unpriced_calls, scores,
-         score_source, scored_at, finished_at)
-       values ($1, 'check', $1, 'eval', '{}', 'h', 1, 'v', 'done', $2, $3, 1000, 100, 10, 4, $5, $4, 'regression', now(), now())`,
+         score_source, scored_at, finished_at, post_hooks_at)
+       values ($1, 'check', $1, 'eval', '{}', 'h', 1, 'v', 'done', $2, $3, 1000, 100, 10, 4, $5, $4, 'regression', now(), now(), now())`,
       [
         id,
         fp,
