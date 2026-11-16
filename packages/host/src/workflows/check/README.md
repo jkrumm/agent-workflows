@@ -23,7 +23,7 @@ Behaviour is ported from agent-gateway's `check`, the code is written fresh. Leg
    one journaled step (`commands`; a step id is a literal, so a resume runs them all again) through the same `runStep` as the contract path: the idle watchdog, the
    output tail, the exit code. A red command does not stop the rest; the report holds every step that ran. A step is
    named `format | lint | typecheck | test` by what the command runs (`commandStepName`), else after its tool
-   (`cargo audit` is `cargo`). `typecheck` and `test` steps wait for a factory test slot and get the test idle window,
+   (`cargo audit` is `cargo`); a bare `make check` is `check`, as on the contract path. `typecheck` and `test` steps wait for a factory test slot and get the test idle window,
    the others the step window (§Machine budget); `errors` are the last 50 non-empty lines, 500 characters each, and an
    idle kill says `no output for Ns`. The summary is `All N steps passed`, else `K/N steps failed: <command> failed
    (exit C); …`. The caller's commands win over `make check`; no Makefile probe and no `fallow`.

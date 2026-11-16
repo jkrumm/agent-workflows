@@ -187,6 +187,7 @@ async function contractCheck(
 
 /** Step names by what the command runs, in the contract's vocabulary; any other command is named after its tool. */
 const STEP_KINDS: [name: string, pattern: RegExp][] = [
+  ['check', /^\s*make\s+check\s*$/], // the repo contract by hand: named as on the contract path
   ['typecheck', /\b(tsc|typecheck|type-check|mypy|pyrefly|pyright)\b|\bty check\b/],
   ['test', /\b(test|tests|pytest|vitest|jest)\b/],
   ['format', /\b(format|fmt|oxfmt|prettier|gofmt)\b|\bruff format\b/],
