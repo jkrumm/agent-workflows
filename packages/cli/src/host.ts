@@ -145,6 +145,19 @@ interface ErrorBody {
 const asRecord = (v: unknown): Record<string, unknown> =>
   v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {}
 
+/**
+ * A schema failure arrives as `Input validation failed` with the issues in `data`; the caller reads `message` and
+ * `details` never reach an agent, so the first issue (field, constraint, limit) joins the message.
+ */
+export function withFirstIssue(message: string, data: unknown): string {
+  const issues = asRecord(data).issues
+  const first = Array.isArray(issues) ? asRecord(issues[0]) : undefined
+  if (!first || typeof first.message !== 'string') return message
+  const path = Array.isArray(first.path) ? first.path.map((part) => String(asRecord(part).key ?? part)).join('.') : ''
+  const more = (issues as unknown[]).length > 1 ? ` (+${(issues as unknown[]).length - 1} more in details.issues)` : ''
+  return `${message}: ${path ? `${path}: ` : ''}${first.message}${more}`
+}
+
 function hintFor(kind: AgwError['kind'], env: Env, command: Command | undefined, retryAfter: string | null): string {
   if (kind === 'auth') return `check AGW_API_SECRET (environment or ${envFilePath(env)})`
   if (kind === 'contract_mismatch') return `${BIN} schema --refresh`
@@ -356,7 +369,7 @@ export class Host {
     const kind = kindForStatus(response.status, code)
     const message =
       typeof error.message === 'string'
-        ? error.message
+        ? withFirstIssue(error.message, error.data)
         : `HTTP ${response.status}${text ? `: ${text.slice(0, 200)}` : ''}`
     const retryAfter = response.headers.get('retry-after')
     throw new AgwError(kind, message, {

@@ -408,7 +408,10 @@ export async function startFakeHost(options: FakeHostOptions = {}): Promise<Fake
         const required = ((wf.input.required ?? []) as string[]).filter(
           (k) => input[k] === undefined || input[k] === '',
         )
-        if (required.length) return errorBody('BAD_REQUEST', 400, `Input validation failed: ${required.join(', ')}`)
+        if (required.length)
+          return errorBody('BAD_REQUEST', 400, `Input validation failed: ${required.join(', ')}`, {
+            issues: required.map((key) => ({ path: [key], message: 'Invalid input: expected a value' })),
+          })
         const key = request.headers.get('idempotency-key') ?? undefined
         const existing = key ? [...runs.values()].find((r) => r.key === key && r.workflowId === wf.id) : undefined
         if (existing && existing.input !== text)
