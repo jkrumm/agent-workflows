@@ -2,6 +2,7 @@ import { casesPath } from '@agent-workflows/eval'
 import { type EvalCase, plainSuite, type Suites } from '../suite.ts'
 
 export type { EvalCase, Suite, Suites } from '../suite.ts'
+export { suiteWorkflow } from '../suite.ts'
 
 /** The suite ids, sorted: the `workflow` enum of `agw eval run|compare` (a zod enum needs one at least). */
 export function suiteIds(suites: Suites): [string, ...string[]] {

@@ -43,14 +43,17 @@ export {
 } from './capabilities/factory-ask.ts'
 // The `factory-steward`, `factory-queue`, `factory-triage`, `factory-screen`, `factory-errand`, `factory-errand-needed` and `factory-spec-screen` workflows share their seats' vocabulary, input limits and guards.
 export {
+  buildFactoryStewardPrompt,
   factoryStewardInput,
   factoryStewardOutput,
   guardSteward,
   STALL_CAUSES,
   STEWARD_ACTIONS,
+  STEWARD_WORDINGS,
   stewardUnavailable,
   type FactoryStewardInput,
   type FactoryStewardOutput,
+  type StewardWording,
 } from './capabilities/factory-steward.ts'
 export {
   DIGEST_LIMITS,

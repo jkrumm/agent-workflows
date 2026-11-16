@@ -18,7 +18,7 @@ import {
 import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
 import type { EvalRuntime, EvalSlot } from './slot.ts'
-import { type EvalCase, readSuite, type Suites, suiteIds } from './suites.ts'
+import { type EvalCase, readSuite, type Suites, suiteIds, suiteWorkflow } from './suites.ts'
 
 export const EVAL_RUN_ID = 'eval.run'
 /** Estimates read the latest this many done runs of the workflow. */
@@ -266,7 +266,7 @@ export function createEvalRun(slot: EvalSlot, suites: Suites, options: EvalRunOp
     async run(ctx, input) {
       const args = input.args ?? {}
       const plan = await ctx.step('plan', async () => {
-        const target = slot.target(input.workflow)
+        const target = slot.target(suiteWorkflow(suites, input.workflow))
         let cases: EvalCase[]
         try {
           cases = readSuite(suites, input.workflow, env)
@@ -282,7 +282,7 @@ export function createEvalRun(slot: EvalSlot, suites: Suites, options: EvalRunOp
             `args do not fit the ${input.workflow} input: ${z.prettifyError(probe.error)}`,
           )
         }
-        const history = await slot.get().recentCost(input.workflow, ESTIMATE_HISTORY)
+        const history = await slot.get().recentCost(suiteWorkflow(suites, input.workflow), ESTIMATE_HISTORY)
         return {
           ids: selected.map((c) => c.id),
           estimate: {
@@ -309,7 +309,7 @@ export function createEvalRun(slot: EvalSlot, suites: Suites, options: EvalRunOp
           },
           {
             evalRunId: ctx.runId,
-            target: slot.target(input.workflow),
+            target: slot.target(suiteWorkflow(suites, input.workflow)),
             cases: readSuite(suites, input.workflow, env),
             ids: plan.ids,
             args,

@@ -82,10 +82,15 @@ describe('workflow discovery', () => {
       'digest',
       'factory-ask',
       'factory-classify',
+      'factory-digest',
       'factory-errand-needed',
       'factory-errand',
+      'factory-fix-classes',
+      'factory-hygiene',
+      'factory-queue',
       'factory-screen',
       'factory-spec-screen',
+      'factory-steward',
       'factory-triage',
       'image-icon',
       'image',
@@ -166,6 +171,15 @@ describe('a module with a suite', () => {
     expect(buildWorkflows([module(() => [workflow('alpha')])], deps, () => true).map((w) => w.workflow.id)).toEqual([
       'alpha',
     ])
+  })
+
+  test('naming the workflow it replays, it builds a module whose id is a directory name', () => {
+    const named = { ...module(() => [workflow('alpha.run')]), suite: { workflow: 'alpha.run', read: () => [] } }
+    expect(buildWorkflows([named], deps, () => true).map((w) => w.workflow.id)).toEqual(['alpha.run'])
+    const wrong = { ...named, suite: { workflow: 'alpha.other', read: () => [] } }
+    expect(() => buildWorkflows([wrong], deps, () => true)).toThrow(
+      'declares a suite but serves no workflow "alpha.other"',
+    )
   })
 
   test('that built workflows but none of its id fails, naming the file', () => {

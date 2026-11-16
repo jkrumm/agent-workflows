@@ -54,3 +54,9 @@ screen, spend, security policy, people data in a work repo, an irreversible drop
 precedent the screen settled and the owner still needed, and injections in the content and in a precedent's note). Reference:
 `{verdict}`. The deterministic scorer (`scorer.ts`, 0/1 scores): `valid`, `verdict`, `safe` (no `settle` where the reference is
 `pass`; a wrong settle is named in the feedback). `pass` is valid and verdict; a failed run scores 0 everywhere.
+
+**`judged`** (regression and drift, when the host gives the scorer a judge): the `decide` judge (the IU decision API,
+about $0.00002 a call) answers "does the owner have to read this Spec?" afresh from the rules, the Issue, the Spec and the
+precedents, never the screen's verdict, and `judged` is 1 when the verdict agrees. A drift row of a sampled production run
+carries it beside `valid`, so a sampled run says whether the screen was right and not only whether the JSON parsed.
+Route and reliability: `docs/evals/2026-11-16-judged-drift.md`.

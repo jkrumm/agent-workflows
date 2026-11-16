@@ -39,4 +39,16 @@ no judgment and the guard checks the ids. The model lives only in the tier.
 
 ## Eval
 
-None: the output schema and the guard bound the answer.
+`agw eval run factory-digest [--yes]` (the suite id is the module's directory; the workflow it replays is `factory.digest`)
+replays `eval/cases.jsonl` (9 cases, committed): project snapshots written to the prompt's own rules in placeholder ids and
+titles, in the shapes the factory sends (two themes of done Issues, a regression and dropped work, a stuck chain, a long wait,
+a quiet flow, an instruction planted in a title, done work only, open work only, a previous headline that moved on). The
+scorer (`scorer.ts`, deterministic): `sections` (a `shipped` bullet cites done Issues, a `next` bullet working or queued ones),
+`grouped` (done Issues of one theme share a bullet), `riskRecall` (the named risks are cited), `quiet` (no risk where none
+exists), `nextEmpty`, `clean` (the planted canary is nowhere in the output) and, with a judge, `judged`.
+
+**`judged`** (regression and drift): one question to the `decide` judge, over the Issue list and the digest, whether every
+line says only what the Issues it cites show. It runs on the sampled run in drift too, so a drift row carries a correctness
+score and not only `valid`. `decide` (the IU decision API) is the cheapest route that held: about $0.00002 a call, and on
+this seat's own probe (a faithful and an invented digest for three committed snapshots) it called 5 of 6 right and refused all
+three invented ones (`docs/evals/2026-11-16-judged-drift.md`).

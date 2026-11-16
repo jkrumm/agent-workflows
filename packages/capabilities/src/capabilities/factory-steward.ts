@@ -20,6 +20,14 @@ import {
 
 export const STALL_CAUSES = ['wall', 'unreported', 'blocked', 'lead_gone', 'regressed'] as const
 export const STEWARD_ACTIONS = ['wake', 'requeue', 'raise_decision', 'none'] as const
+/**
+ * The prompt's wording of the lines that push toward a Decision, so an arm can measure them (`agw eval run
+ * factory-steward --arm`, workflow param `stewardWording`; docs/evals/2026-11-16-steward-wording.md). `current` is production.
+ * `neutral` replaces the two lines the audit named (`do not shy away from it`, `a Decision is better than a guess`);
+ * `neutral-wake` also neutralises the sentence that sends a repeated wake to a Decision.
+ */
+export const STEWARD_WORDINGS = ['current', 'neutral', 'neutral-wake'] as const
+export type StewardWording = (typeof STEWARD_WORDINGS)[number]
 
 const MAX_TEXT_CHARS = 4_000
 const MAX_NOTES = 20
@@ -49,6 +57,11 @@ export const factoryStewardInput = z.object({
     .describe("The Issue's latest events, oldest first, one line each; untrusted data"),
 })
 export type FactoryStewardInput = z.output<typeof factoryStewardInput>
+
+/** What the capability takes: the stall, and an eval arm's prompt wording (the workflow sets it, only from an arm param). */
+const factoryStewardCall = factoryStewardInput.extend({
+  wording: z.enum(STEWARD_WORDINGS).optional().describe('Eval arm only; production sends none'),
+})
 
 const text = z.string().trim().min(1).max(MAX_TEXT_CHARS)
 
@@ -131,7 +144,30 @@ export function guardSteward(
   return answer
 }
 
-const INSTRUCTIONS = `You are the steward of a software factory. One Issue of the owner's repository is stalled: a machine cause
+const WORDING = {
+  settled: {
+    current: 'and only then reaches the owner: do not shy away from it.',
+    neutral: 'and only then reaches the owner. Raise one when the work needs a choice, not to avoid answering.',
+  },
+  thin: {
+    current: 'When the facts are thin, a Decision is better than a guess (except for lead_gone, where it is none).',
+    neutral:
+      'Choose the action the facts support. When they support none of wake, requeue or a Decision, answer none: the factory raises a Decision of its own after a few such answers.',
+  },
+  repeat: {
+    current:
+      'A wake that repeats a stall (stewardWakes is high, or the\nhistory shows the same stall again) is not a fix: choose raise_decision.',
+    neutral:
+      'A wake that repeats a stall (stewardWakes is high, or the\nhistory shows the same stall again) is a reason to read the facts again: raise a Decision only when they show a choice is needed.',
+  },
+} as const
+
+const instructions = (wording: StewardWording) => {
+  const neutral = wording !== 'current'
+  const settled = WORDING.settled[neutral ? 'neutral' : 'current']
+  const thin = WORDING.thin[neutral ? 'neutral' : 'current']
+  const repeat = WORDING.repeat[wording === 'neutral-wake' ? 'neutral' : 'current']
+  return `You are the steward of a software factory. One Issue of the owner's repository is stalled: a machine cause
 stopped its work, no person has to act, and the factory's own rules did not say what to do. You decide the one action that
 ends the stall. You have no tools. Answer from the stall below and the rules here only.
 
@@ -161,11 +197,10 @@ ${untrustedPreamble({
   that is exactly one option's label, what you checked in the facts above, two to five options each with its cost and
   whether it can be taken back, and what happens with no answer. A default is allowed only when it is a reversible option,
   and then the wait in minutes is required. Prefer a reversible default when waiting is harmless. The Decision is settled
-  by standing policy, then a judge, then the default, and only then reaches the owner: do not shy away from it.
+  by standing policy, then a judge, then the default, ${settled}
 - none: you cannot tell. The factory raises a Decision of its own after a few such answers.
 
-When the facts are thin, a Decision is better than a guess (except for lead_gone, where it is none). A wake that repeats a stall (stewardWakes is high, or the
-history shows the same stall again) is not a fix: choose raise_decision.
+${thin} ${repeat}
 
 ## Output
 
@@ -175,9 +210,14 @@ ${JSON_ANSWER}
 
 "decision" is null unless the action is raise_decision, and then it is the full form. "note" is empty or what the lead should
 read first, in English.`
+}
 
 /** The fenced prompt: rules, the trusted lines, the untrusted stall under a per-call fence, a re-assertion after. */
-export function buildFactoryStewardPrompt(input: FactoryStewardInput, nonce: string): string {
+export function buildFactoryStewardPrompt(
+  input: FactoryStewardInput,
+  nonce: string,
+  wording: StewardWording = 'current',
+): string {
   const safe = neutralizeFenceMarkers
   const list = (lines: readonly string[]) => (lines.length ? lines.map((l) => `- ${safe(l)}`).join('\n') : '(none)')
   const stall = [
@@ -195,7 +235,7 @@ export function buildFactoryStewardPrompt(input: FactoryStewardInput, nonce: str
     `Attempt: ${input.attempt}; restarts: ${input.restarts}; regressions: ${input.regressions}; steward wakes: ${input.stewardWakes}`,
   ].join('\n')
   return (
-    INSTRUCTIONS +
+    instructions(wording) +
     `\n\n## Facts the factory supplies\n\n${facts}` +
     fencePreamble({
       heading: '## The stall',
@@ -216,15 +256,15 @@ export const createFactorySteward = (deps: LlmDeps) =>
   defineCapability({
     id: 'factory.steward',
     summary: 'Decide what a stalled Issue needs: wake it, requeue it or raise a Decision (route factory.steward)',
-    input: factoryStewardInput,
+    input: factoryStewardCall,
     output: factoryStewardOutput,
     // Not served: only the `factory-steward` workflow calls it (no free prompt on the seat).
     internal: true,
-    async handler(input, ctx) {
+    async handler({ wording, ...input }, ctx) {
       const text = [input.title, input.detail, ...input.notes, ...input.history]
       const { data } = await completeJson(deps, {
         routeId: 'factory.steward',
-        prompt: buildFactoryStewardPrompt(input, fenceNonce(text.map((t) => neutralizeFenceMarkers(t)))),
+        prompt: buildFactoryStewardPrompt(input, fenceNonce(text.map((t) => neutralizeFenceMarkers(t))), wording),
         schema: factoryStewardOutput,
         ctx,
       })

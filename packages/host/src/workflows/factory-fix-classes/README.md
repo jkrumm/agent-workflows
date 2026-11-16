@@ -28,8 +28,19 @@ echo '{"repo":"example-app","classes":[{"key":"logic","meaning":"…"},{"key":"o
   that is not in the input, a missing sha, a duplicate sha or a class outside the keys fails the schema, is re-asked once, and
   then fails the run. Nothing is dropped, filled in or corrected; the factory retries a failed run with a backoff.
 - **Nothing is cut.** A request over the limits is a 400; the caller cuts (the body to 800, the paths to 20, the batch to 40).
-- **No eval set** for now: the schema above is the guard, and the factory counts what the classes show.
+- **The answer's shape is held by the schema; whether it is right is the eval's** (below).
 
 ## Route
 
 `factory.fixclasses`: the `EASY` tier (Haiku high) on the native Messages wire; the model lives only in the tier.
+
+## Eval
+
+`agw eval run factory-fix-classes [--yes]` replays `eval/cases.jsonl` (9 cases of 3 or 4 commits, committed): 31 fix commits
+of this public repo (real shas, subjects, bodies and changed paths, read from `git`) and 2 written ones for the class the
+repo's own history lacks (a fix in documentation only), under the factory's real class list. The reference is one reader's
+class per commit; `basis` says how it was settled: `files` (the changed paths decide it: tests only, scripts only), `reading`
+(subject and body) or `written`. Scores: `accuracy` over all commits, `mechanical` over the `files` ones (a model that misses
+those is wrong beyond argument) and `judged` over the rest; `valid` fails an answer that does not cover the case's shas. The
+`judged` labels are one reader's: a class two readers would split is a limit of the set (`logic` against `contract` against
+`concurrency`), not of the model.

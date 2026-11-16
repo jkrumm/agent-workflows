@@ -2,9 +2,10 @@ import { digestIsEmpty, digestQuiet, guardDigest } from '@agent-workflows/capabi
 import { defineWorkflow } from '@agent-workflows/runtime'
 import type { HostWorkflow } from '../../operations.ts'
 import type { HostRegistry } from '../index.ts'
+import { factoryDigestScorer } from './scorer.ts'
 import { FactoryDigestInput, FactoryDigestOutput } from './schema.ts'
 
-const FACTORY_DIGEST_WORKFLOW_ID = 'factory.digest'
+export const FACTORY_DIGEST_WORKFLOW_ID = 'factory.digest'
 const FACTORY_DIGEST_VERSION = '2026-11-12.1'
 
 /** The one capability the workflow calls; any registry that has `factory.digest` fits. */
@@ -23,6 +24,7 @@ export function createFactoryDigest(deps: { registry: DigestCaller }): HostWorkf
     version: FACTORY_DIGEST_VERSION,
     input: FactoryDigestInput,
     output: FactoryDigestOutput,
+    scorer: factoryDigestScorer,
     async run(ctx, { input }) {
       if (digestIsEmpty(input)) return digestQuiet()
       const answer = await ctx.step('digest', ({ callContext }) =>

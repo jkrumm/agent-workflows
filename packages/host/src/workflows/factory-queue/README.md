@@ -41,4 +41,15 @@ echo '{"repo":"app","issues":[{"id":"issue_12","title":"…","kind":"bug","state
 
 ## Eval
 
-None, by the owner's decision (RS13). It learns from real queues through the run journal. A one-off effort comparison on 14 synthetic cases (no suite, nothing registered) is `docs/evals/2026-11-16-effort-arms.md`: high, low and none agree within what those cases show, and the route stays on `EASY`.
+`agw eval run factory-queue [--yes]` replays `eval/cases.jsonl` (10 cases, committed): queue snapshots of the factory's journal
+rewritten to placeholder repos, ids and titles. Six hold a pair of Issues the factory later ordered one after the other (it
+applied the edge, the waiter started after the blocker shipped, and in one case closed at once as already fixed by it): the
+scorer's `edgeRecall` is the share of those pairs the answer proposes an edge for, in either direction. Four are quiet queues
+(unrelated areas, a topic shared but no file, a chain whose edges already exist): `quiet` is 1 when no edge is proposed.
+`valid` and, without a reference (drift), only `valid`.
+
+What it cannot measure: an edge the answer proposes beyond the reference pairs is unproven, not wrong, and the **order**
+has no independent truth (the factory's own order and the guard leave nothing to compare a tie-break to; the start order that
+followed is the factory's doing), so it is not scored. The edges the references rest on were proposed by this seat in
+production and applied by the factory: the cases measure whether the seat still finds what held up, not whether it finds
+what no one has seen. The effort comparison on 14 synthetic cases is `docs/evals/2026-11-16-effort-arms.md`.

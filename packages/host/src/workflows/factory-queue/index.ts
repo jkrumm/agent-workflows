@@ -2,6 +2,7 @@ import { guardQueue, queueNone } from '@agent-workflows/capabilities'
 import { Cancelled, defineWorkflow, InfraError, StepFailed } from '@agent-workflows/runtime'
 import type { HostWorkflow } from '../../operations.ts'
 import type { HostRegistry } from '../index.ts'
+import { factoryQueueScorer } from './scorer.ts'
 import { FactoryQueueInput, FactoryQueueOutput } from './schema.ts'
 
 const FACTORY_QUEUE_WORKFLOW_ID = 'factory-queue'
@@ -22,6 +23,7 @@ export function createFactoryQueue(deps: { registry: QueueCaller }): HostWorkflo
     version: FACTORY_QUEUE_VERSION,
     input: FactoryQueueInput,
     output: FactoryQueueOutput,
+    scorer: factoryQueueScorer,
     async run(ctx, { queue }) {
       try {
         const answer = await ctx.step('queue', ({ callContext }) =>

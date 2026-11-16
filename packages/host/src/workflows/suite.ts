@@ -19,6 +19,8 @@ export interface EvalCase {
 
 /** A module's own case reader: the cases file at `path` as replayable cases. */
 export interface Suite {
+  /** The id of the workflow the suite replays, when it is not the module's own (`factory-digest` serves `factory.digest`). */
+  workflow?: string
   /** Where the cases live; default `$AGW_EVAL_DIR/<workflow>/cases.jsonl`. */
   path?(env: Record<string, string | undefined>): string
   read(path: string): EvalCase[]
@@ -26,6 +28,12 @@ export interface Suite {
 
 /** The suites `agw eval run|compare` know, by workflow id: a module's `suite`, `plain` or its own reader. */
 export type Suites = ReadonlyMap<string, 'plain' | Suite>
+
+/** The workflow a suite id replays: the suite's own `workflow`, else the id itself. */
+export const suiteWorkflow = (suites: Suites, id: string): string => {
+  const suite = suites.get(id)
+  return typeof suite === 'object' && suite.workflow ? suite.workflow : id
+}
 
 /** `PlainCase` lines: no tree, the recorded input as is. */
 export const plainSuite: Suite = {
