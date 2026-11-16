@@ -1,3 +1,5 @@
+import { HANDOFF_INTERVAL_MS, type OwnerPage } from './handoff.ts'
+
 /** A page as a real browser rendered it. `challenge` is a bot wall that did not clear within the settle time. */
 export interface BrowserPage {
   finalUrl: string
@@ -52,6 +54,8 @@ const MAX_TEXT_CHARS = 2_000_000
 const MAX_HTML_CHARS = 6_000_000
 /** Tabs open at once, across all runs of this process. */
 const MAX_TABS = 3
+/** Tabs kept open on a challenged page for the owner, across all hosts. They hold no slot of `MAX_TABS`. */
+const MAX_KEPT = 3
 
 const CHALLENGE_TITLE =
   /just a moment|nur einen moment|prove your humanity|something has gone wrong|attention required|verify you are human|checking your browser|ddos protection|access denied|are you a robot|blocked by network security/i
@@ -113,6 +117,7 @@ class Session {
   private readonly pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>()
   private readonly handlers = new Map<string, ((params: unknown) => void)[]>()
   private readonly closers = new Set<() => void>()
+  private readonly endHandlers: (() => void)[] = []
   private constructor(private readonly ws: WebSocket) {
     ws.addEventListener('message', (event) => {
       let message: Message
@@ -133,7 +138,13 @@ class Session {
     ws.addEventListener('close', () => {
       this.failPending('the browser closed the tab')
       for (const done of this.closers) done()
+      for (const ended of this.endHandlers) ended()
     })
+  }
+
+  /** Runs when the WebSocket closes, by `close()` or because the tab went away. */
+  onEnd(handler: () => void) {
+    this.endHandlers.push(handler)
   }
 
   /** Rejects with `signal.reason` when the signal fires first: a handshake nobody answers must not hold its tab slot forever. */
@@ -232,11 +243,128 @@ type Received = { type?: string; frameId?: string; response: { status: number; r
 const NO_WEBSOCKET =
   'Object.defineProperty(window, "WebSocket", { value: function () { throw new Error("WebSocket is disabled") }, configurable: false })'
 
+/** A new blank tab of the browser: its id and the DevTools address of its page. */
+async function openTab(base: string, signal: AbortSignal): Promise<{ id: string; webSocketDebuggerUrl: string }> {
+  try {
+    const res = await fetch(`${base}/json/new?about:blank`, { method: 'PUT', signal: within(signal, TAB_REQUEST_MS) })
+    if (!res.ok) throw new BrowserFailure(`the browser answered HTTP ${res.status}`)
+    const body = (await res.json()) as Partial<{ id: string; webSocketDebuggerUrl: string }>
+    if (
+      typeof body.id !== 'string' ||
+      typeof body.webSocketDebuggerUrl !== 'string' ||
+      !/^ws:\/\//.test(body.webSocketDebuggerUrl)
+    )
+      throw new BrowserFailure('the browser opened a tab without a DevTools address')
+    return { id: body.id, webSocketDebuggerUrl: body.webSocketDebuggerUrl }
+  } catch (error) {
+    if (signal.aborted) throw error
+    throw error instanceof BrowserFailure ? error : new BrowserFailure(`the browser is unreachable: ${describe(error)}`)
+  }
+}
+
+const closeTab = (base: string, id: string): Promise<void> =>
+  fetch(`${base}/json/close/${id}`, { signal: AbortSignal.timeout(TAB_REQUEST_MS) }).then(
+    () => undefined,
+    () => undefined,
+  )
+
+/** The request guard on one tab's session: what `policy` decided about the page, and the way to send the tab somewhere. */
+interface Guard {
+  /** The page itself (or a redirect of it) led somewhere the policy refuses. */
+  readonly refused: boolean
+  /** The status of the main document's last response. */
+  readonly status: number
+  /** Requests the page has sent and not yet seen finished: the hydration signal next to the text itself. */
+  readonly inFlight: Set<string>
+  /** Navigates the tab to `url` and waits for its load event (a page that never finishes loading is still read). */
+  navigate(url: string): Promise<void>
+}
+
+/**
+ * Puts the SSRF guard on a tab: every request the page makes (the navigation, each redirect hop, every subresource) is
+ * paused and asked of `policy` before it is sent, the address the document came from is checked, and page script cannot
+ * open a WebSocket. It rides on the session, so it holds for as long as the session is attached. `onRefused` runs once,
+ * when the main document is refused.
+ */
+async function guardPage(session: Session, policy: RequestPolicy, onRefused: () => void = () => {}): Promise<Guard> {
+  let refused = false
+  let mainFrame = ''
+  let status = 0
+  const refuse = () => {
+    if (refused) return
+    refused = true
+    onRefused()
+  }
+  const verdicts = new Map<string, Promise<boolean>>() // per URL: a page asks for the same host many times
+  session.on('Fetch.requestPaused', (params) => {
+    const paused = params as Paused
+    const target = paused.request.url
+    void (async () => {
+      let allowed: boolean
+      if (/^(data|blob|about):/i.test(target)) allowed = true
+      else if (!/^https?:/i.test(target)) allowed = false
+      else {
+        const cached = verdicts.get(target)
+        const verdict = cached ?? policy.allowUrl(target).catch(() => false)
+        if (!cached) verdicts.set(target, verdict)
+        allowed = await verdict
+      }
+      // The page itself (or a redirect of it) leading somewhere private ends the read; an embedded frame or a
+      // script only loses that request.
+      if (!allowed && paused.resourceType === 'Document' && paused.frameId === mainFrame) refuse()
+      await session
+        .send(allowed ? 'Fetch.continueRequest' : 'Fetch.failRequest', {
+          requestId: paused.requestId,
+          ...(allowed ? {} : { errorReason: 'AccessDenied' }),
+        })
+        .catch(() => undefined)
+    })()
+  })
+  // The address the page's document actually came from: the name was resolved again by the browser, so this is the
+  // one check a name that answers differently the second time (DNS rebinding) cannot get past.
+  session.on('Network.responseReceived', (params) => {
+    const received = params as Received
+    if (received.type !== 'Document' || received.frameId !== mainFrame) return
+    status = received.response.status
+    const address = received.response.remoteIPAddress?.replace(/^\[|\]$/g, '')
+    if (address && !policy.allowAddress(address)) refuse()
+  })
+  const inFlight = new Set<string>()
+  session.on('Network.requestWillBeSent', (params) => {
+    const requestId = (params as { requestId?: string }).requestId
+    if (requestId) inFlight.add(requestId)
+  })
+  const settled = (params: unknown) => inFlight.delete((params as { requestId?: string }).requestId ?? '')
+  session.on('Network.loadingFinished', settled)
+  session.on('Network.loadingFailed', settled)
+  await session.send('Page.enable')
+  await session.send('Network.enable')
+  await session.send('Page.addScriptToEvaluateOnNewDocument', { source: NO_WEBSOCKET })
+  const tree = await session.send<{ frameTree?: { frame?: { id?: string } } }>('Page.getFrameTree')
+  mainFrame = tree.frameTree?.frame?.id ?? ''
+  await session.send('Fetch.enable', { patterns: [{ urlPattern: '*' }] })
+  return {
+    get refused() {
+      return refused
+    },
+    get status() {
+      return status
+    },
+    inFlight,
+    async navigate(url) {
+      const loaded = session.event('Page.loadEventFired', LOAD_WAIT_MS)
+      const nav = await session.send<{ errorText?: string }>('Page.navigate', { url })
+      if (nav.errorText && !refused) throw new BrowserFailure(`navigation failed: ${nav.errorText}`)
+      await loaded
+    },
+  }
+}
+
 /**
  * One page read through a Chrome DevTools Protocol endpoint (`http://127.0.0.1:<port>`): a tab per read, always closed.
- * Every request the page makes (the navigation, each redirect hop, every subresource) is paused and asked of `policy`
- * before it is sent: the browser resolves names and follows redirects itself, so the guard `web.fetch` puts on its own
- * reads has to ride along. A refused document ends the read with `BrowserRefused`; a refused subresource is only blocked.
+ * The request guard (`guardPage`) rides along on the tab: the browser resolves names and follows redirects itself, so the
+ * guard `web.fetch` puts on its own reads has to. A refused document ends the read with `BrowserRefused`; a refused
+ * subresource is only blocked.
  */
 export async function readViaCdp(
   base: string,
@@ -247,24 +375,7 @@ export async function readViaCdp(
   options: BrowserReadOptions = {},
 ): Promise<BrowserPage> {
   return withTab(signal, async () => {
-    let tab: { id: string; webSocketDebuggerUrl: string }
-    try {
-      const res = await fetch(`${base}/json/new?about:blank`, { method: 'PUT', signal: within(signal, TAB_REQUEST_MS) })
-      if (!res.ok) throw new BrowserFailure(`the browser answered HTTP ${res.status}`)
-      const body = (await res.json()) as Partial<typeof tab>
-      if (
-        typeof body.id !== 'string' ||
-        typeof body.webSocketDebuggerUrl !== 'string' ||
-        !/^ws:\/\//.test(body.webSocketDebuggerUrl)
-      )
-        throw new BrowserFailure('the browser opened a tab without a DevTools address')
-      tab = { id: body.id, webSocketDebuggerUrl: body.webSocketDebuggerUrl }
-    } catch (error) {
-      if (signal.aborted) throw error
-      throw error instanceof BrowserFailure
-        ? error
-        : new BrowserFailure(`the browser is unreachable: ${describe(error)}`)
-    }
+    const tab = await openTab(base, signal)
     let session: Session | undefined
     const onAbort = () => session?.close()
     try {
@@ -279,68 +390,14 @@ export async function readViaCdp(
         throw error
       }
       signal.throwIfAborted()
-      let refusedDocument = false
-      let mainFrame = ''
-      let mainStatus = 0
-      const verdicts = new Map<string, Promise<boolean>>() // per URL: a page asks for the same host many times
-      session.on('Fetch.requestPaused', (params) => {
-        const paused = params as Paused
-        const target = paused.request.url
-        void (async () => {
-          let allowed: boolean
-          if (/^(data|blob|about):/i.test(target)) allowed = true
-          else if (!/^https?:/i.test(target)) allowed = false
-          else {
-            const cached = verdicts.get(target)
-            const verdict = cached ?? policy.allowUrl(target).catch(() => false)
-            if (!cached) verdicts.set(target, verdict)
-            allowed = await verdict
-          }
-          // The page itself (or a redirect of it) leading somewhere private ends the read; an embedded frame or a
-          // script only loses that request.
-          if (!allowed && paused.resourceType === 'Document' && paused.frameId === mainFrame) refusedDocument = true
-          await session
-            ?.send(allowed ? 'Fetch.continueRequest' : 'Fetch.failRequest', {
-              requestId: paused.requestId,
-              ...(allowed ? {} : { errorReason: 'AccessDenied' }),
-            })
-            .catch(() => undefined)
-        })()
-      })
-      // The address the page's document actually came from: the name was resolved again by the browser, so this is the
-      // one check a name that answers differently the second time (DNS rebinding) cannot get past.
-      session.on('Network.responseReceived', (params) => {
-        const received = params as Received
-        if (received.type !== 'Document' || received.frameId !== mainFrame) return
-        mainStatus = received.response.status
-        const address = received.response.remoteIPAddress?.replace(/^\[|\]$/g, '')
-        if (address && !policy.allowAddress(address)) refusedDocument = true
-      })
-      // Requests the page has sent and not yet seen finished: the hydration signal next to the text itself.
-      const inFlight = new Set<string>()
-      session.on('Network.requestWillBeSent', (params) => {
-        const requestId = (params as { requestId?: string }).requestId
-        if (requestId) inFlight.add(requestId)
-      })
-      const settled = (params: unknown) => inFlight.delete((params as { requestId?: string }).requestId ?? '')
-      session.on('Network.loadingFinished', settled)
-      session.on('Network.loadingFailed', settled)
-      await session.send('Page.enable')
-      await session.send('Network.enable')
-      await session.send('Page.addScriptToEvaluateOnNewDocument', { source: NO_WEBSOCKET })
-      const tree = await session.send<{ frameTree?: { frame?: { id?: string } } }>('Page.getFrameTree')
-      mainFrame = tree.frameTree?.frame?.id ?? ''
-      await session.send('Fetch.enable', { patterns: [{ urlPattern: '*' }] })
-      const loaded = session.event('Page.loadEventFired', LOAD_WAIT_MS)
-      const nav = await session.send<{ errorText?: string }>('Page.navigate', { url })
-      if (nav.errorText && !refusedDocument) throw new BrowserFailure(`navigation failed: ${nav.errorText}`)
-      await loaded
+      const guard = await guardPage(session, policy)
+      await guard.navigate(url)
       signal.throwIfAborted()
 
       /** The snapshot as the read's answer, unless the page was refused or answered with an error status that is no challenge. */
       const accept = (page: BrowserPage) => {
-        if (refusedDocument) throw new BrowserRefused('the page leads to a non-public address')
-        if (!page.challenge && mainStatus >= 400) throw new BrowserFailure(`the page answered HTTP ${mainStatus}`)
+        if (guard.refused) throw new BrowserRefused('the page leads to a non-public address')
+        if (!page.challenge && guard.status >= 400) throw new BrowserFailure(`the page answered HTTP ${guard.status}`)
         return page
       }
       const deadline = Date.now() + (timing.settleMs ?? SETTLE_MS)
@@ -349,7 +406,7 @@ export async function readViaCdp(
       let unchanged = 0
       for (;;) {
         signal.throwIfAborted()
-        if (refusedDocument) throw new BrowserRefused('the page leads to a non-public address')
+        if (guard.refused) throw new BrowserRefused('the page leads to a non-public address')
         try {
           const evaluated = await session.send<{ result: { value?: string } }>('Runtime.evaluate', {
             expression: snapshotExpression(options.html === true),
@@ -376,7 +433,7 @@ export async function readViaCdp(
           !last.challenge &&
           last.text.length >= HYDRATED_CHARS &&
           unchanged >= 1 &&
-          (inFlight.size === 0 || unchanged >= QUIET_POLLS)
+          (guard.inFlight.size === 0 || unchanged >= QUIET_POLLS)
         )
           return accept(last)
         if (Date.now() >= deadline) break
@@ -387,15 +444,126 @@ export async function readViaCdp(
     } finally {
       signal.removeEventListener('abort', onAbort)
       session?.close()
-      await fetch(`${base}/json/close/${tab.id}`, { signal: AbortSignal.timeout(TAB_REQUEST_MS) }).catch(
-        () => undefined,
-      )
+      await closeTab(base, tab.id)
     }
   })
 }
 
+/** A tab kept on a challenged page: its guarding session stays attached until the tab is dropped. */
+interface Kept {
+  base: string
+  id: string
+  session: Session
+  timer: ReturnType<typeof setTimeout>
+}
+/** One per host, oldest first (insertion order). */
+const kept = new Map<string, Kept>()
+
+/** Closes the kept tab of `host`, if there is one. The map entry goes at once, the browser call is awaited. */
+async function dropKept(host: string): Promise<void> {
+  const entry = kept.get(host)
+  if (!entry) return
+  kept.delete(host)
+  clearTimeout(entry.timer)
+  entry.session.close()
+  await closeTab(entry.base, entry.id)
+}
+
+/** Closes every kept tab (tests, shutdown). */
+export const dropAllKept = async (): Promise<void> => {
+  await Promise.all([...kept.keys()].map(dropKept))
+}
+
+/** The hosts that have a kept tab right now. */
+export const keptHosts = (): string[] => [...kept.keys()]
+
+/**
+ * Keeps the page the owner is asked to solve on screen: `url` in a tab of its own, brought to the front, and left
+ * open until `dropKept` (a later read of the host passed, `keepMs` ran out, the page was refused, the owner closed it).
+ * A kept tab has no read to ride along on, so the request guard stays attached to its session for as long as the tab is
+ * kept: every request the page makes while the owner clicks through the wall (and the document it navigates to) is vetted
+ * by the same `policy` as in a read, and a refused document closes the tab. One tab per host (a second keep replaces
+ * the first) and `MAX_KEPT` overall (the oldest goes). A tab that cannot be kept is closed and the failure thrown.
+ */
+export async function keepViaCdp(
+  base: string,
+  url: string,
+  signal: AbortSignal,
+  policy: RequestPolicy,
+  timing: { keepMs?: number; openMs?: number } = {},
+): Promise<void> {
+  const host = new URL(url).hostname
+  const tab = await openTab(base, signal)
+  let session: Session | undefined
+  try {
+    const opening = within(signal, timing.openMs ?? TAB_REQUEST_MS)
+    session = await Session.open(tab.webSocketDebuggerUrl, opening)
+    const opened = session
+    const guard = await guardPage(opened, policy, () => {
+      if (kept.get(host)?.session === opened) void dropKept(host)
+    })
+    await guard.navigate(url)
+    if (guard.refused) throw new BrowserRefused('the page leads to a non-public address')
+    await opened.send('Page.bringToFront')
+    signal.throwIfAborted()
+  } catch (error) {
+    session?.close()
+    await closeTab(base, tab.id)
+    throw error
+  }
+  const live = session
+  const stale: Promise<void>[] = []
+  if (kept.has(host)) stale.push(dropKept(host))
+  while (kept.size >= MAX_KEPT) stale.push(dropKept(kept.keys().next().value!))
+  const timer = setTimeout(() => void dropKept(host), timing.keepMs ?? HANDOFF_INTERVAL_MS)
+  timer.unref?.()
+  kept.set(host, { base, id: tab.id, session: live, timer })
+  // The owner closing the tab ends the session: forget it, unless a newer tab of the host has taken its place.
+  live.onEnd(() => {
+    const entry = kept.get(host)
+    if (entry?.session !== live) return
+    kept.delete(host)
+    clearTimeout(entry.timer)
+  })
+  await Promise.all(stale)
+}
+
+/** The kept tabs of a browser the process reads through: kept for the owner, released once a read of the host passes. */
+export interface PageHold {
+  /** Puts `url` on screen in the browser for the owner (see `keepViaCdp`). Throws when the page cannot be kept. */
+  keep(url: string, signal: AbortSignal): Promise<void>
+  /** Closes the kept tab of `host`: a read of it passed without a challenge. A host with no kept tab is a no-op. */
+  release(host: string): Promise<void>
+}
+
+/** The owner's view of one challenged page for `askOnce`: opened when he is asked, closed again if the ask did not go out. */
+export const ownerPage = (hold: PageHold | undefined, url: string, signal: AbortSignal): OwnerPage | undefined =>
+  hold && {
+    open: async () => {
+      await hold.keep(url, signal)
+      return true
+    },
+    close: () => hold.release(new URL(url).hostname),
+  }
+
 /** The browser reader `AGW_BROWSER_CDP_URL` configures: loopback http only (the endpoint is unauthenticated). */
 export function browserFromEnv(endpoint: string | undefined, policy: RequestPolicy): BrowserRead | undefined {
+  const base = loopbackBase(endpoint)
+  if (!base) return undefined
+  return (url, signal, options) => readViaCdp(base, url, signal, policy, {}, options)
+}
+
+/** The kept tabs of the browser `AGW_BROWSER_CDP_URL` configures; the same loopback rule as `browserFromEnv`. */
+export function pageHoldFromEnv(endpoint: string | undefined, policy: RequestPolicy): PageHold | undefined {
+  const base = loopbackBase(endpoint)
+  if (!base) return undefined
+  return {
+    keep: (url, signal) => keepViaCdp(base, url, signal, policy),
+    release: dropKept,
+  }
+}
+
+function loopbackBase(endpoint: string | undefined): string | undefined {
   const raw = endpoint?.trim()
   if (!raw) return undefined
   let base: URL
@@ -405,6 +573,5 @@ export function browserFromEnv(endpoint: string | undefined, policy: RequestPoli
     return undefined
   }
   const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname)
-  if (!loopback || base.protocol !== 'http:') return undefined
-  return (url, signal, options) => readViaCdp(base.origin, url, signal, policy, {}, options)
+  return loopback && base.protocol === 'http:' ? base.origin : undefined
 }

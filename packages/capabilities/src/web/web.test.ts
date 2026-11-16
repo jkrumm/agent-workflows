@@ -8,7 +8,17 @@ import { fakeWeb } from './fake.ts'
 import { askHumanHandoff, askOnce, fakeHandoff, resetHandoffLimit } from './handoff.ts'
 import type { WebDeps } from './deps.ts'
 import { BLOCK_REASONS, blockedReason, createWebCapabilities } from './index.ts'
-import { BrowserFailure, browserFromEnv, readViaCdp, type RequestPolicy } from './browser.ts'
+import {
+  BrowserFailure,
+  BrowserRefused,
+  browserFromEnv,
+  dropAllKept,
+  keepViaCdp,
+  keptHosts,
+  pageHoldFromEnv,
+  readViaCdp,
+  type RequestPolicy,
+} from './browser.ts'
 import { pinnedFetch } from './pinned.ts'
 import { formatTranscript, videoIdOf } from './youtube.ts'
 import { isPrivateAddress } from './ssrf.ts'
@@ -1572,6 +1582,8 @@ function fakeBrowser(
   const navigated: string[] = []
   const decisions: { url: string; allowed: boolean }[] = []
   const scripts: string[] = []
+  const fronted: string[] = []
+  let opened = 0
   let polls = 0
   const self = { port: 0 }
   const server = Bun.serve<undefined>({
@@ -1580,7 +1592,7 @@ function fakeBrowser(
     fetch(req, srv) {
       const { pathname } = new URL(req.url)
       if (pathname === '/json/new')
-        return Response.json({ id: 'tab-1', webSocketDebuggerUrl: `ws://127.0.0.1:${self.port}/page` })
+        return Response.json({ id: `tab-${++opened}`, webSocketDebuggerUrl: `ws://127.0.0.1:${self.port}/page` })
       if (pathname.startsWith('/json/close/')) {
         closed.push(pathname.split('/').pop()!)
         return new Response('Target is closing')
@@ -1626,6 +1638,9 @@ function fakeBrowser(
             allowed: method === 'Fetch.continueRequest',
           })
           ws.send(JSON.stringify({ id, result: {} }))
+        } else if (method === 'Page.bringToFront') {
+          fronted.push(navigated.at(-1) ?? '')
+          ws.send(JSON.stringify({ id, result: {} }))
         } else if (method === 'Page.getFrameTree') {
           ws.send(JSON.stringify({ id, result: { frameTree: { frame: { id: 'main' } } } }))
         } else if (method === 'Page.addScriptToEvaluateOnNewDocument') {
@@ -1647,7 +1662,17 @@ function fakeBrowser(
     (policy: RequestPolicy = allowAll) =>
     (url: string, signal: AbortSignal, options?: { html?: boolean }) =>
       readViaCdp(base, url, signal, policy, { settleMs: 400, pollMs: 40 }, options)
-  return { base, read: timed(), timed, closed, navigated, decisions, scripts, stop: () => void server.stop(true) }
+  return {
+    base,
+    read: timed(),
+    timed,
+    closed,
+    navigated,
+    fronted,
+    decisions,
+    scripts,
+    stop: () => void server.stop(true),
+  }
 }
 
 /** A DevTools endpoint whose tab WebSocket accepts the TCP connection and never answers the handshake. */
@@ -2050,13 +2075,27 @@ describe('web.fetch through a real browser', () => {
           'ask',
           'agw: shop.example.com shows a bot check the research Chrome cannot pass. Open screen share to the mini, solve it once in the Chrome window, the cookie stays.',
           '--cmd',
-          'open vnc://box',
+          'if ping -c 1 -t 2 box >/dev/null 2>&1; then open vnc://box; else open vnc://mini; fi',
         ],
       ])
       const defaults = askHumanHandoff({ env: {}, spawn: async (argv) => void argvs.push(argv), exists: () => true })
       await defaults.notify({ host: 'h.example.com' })
       expect(argvs[1]![0]).toEndWith('/SourceRoot/dotfiles/scripts/ask-human.sh')
-      expect(argvs[1]!.at(-1)).toBe('open vnc://mini')
+      // The LAN name by default, the tailnet name when it does not answer: one fixed command.
+      expect(argvs[1]!.at(-1)).toBe(
+        'if ping -c 1 -t 2 mini.local. >/dev/null 2>&1; then open vnc://mini.local.; else open vnc://mini; fi',
+      )
+      const same = askHumanHandoff({
+        env: { AGW_SCREENSHARE_HOST: 'mini', AGW_SCREENSHARE_FALLBACK_HOST: 'mini' },
+        spawn: async (argv) => void argvs.push(argv),
+        exists: () => true,
+      })
+      await same.notify({ host: 'h.example.com' })
+      expect(argvs[2]!.at(-1)).toBe('open vnc://mini')
+      const open = askHumanHandoff({ env: {}, spawn: async (argv) => void argvs.push(argv), exists: () => true })
+      await open.notify({ host: 'h.example.com', pageOpen: true })
+      expect(argvs[3]![2]).toEndWith('the cookie stays. The page is already open in the front Chrome window.')
+      expect(argvs[3]![2]).not.toContain('https')
     })
 
     test('a missing script turns the handoff off with one warning; a failing spawn warns and returns false', async () => {
@@ -2084,7 +2123,18 @@ describe('web.fetch through a real browser', () => {
       })
       expect(await bad.notify({ host: 'a.example.com' })).toBe(false)
       expect(spawned).toEqual([])
-      expect(warnings.at(-1)).toContain('AGW_SCREENSHARE_HOST is not a plain host name')
+      expect(warnings.at(-1)).toContain(
+        'AGW_SCREENSHARE_HOST or AGW_SCREENSHARE_FALLBACK_HOST is not a plain host name',
+      )
+
+      const badFallback = askHumanHandoff({
+        env: { AGW_SCREENSHARE_FALLBACK_HOST: 'x$(id)' },
+        warn: (m) => warnings.push(m),
+        exists: () => true,
+        spawn: async (argv) => void spawned.push(argv),
+      })
+      expect(await badFallback.notify({ host: 'a.example.com' })).toBe(false)
+      expect(spawned).toEqual([])
     })
 
     test('a URL host with shell metacharacters is not named in the dialog text', async () => {
@@ -2810,5 +2860,154 @@ describe('page spellings and shells (pages.ts)', () => {
     expect(incompleteReason('https://boardgamegeek.com/geeklist/1/x', 'Results - Page 1\nof 3')).toContain('geeklist')
     expect(incompleteReason('https://boardgamegeek.com/geeklist/1/x', 'Results\n#1  4\nCarcassonne')).toBeUndefined()
     expect(incompleteReason('https://boardgamegeek.com/xmlapi2/geeklist/1', '<geeklist/>')).toBeUndefined()
+  })
+})
+
+describe('the challenged page kept open for the owner', () => {
+  const allowAll: RequestPolicy = { allowUrl: async () => true, allowAddress: () => true }
+  const WALL_PAGE = [{ title: 'Prove your humanity', text: 'Please verify' }]
+  const REAL = 'Die Jura E4 kostet 549 Euro. '.repeat(20)
+  const settle = (ms: number) => Bun.sleep(ms)
+
+  afterEach(async () => {
+    await dropAllKept()
+    resetHandoffLimit()
+  })
+
+  test('keepViaCdp leaves one visible tab on the page, in front, with the guard attached; dropping it closes the tab', async () => {
+    const browser = fakeBrowser(WALL_PAGE)
+    try {
+      await keepViaCdp(browser.base, 'https://shop.example.com/a', new AbortController().signal, allowAll)
+      expect(browser.navigated).toEqual(['https://shop.example.com/a'])
+      expect(browser.fronted).toEqual(['https://shop.example.com/a'])
+      expect(browser.closed).toEqual([])
+      expect(keptHosts()).toEqual(['shop.example.com'])
+      expect(browser.scripts).toHaveLength(1) // no page script can open a WebSocket in a kept tab either
+      await dropAllKept()
+      expect(browser.closed).toEqual(['tab-1'])
+      expect(keptHosts()).toEqual([])
+    } finally {
+      browser.stop()
+    }
+  })
+
+  test('at most one kept tab per host (a second keep replaces the first) and three overall (the oldest goes)', async () => {
+    const browser = fakeBrowser(WALL_PAGE)
+    try {
+      const signal = new AbortController().signal
+      await keepViaCdp(browser.base, 'https://a.example.com/1', signal, allowAll)
+      await keepViaCdp(browser.base, 'https://a.example.com/2', signal, allowAll)
+      expect(keptHosts()).toEqual(['a.example.com'])
+      expect(browser.closed).toEqual(['tab-1'])
+      await keepViaCdp(browser.base, 'https://b.example.com/', signal, allowAll)
+      await keepViaCdp(browser.base, 'https://c.example.com/', signal, allowAll)
+      expect(keptHosts()).toEqual(['a.example.com', 'b.example.com', 'c.example.com'])
+      await keepViaCdp(browser.base, 'https://d.example.com/', signal, allowAll)
+      expect(keptHosts()).toEqual(['b.example.com', 'c.example.com', 'd.example.com'])
+      expect(browser.closed).toEqual(['tab-1', 'tab-2'])
+    } finally {
+      browser.stop()
+    }
+  })
+
+  test('a kept tab is closed when the time limit runs out', async () => {
+    const browser = fakeBrowser(WALL_PAGE)
+    try {
+      await keepViaCdp(browser.base, 'https://shop.example.com/', new AbortController().signal, allowAll, {
+        keepMs: 60,
+      })
+      expect(keptHosts()).toEqual(['shop.example.com'])
+      await settle(200)
+      expect(keptHosts()).toEqual([])
+      expect(browser.closed).toEqual(['tab-1'])
+    } finally {
+      browser.stop()
+    }
+  })
+
+  test('a kept page that leads to a non-public address is refused and its tab closed', async () => {
+    const browser = fakeBrowser(WALL_PAGE, [{ url: 'http://10.0.0.1/', resourceType: 'Document' }], {})
+    try {
+      const policy: RequestPolicy = { allowUrl: async (url) => !url.includes('10.0.0.1'), allowAddress: () => true }
+      await expect(
+        keepViaCdp(browser.base, 'https://shop.example.com/', new AbortController().signal, policy),
+      ).rejects.toBeInstanceOf(BrowserRefused)
+      expect(browser.decisions).toEqual([{ url: 'http://10.0.0.1/', allowed: false }])
+      expect(browser.closed).toEqual(['tab-1'])
+      expect(keptHosts()).toEqual([])
+    } finally {
+      browser.stop()
+    }
+  })
+
+  test('a wall the owner is asked about stays open on its URL until the next unchallenged read of the host passes', async () => {
+    const hold = fakeBrowser(WALL_PAGE)
+    try {
+      const wall = {
+        finalUrl: 'https://shop.example.com/jura',
+        title: 'Prove your humanity',
+        text: 'x',
+        challenge: true,
+      }
+      const page = { finalUrl: 'https://shop.example.com/jura', title: 'Jura', text: REAL, challenge: false }
+      let reads = 0
+      const handoff = fakeHandoff()
+      const n = net({
+        'https://shop.example.com/': status(403, '<title>Just a moment...</title>'),
+        'https://api.tavily.com': json({ results: [] }),
+      })
+      const { call } = run({
+        ...n.deps,
+        env: { TAVILY_API_KEY: 't' },
+        browser: async () => (reads++ === 0 ? wall : page),
+        pageHold: pageHoldFromEnv(hold.base, allowAll)!,
+        handoff,
+      })
+      const first = await failure(call('web.fetch', { url: 'https://shop.example.com/jura' }))
+      expect(first.message).toContain('the owner was asked to solve it')
+      expect(handoff.requests).toEqual([{ host: 'shop.example.com', pageOpen: true }])
+      expect(hold.navigated).toEqual(['https://shop.example.com/jura'])
+      expect(keptHosts()).toEqual(['shop.example.com'])
+      expect(hold.closed).toEqual([])
+
+      // The owner solved it: the next read of the host passes, and the tab goes.
+      await call('web.fetch', { url: 'https://shop.example.com/jura', fresh: true })
+      await settle(100)
+      expect(keptHosts()).toEqual([])
+      expect(hold.closed).toEqual(['tab-1'])
+    } finally {
+      hold.stop()
+    }
+  })
+
+  test('nothing is kept when the owner is not asked: asked recently, or the dialog could not start', async () => {
+    const hold = fakeBrowser(WALL_PAGE)
+    try {
+      const wall = { finalUrl: 'https://shop.example.com/', title: 'Prove your humanity', text: 'x', challenge: true }
+      const n = () =>
+        net({
+          'https://shop.example.com/': status(403, '<title>Just a moment...</title>'),
+          'https://api.tavily.com': json({ results: [] }),
+        })
+      const common = {
+        env: { TAVILY_API_KEY: 't' },
+        browser: async () => wall,
+        pageHold: pageHoldFromEnv(hold.base, allowAll)!,
+      }
+      // The dialog does not start: the page opened for it is taken away again.
+      const silent = run({ ...n().deps, ...common, handoff: fakeHandoff(false) })
+      await failure(silent.call('web.fetch', { url: 'https://shop.example.com/' }))
+      expect(keptHosts()).toEqual([])
+      expect(hold.closed).toEqual(['tab-1'])
+      // Asked once: kept. Asked again inside the interval: no second tab.
+      const asking = run({ ...n().deps, ...common, handoff: fakeHandoff(true) })
+      resetHandoffLimit()
+      await failure(asking.call('web.fetch', { url: 'https://shop.example.com/', fresh: true }))
+      await failure(asking.call('web.fetch', { url: 'https://shop.example.com/x', fresh: true }))
+      expect(hold.navigated).toHaveLength(2) // the discarded one and the one kept
+      expect(keptHosts()).toEqual(['shop.example.com'])
+    } finally {
+      hold.stop()
+    }
   })
 })

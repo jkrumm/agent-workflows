@@ -3,7 +3,7 @@ import type { Usage } from '../context.ts'
 import { fail } from '../errors.ts'
 import type { Env } from '../transports/config.ts'
 import type { HttpOptions } from '../transports/http.ts'
-import { type BrowserRead, browserFromEnv, type RequestPolicy } from './browser.ts'
+import { type BrowserRead, browserFromEnv, type PageHold, pageHoldFromEnv, type RequestPolicy } from './browser.ts'
 import { askHumanHandoff, type HumanHandoff } from './handoff.ts'
 import { pinnedFetch } from './pinned.ts'
 
@@ -27,6 +27,8 @@ export interface WebDeps {
   warn?: (message: string) => void
   /** Reads a page in a real browser. Default: the loopback CDP endpoint `AGW_BROWSER_CDP_URL` names, if it is set. */
   browser?: BrowserRead
+  /** Keeps a challenged page open in the browser for the owner. Default: tabs of the `AGW_BROWSER_CDP_URL` browser, if it is set. */
+  pageHold?: PageHold
   /** Asks the owner to pass a bot wall the browser cannot. Default: `ask-human.sh` (see `handoff.ts`). */
   handoff?: HumanHandoff
 }
@@ -44,6 +46,8 @@ export interface ResolvedWebDeps {
   warn: (message: string) => void
   /** The browser reader, decided per call (the environment is read on each call); undefined when none is configured. `policy` vets every request an environment-configured browser makes. */
   browser: (policy: RequestPolicy) => BrowserRead | undefined
+  /** The kept tabs of the browser, decided per call like `browser`; `policy` keeps vetting every request of a kept page. */
+  pageHold: (policy: RequestPolicy) => PageHold | undefined
   handoff: HumanHandoff
 }
 
@@ -56,6 +60,8 @@ export function resolveWebDeps(deps: WebDeps = {}): ResolvedWebDeps {
     retry: deps.retry ?? {},
     warn,
     handoff: deps.handoff ?? askHumanHandoff({ env: deps.env ?? process.env, warn }),
+    pageHold: (policy) =>
+      deps.pageHold ?? pageHoldFromEnv(keyOf(deps.env ?? process.env, 'AGW_BROWSER_CDP_URL'), policy),
     browser: (policy) => deps.browser ?? browserFromEnv(keyOf(deps.env ?? process.env, 'AGW_BROWSER_CDP_URL'), policy),
   }
 }

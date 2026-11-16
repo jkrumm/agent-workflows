@@ -9,10 +9,13 @@ import type { Env } from '../transports/config.ts'
  * off (the dialog itself is never awaited) and `false` when nothing was started; it never throws.
  */
 export interface HumanHandoff {
-  notify(request: { host: string }): Promise<boolean>
+  notify(request: { host: string; pageOpen?: true }): Promise<boolean>
 }
 
 const PLAIN_HOST = /^[A-Za-z0-9][A-Za-z0-9.-]*$/
+/** The mini's name on the home LAN (Bonjour; the trailing dot makes it an absolute name) and on the tailnet. */
+const LAN_SHARE_HOST = 'mini.local.'
+const TAILNET_SHARE_HOST = 'mini'
 const DEFAULT_SCRIPT = (): string => join(process.env.HOME ?? homedir(), 'SourceRoot/dotfiles/scripts/ask-human.sh')
 
 /** Starts a detached process; resolves once it is running, rejects when it cannot start. */
@@ -47,9 +50,12 @@ const executable = (path: string): boolean => {
 }
 
 /**
- * The production adapter: `ask-human.sh ask <text> --cmd 'open vnc://<screenshare host>'`, which pushes a dialog to the
- * MacBook and runs the command there only after a click. Only the host is named, never the URL (it can carry secrets),
- * and only a plain host name: a URL host can hold shell metacharacters, so any other host is not named at all.
+ * The production adapter: `ask-human.sh ask <text> --cmd <screen share command>`, which pushes a dialog to the MacBook
+ * and runs the command there only after a click. The command opens screen share to `AGW_SCREENSHARE_HOST` (default
+ * `mini.local.`, the LAN name: a direct connection) after one short ping, and to `AGW_SCREENSHARE_FALLBACK_HOST`
+ * (default `mini`, the tailnet name) when the LAN name does not answer, as off the home network. Only the host of the
+ * page is named in the text, never the URL (it can carry secrets), and only a plain host name: a URL host can hold
+ * shell metacharacters, so any other host is not named at all; the command is built from validated plain names only.
  * A missing script turns the handoff off with one warning, not one per call.
  */
 export function askHumanHandoff(options: AskHumanOptions = {}): HumanHandoff {
@@ -59,24 +65,28 @@ export function askHumanHandoff(options: AskHumanOptions = {}): HumanHandoff {
   const exists = options.exists ?? executable
   let off = false
   return {
-    async notify({ host }) {
+    async notify({ host, pageOpen }) {
       if (off) return false
       const script = env.AGW_ASK_HUMAN?.trim() || DEFAULT_SCRIPT()
-      const share = env.AGW_SCREENSHARE_HOST?.trim() || 'mini'
+      const share = env.AGW_SCREENSHARE_HOST?.trim() || LAN_SHARE_HOST
+      const fallback = env.AGW_SCREENSHARE_FALLBACK_HOST?.trim() || TAILNET_SHARE_HOST
       if (!exists(script)) {
         off = true
         warn('web.fetch: the owner handoff is off: the ask-human script is missing (AGW_ASK_HUMAN)')
         return false
       }
-      if (!PLAIN_HOST.test(share)) {
+      if (!PLAIN_HOST.test(share) || !PLAIN_HOST.test(fallback)) {
         off = true
-        warn('web.fetch: the owner handoff is off: AGW_SCREENSHARE_HOST is not a plain host name')
+        warn(
+          'web.fetch: the owner handoff is off: AGW_SCREENSHARE_HOST or AGW_SCREENSHARE_FALLBACK_HOST is not a plain host name',
+        )
         return false
       }
       const site = PLAIN_HOST.test(host) ? host : 'a site'
-      const text = `agw: ${site} shows a bot check the research Chrome cannot pass. Open screen share to the mini, solve it once in the Chrome window, the cookie stays.`
+      const opened = pageOpen ? ' The page is already open in the front Chrome window.' : ''
+      const text = `agw: ${site} shows a bot check the research Chrome cannot pass. Open screen share to the mini, solve it once in the Chrome window, the cookie stays.${opened}`
       try {
-        await start([script, 'ask', text, '--cmd', `open vnc://${share}`])
+        await start([script, 'ask', text, '--cmd', screenShareCommand(share, fallback)])
         return true
       } catch (error) {
         warn(`web.fetch: the owner handoff failed to start: ${error instanceof Error ? error.message : String(error)}`)
@@ -86,9 +96,15 @@ export function askHumanHandoff(options: AskHumanOptions = {}): HumanHandoff {
   }
 }
 
+/** One ping (macOS: one packet, two seconds at most) decides between the LAN name and the fallback; both are plain names. */
+const screenShareCommand = (share: string, fallback: string): string =>
+  share === fallback
+    ? `open vnc://${share}`
+    : `if ping -c 1 -t 2 ${share} >/dev/null 2>&1; then open vnc://${share}; else open vnc://${fallback}; fi`
+
 /** A handoff that records its requests and starts nothing; the default of every test. */
-export function fakeHandoff(spawned = true): HumanHandoff & { requests: { host: string }[] } {
-  const requests: { host: string }[] = []
+export function fakeHandoff(spawned = true): HumanHandoff & { requests: { host: string; pageOpen?: true }[] } {
+  const requests: { host: string; pageOpen?: true }[] = []
   return {
     requests,
     async notify(request) {
@@ -104,14 +120,33 @@ const lastAsked = new Map<string, number>()
 /** Forget which hosts were asked about (tests). */
 export const resetHandoffLimit = (): void => lastAsked.clear()
 
-/** Asks about `host` at most once per 30 minutes; true only when the owner was actually asked. Never throws. */
-export async function askOnce(handoff: HumanHandoff, host: string, now = Date.now()): Promise<boolean> {
+/** The challenged page, put on screen for the owner: `open` resolves `true` when it is there, `close` takes it away again. */
+export interface OwnerPage {
+  open(): Promise<boolean>
+  close(): Promise<void>
+}
+
+/**
+ * Asks about `host` at most once per 30 minutes; true only when the owner was actually asked. Never throws.
+ * `page` is opened only when the owner is to be asked, before the dialog (which then says the page is open), and
+ * closed again when the dialog could not be started.
+ */
+export async function askOnce(
+  handoff: HumanHandoff,
+  host: string,
+  now = Date.now(),
+  page?: OwnerPage,
+): Promise<boolean> {
   const last = lastAsked.get(host)
   if (last !== undefined && now - last < HANDOFF_INTERVAL_MS) return false
   lastAsked.set(host, now)
+  const pageOpen = (await page?.open().catch(() => false)) === true
+  let asked = false
   try {
-    return await handoff.notify({ host })
+    asked = await handoff.notify({ host, ...(pageOpen ? { pageOpen: true as const } : {}) })
   } catch {
-    return false
+    asked = false
   }
+  if (!asked && pageOpen) await page?.close().catch(() => undefined)
+  return asked
 }

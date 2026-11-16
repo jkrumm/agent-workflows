@@ -1,5 +1,5 @@
 import { fail } from '../errors.ts'
-import { BrowserFailure, BrowserRefused } from '../web/browser.ts'
+import { BrowserFailure, BrowserRefused, ownerPage } from '../web/browser.ts'
 import { type ResolvedWebDeps, webUsage, within } from '../web/deps.ts'
 import { askOnce } from '../web/handoff.ts'
 import { assertPublicUrl, publicOnlyPolicy } from '../web/ssrf.ts'
@@ -142,8 +142,8 @@ export function createShopFetch(web: ResolvedWebDeps, pace: ShopPace = {}) {
 
   /**
    * The robot-checked page read once in the research Chrome: its HTML, or `undefined` when no browser is configured.
-   * A challenge the browser meets too asks the owner (once per host and half hour) and ends the call; the agent solves
-   * nothing. A browser that fails or is refused leaves the original wall standing.
+   * A challenge the browser meets too asks the owner (once per host and half hour, the page kept open in the research
+   * Chrome for him) and ends the call; the agent solves nothing. A read that passes closes the tab kept for its host. A browser that fails or is refused leaves the original wall standing.
    */
   async function readInBrowser(
     key: string,
@@ -174,12 +174,22 @@ export function createShopFetch(web: ResolvedWebDeps, pace: ShopPace = {}) {
     const wall = detectBlock({ status: 200, html, finalUrl })
     if (wall === 'login-required') throw blocked(wall, 'the shop asks for a sign-in')
     if (page.challenge || wall) {
-      const asked = await askOnce(web.handoff, new URL(key).hostname, now())
+      const asked = await askOnce(
+        web.handoff,
+        new URL(key).hostname,
+        now(),
+        ownerPage(web.pageHold(policy), key, ctx.signal),
+      )
       throw blocked(
         'bot-protection',
         `robot check on ${label} in the research Chrome too (needs-human); ${asked ? 'the owner was asked to solve it' : 'the owner was not asked again (asked recently or no handoff)'}`,
       )
     }
+    // The page passed: a tab kept for the owner on this host is no longer needed.
+    void web
+      .pageHold(policy)
+      ?.release(new URL(key).hostname)
+      .catch(() => undefined)
     return html
   }
 

@@ -3,7 +3,7 @@ import type { Ctx } from '../context.ts'
 import { CapabilityError, fail } from '../errors.ts'
 import { defineCapability } from '../procedure.ts'
 import { describe, failedResponse, isAbort, readJson, withRetries } from '../transports/http.ts'
-import { BrowserFailure, BrowserRefused } from './browser.ts'
+import { BrowserFailure, BrowserRefused, ownerPage } from './browser.ts'
 import { askOnce } from './handoff.ts'
 import { type Pin, type ResolvedWebDeps, requireKey, webUsage, within } from './deps.ts'
 import { extractPdfPages, PdfTimeout } from './pdf.ts'
@@ -519,7 +519,11 @@ export const createFetch = (deps: ResolvedWebDeps) => {
         // A direct read that went out costs nothing, and says so: the run is priced at $0, not unknown. A refused URL
         // sends nothing and reports nothing.
         const free = () => ctx.addUsage(webUsage('direct', 0))
-        const browser = deps.browser(publicOnlyPolicy(deps, 'web.fetch'))
+        const policy = publicOnlyPolicy(deps, 'web.fetch')
+        const browser = deps.browser(policy)
+        const pageHold = deps.pageHold(policy)
+        // The URL the browser met a wall at, for the owner to find on screen when he is asked.
+        let challenged: string | undefined
         // A PDF is no page a browser reads as text: it goes the plain way even when a rendered read was asked for.
         const isPdf = /\.pdf(?:$|[?#])/i.test(url)
         const rendered = render && browser !== undefined && !isPdf
@@ -559,7 +563,10 @@ export const createFetch = (deps: ResolvedWebDeps) => {
           try {
             const page = await browser(target, ctx.signal)
             ctx.addUsage(webUsage('browser', 0))
+            // A read that passes ends the handoff of its host: the tab kept for the owner is no longer needed.
+            if (!page.challenge) void pageHold?.release(new URL(target).hostname).catch(() => undefined)
             if (page.challenge) {
+              challenged = target
               // Still a wall after the settle time: a person has to pass it once (the profile keeps the cookie). The page's
               // own title is not repeated: it is untrusted text.
               blocked = 'needs-human'
@@ -640,7 +647,8 @@ export const createFetch = (deps: ResolvedWebDeps) => {
         // A kept thin read is still a read: better than an error for a short page.
         if (kept.found && kept.found.read.text.length > 0) return { ...kept.found, tried }
         // Asked only once every leg has failed: a wall the Tavily read got past needs no person.
-        if (blocked === 'needs-human' && (await askOnce(deps.handoff, new URL(url).hostname))) {
+        const page = challenged ? ownerPage(pageHold, challenged, ctx.signal) : undefined
+        if (blocked === 'needs-human' && (await askOnce(deps.handoff, new URL(url).hostname, Date.now(), page))) {
           failures.push('the owner was asked to solve it')
         }
         throw fail(

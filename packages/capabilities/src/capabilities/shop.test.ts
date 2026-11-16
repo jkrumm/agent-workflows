@@ -6,7 +6,7 @@ import { resolveRoute } from '@agent-workflows/routes'
 import type { Usage } from '../context.ts'
 import { CapabilityCallError, fail } from '../errors.ts'
 import { fakeTransports } from '@agent-workflows/testing/transports'
-import type { BrowserPage, BrowserRead } from '../web/browser.ts'
+import type { BrowserPage, BrowserRead, PageHold } from '../web/browser.ts'
 import type { WebDeps } from '../web/deps.ts'
 import { fakeHandoff, resetHandoffLimit } from '../web/handoff.ts'
 import { createShopCapabilities } from './shop-capabilities.ts'
@@ -74,6 +74,7 @@ interface Rig {
   vision?: Parameters<typeof fakeTransports>[0]['anthropic']
   browser?: BrowserRead
   handoff?: ReturnType<typeof fakeHandoff>
+  pageHold?: PageHold
 }
 
 /** A browser reader that answers with `page` and records every read; it opens no process and no Chrome. */
@@ -86,10 +87,11 @@ function fakeShopBrowser(page: Partial<BrowserPage> & { html?: string }) {
   return { read, reads }
 }
 
-function rig({ shopRoutes = {}, anthropic, vision, browser, handoff }: Rig = {}) {
+function rig({ shopRoutes = {}, anthropic, vision, browser, handoff, pageHold }: Rig = {}) {
   const net = network(shopRoutes)
   if (browser) net.deps.browser = browser
   if (handoff) net.deps.handoff = handoff
+  if (pageHold) net.deps.pageHold = pageHold
   const time = clock()
   // The vision route and the text routes share the Messages wire: a request with pictures takes the next vision reply,
   // any other the next text one.
@@ -399,6 +401,32 @@ describe('shop.search', () => {
       expect(browser.reads).toHaveLength(1)
       expect(r.net.calls).toHaveLength(1)
       expect(handoff.requests).toHaveLength(1)
+    })
+
+    test('the page is kept open for the owner when he is asked, and its tab released once a read passes', async () => {
+      resetHandoffLimit()
+      const handoff = fakeHandoff()
+      const kept: string[] = []
+      const released: string[] = []
+      const pageHold: PageHold = {
+        keep: async (url) => void kept.push(url),
+        release: async (host) => void released.push(host),
+      }
+      const wall = fakeShopBrowser({
+        challenge: true,
+        title: 'Bot Check',
+        html: await fixture('robot-check-synthetic'),
+      })
+      const blockedRig = rig({ shopRoutes: { [SEARCH_URL]: robot }, browser: wall.read, handoff, pageHold })
+      await failure(blockedRig.search.call({ query: 'a' }, blockedRig.options))
+      expect(kept).toEqual([`${SEARCH_URL}a`])
+      expect(handoff.requests).toEqual([{ host: 'www.amazon.de', pageOpen: true }])
+      expect(released).toEqual([])
+
+      const passing = fakeShopBrowser({ html: await fixture('search-augplatte') })
+      const passRig = rig({ shopRoutes: { [SEARCH_URL]: robot }, browser: passing.read, handoff, pageHold })
+      await passRig.search.call({ query: 'a' }, passRig.options)
+      expect(released).toEqual(['www.amazon.de'])
     })
 
     test('a browser page that still is the robot check counts as a challenge', async () => {
