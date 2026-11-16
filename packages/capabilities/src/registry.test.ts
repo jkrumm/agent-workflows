@@ -121,9 +121,20 @@ describe('one definition, two doors', () => {
         'x-api-key: abcdef123',
         'Authorization: Basic dXNlcjpwYXNzd29yZA==',
         'IU_API_KEY=abcdef123',
+        'authorization: basic dXNlcjpwYXNzd29yZA==',
+        'AUTHORIZATION: BASIC dXNlcjpwYXNzd29yZA==',
+        'Authorization: Token ghp_abcdef123',
+        'Authorization: Digest username=abcdef123',
+        'Authorization: abcdef123',
+        'x-api-key: "abcdef123"',
+        "password: 'hunter2'",
       ]) {
         expect(causeOf(new Error(`upstream replied ${text}`))).not.toMatch(/hunter2|abcdef123|dXNlcjpwYXNzd29yZA/)
       }
+      // The error's own name is not scrubbed.
+      expect(causeOf(Object.assign(new Error('jwt expired'), { name: 'JsonWebTokenError' }))).toBe(
+        'JsonWebTokenError: jwt expired',
+      )
     } finally {
       console.error = original
       void s.stop(true)

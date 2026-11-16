@@ -142,9 +142,10 @@ once) and on an uncaught exception (exit 1), with an unref'd backstop timer; the
 call, spans still queued are lost on `process.exit`, on a natural exit and on SIGTERM (S2 flush matrix).
 
 - **Bounded.** Every flush and shutdown is capped at `flushTimeoutMs` (default 5 s). A timeout is logged.
-- **Span text is redacted.** Error messages and tool errors on spans have bearer tokens, `sk-` keys, `name=value`
-  pairs whose name contains key, token, secret or password (`api_key=`, `IU_API_KEY=`, `GITHUB_TOKEN=`) and the
-  same names as JSON strings (`"token": "…"`, plus `"authorization"`) replaced, and are capped at 500 characters;
+- **Span text is redacted.** Error messages and tool errors on spans have bearer and basic credentials, `sk-` keys,
+  `name=value` and `name: value` pairs whose name contains key, token, secret or password (`api_key=`, `IU_API_KEY=`,
+  `GITHUB_TOKEN=`, `password: …`), a whole `Authorization:` header value (any scheme) and the same names as JSON
+  strings (`"token": "…"`, plus `"authorization"`) replaced (the one table is `redactSecrets` in `@agent-workflows/capabilities`), and are capped at 500 characters;
   the journal keeps the full message.
 - **Diagnostics.** OTel's `diag` logger is process-global: installed once, it forwards to the most recently
   constructed `Telemetry`'s logger and is unhooked at its shutdown. One `Telemetry` per process is the shape.

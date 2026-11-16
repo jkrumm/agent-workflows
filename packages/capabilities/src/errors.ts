@@ -75,13 +75,16 @@ const CAUSE_MAX_CHARS = 300
 
 const SECRETS: [RegExp, string][] = [
   [/\bBearer\s+[\w.~+/=-]+/gi, 'Bearer [redacted]'],
-  [/\bBasic\s+[A-Za-z0-9+/]{12,}={0,2}/g, 'Basic [redacted]'],
+  [/\bBasic\s+[A-Za-z0-9+/]{8,}={0,2}/gi, 'Basic [redacted]'],
   [/\bsk-[\w-]{6,}/g, 'sk-[redacted]'],
   // `api_key=`, `token=` in a URL and env-style `IU_API_KEY=`, `ARGO_API_SECRET=`, `GITHUB_TOKEN=`.
   [/\b([\w-]*(?:key|token|secret|password)[\w-]*)=[^\s&"',;]+/gi, '$1=[redacted]'],
-  // `password: x`, `x-api-key: x`, `Authorization: x` (a header or a log line).
+  // An Authorization header is redacted whole, whatever its scheme (`Token`, `Digest`, a bare value): the value after
+  // the colon up to a quote or separator. The Bearer and Basic rules above already left `Bearer [redacted]`.
+  [/\b((?:proxy-)?authorization):(?!\s*(?:Bearer|Basic) \[redacted\])\s*[^\n"',;]+/gi, '$1: [redacted]'],
+  // `password: x`, `x-api-key: "x"` (a log line or a dumped header).
   [
-    /\b([\w-]*(?:key|token|secret|password|authorization)[\w-]*)\s*:\s*(?!(?:Bearer|Basic)\b)[^\s&"',;]+/gi,
+    /\b([\w-]*(?:key|token|secret|password)[\w-]*)\s*:(?!\s*["']?\[redacted\])\s*["']?[^\s&"',;]+["']?/gi,
     '$1: [redacted]',
   ],
   // JSON: `"token": "…"`, `"api_key":"…"`, `"authorization": "…"`.
@@ -103,9 +106,9 @@ export function redactSecrets(text: string): string {
 export function causeOf(error: unknown): string {
   const name = error instanceof Error ? error.name : typeof error
   const message = error instanceof Error ? error.message : String(error)
-  const text = redactSecrets(`${name}: ${message}`.replace(/(https?:\/\/[^\s?#"'<>)]+)[?#][^\s"'<>)]*/gi, '$1'))
-    .replace(/\s+/g, ' ')
-    .trim()
+  // The error's own name stays readable (`JsonWebTokenError: jwt expired`): only the message is scrubbed.
+  const scrubbed = redactSecrets(message.replace(/(https?:\/\/[^\s?#"'<>)]+)[?#][^\s"'<>)]*/gi, '$1'))
+  const text = `${name}: ${scrubbed}`.replace(/\s+/g, ' ').trim()
   return text.length > CAUSE_MAX_CHARS ? `${text.slice(0, CAUSE_MAX_CHARS)}…` : text
 }
 
