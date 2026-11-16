@@ -173,6 +173,36 @@ export function blockedReason(message: string): BlockReason | undefined {
   return BLOCK_REASONS.find((r) => r === reason)
 }
 
+/** What the caller does next for each reason a page turned the read away; every failed `web.fetch` message ends with one of these. */
+const NEXT_STEP: Record<BlockReason, string> = {
+  'cloudflare-challenge': 'the site blocks automated reads; do not retry, use web.search for another source',
+  'bot-protection': 'the site blocks automated reads; do not retry, use web.search for another source',
+  'login-required': 'the page needs a login; do not retry, use web.search for a public source',
+  forbidden: 'the page refuses automated reads; do not retry, use web.search for another source',
+  'rate-limited': 'the site is rate limiting; retry later, not in a loop, or use web.search for another source',
+  'legal-block': 'the page is withheld for legal reasons; do not retry, use web.search for another source',
+  rejected: 'the site turned the plain read away; retry once with render, else use web.search for another source',
+  'no-text': 'the page holds no readable text; retry once with render, else use web.search for another source',
+  'unsupported-type': 'the page is not text or a PDF; do not retry, use web.search for a text source',
+  'needs-human': 'a person has to pass the wall; retry later, do not loop, or use web.search for another source',
+}
+
+/** The one action a failed `web.fetch` ends with, from why it failed: a gone page, a block, a slow or down host. */
+function nextStep(
+  blocked: BlockReason | undefined,
+  status: number | undefined,
+  failures: readonly string[],
+  ownerAsked = false,
+): string {
+  if (blocked === 'needs-human' && ownerAsked) return 'the owner was asked; retry later, do not loop'
+  if (status === 404 || status === 410) return 'gone; do not retry, use web.search for the current location'
+  if (blocked) return NEXT_STEP[blocked]
+  if (failures.some((line) => /timed out/i.test(line))) return 'host slow or down; try later or use web.search'
+  if (status !== undefined && status >= 400 && status < 500)
+    return `the page answers HTTP ${status}; do not retry, use web.search for another source`
+  return 'host failed or unreachable; try later or use web.search'
+}
+
 const tavilyExtractResponse = z.object({
   results: z.array(z.object({ url: z.string(), raw_content: z.string().nullish() })),
   failed_results: z.array(z.object({ url: z.string(), error: z.string().nullish() })).nullish(),
@@ -547,7 +577,11 @@ export const createFetch = (deps: ResolvedWebDeps) => {
             free()
             // A page that is definitively gone is not worth a paid second opinion; another spelling of it may be missing alone.
             if (error.missing && target === url)
-              throw fail('UPSTREAM_ERROR', `web.fetch: ${error.message}`, { status: error.status ?? 404 })
+              throw fail(
+                'UPSTREAM_ERROR',
+                `web.fetch: ${error.message} · ${nextStep(undefined, error.status ?? 404, [])}`,
+                { status: error.status ?? 404 },
+              )
             if (target === url && error.status !== undefined && error.status >= 400 && error.status < 500)
               pageStatus = error.status
             // The browser leg's verdict that a person has to pass the wall stands over the plain read's reading of it.
@@ -648,12 +682,12 @@ export const createFetch = (deps: ResolvedWebDeps) => {
         if (kept.found && kept.found.read.text.length > 0) return { ...kept.found, tried }
         // Asked only once every leg has failed: a wall the Tavily read got past needs no person.
         const page = challenged ? ownerPage(pageHold, challenged, ctx.signal) : undefined
-        if (blocked === 'needs-human' && (await askOnce(deps.handoff, new URL(url).hostname, Date.now(), page))) {
-          failures.push('the owner was asked to solve it')
-        }
+        const ownerAsked =
+          blocked === 'needs-human' && (await askOnce(deps.handoff, new URL(url).hostname, Date.now(), page))
+        if (ownerAsked) failures.push('the owner was asked to solve it')
         throw fail(
           'UPSTREAM_ERROR',
-          `web.fetch: ${blocked ? `blocked (${blocked}) · ` : ''}${failures.join(' · ')}`,
+          `web.fetch: ${blocked ? `blocked (${blocked}) · ` : ''}${failures.join(' · ')} · ${nextStep(blocked, pageStatus, failures, ownerAsked)}`,
           pageStatus ? { status: pageStatus } : {},
         )
       }
@@ -684,6 +718,12 @@ function until<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   })
 }
 
+/**
+ * Text the journal can keep: no U+0000 (a jsonb value rejects it) and no lone surrogate (not valid UTF-8). A page from
+ * any leg (the plain read, the browser, Extract, a PDF) can carry either, so the one place every result passes strips them.
+ */
+const wellFormed = (text: string) => text.replaceAll('\0', '').toWellFormed()
+
 function shape(
   url: string,
   read: Read,
@@ -692,13 +732,13 @@ function shape(
   when: { cached: boolean; at: number },
   tried?: string[],
 ) {
-  const { text, truncated } = cut(read.text, maxChars)
+  const { text, truncated } = cut(wellFormed(read.text), maxChars)
   // Cut at the caller's `maxChars`, or at the read cap before the text was even extracted: either way, not the whole page.
   return {
     url,
     // A challenge redirect's parameters are plumbing, not part of the page's address.
     finalUrl: cleanUrl(read.finalUrl),
-    ...(read.title ? { title: read.title } : {}),
+    ...(read.title ? { title: wellFormed(read.title) } : {}),
     text,
     truncated: truncated || read.capped === true,
     via,

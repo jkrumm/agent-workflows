@@ -1347,13 +1347,14 @@ describe('web.package', () => {
     expect((withToken.calls[0]!.init.headers as Record<string, string>).authorization).toBe('Bearer gh')
   })
 
-  test('an unknown package is a typed 404; a body that does not fit is an upstream error', async () => {
+  test('an unknown package is NOT_FOUND; a body that does not fit is an upstream error', async () => {
     const { call } = dep({
       'https://registry.npmjs.org/ghost': status(404, '{"error":"Not found"}'),
       'https://registry.npmjs.org/odd': json({ nope: 1 }),
     })
     const missing = await failure(call('web.package', { registry: 'npm', name: 'ghost' }))
-    expect(missing).toMatchObject({ code: 'UPSTREAM_ERROR', data: { status: 404 } })
+    expect(missing).toMatchObject({ code: 'NOT_FOUND', status: 404 })
+    expect(missing.message).toContain('ghost not found on npm')
     expect((await failure(call('web.package', { registry: 'npm', name: 'odd' }))).message).toContain('does not fit')
   })
 
@@ -1365,7 +1366,7 @@ describe('web.package', () => {
       }),
     })
     const error = await failure(call('web.package', { registry: 'crates', name: 'pre' }))
-    expect(error).toMatchObject({ code: 'UPSTREAM_ERROR', data: { status: 404 } })
+    expect(error).toMatchObject({ code: 'NOT_FOUND', status: 404 })
     expect(error.message).toContain('no stable version')
   })
 
@@ -2539,6 +2540,65 @@ describe('blocked reasons', () => {
     }
     expect(blockedReason('web.fetch: direct: HTTP 500')).toBeUndefined()
     expect(blockedReason('web.fetch: blocked (made-up) · direct: HTTP 403')).toBeUndefined()
+  })
+})
+
+describe('web.fetch: every failure ends with one stated action', () => {
+  const ACTION = /(?:do not retry|retry later|retry once with render|try later|use web\.search)[^·]*$/
+  const pages: [string, Handler][] = [
+    ['HTTP 404', status(404)],
+    ['HTTP 410', status(410)],
+    ['cloudflare-challenge', status(403, '<title>Just a moment...</title> cf-chl-')],
+    ['bot-protection', status(429, 'verify you are human')],
+    ['login-required', status(401)],
+    ['forbidden', status(403, 'no')],
+    ['rate-limited', status(429, 'slow down')],
+    ['legal-block', status(451)],
+    ['rejected', status(400)],
+    ['no-text', html('<html><body><script>1</script></body></html>')],
+    ['unsupported-type', () => new Response('x', { headers: { 'content-type': 'image/png' } })],
+    ['HTTP 500', status(500)],
+    [
+      'timed out',
+      () => {
+        throw Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' })
+      },
+    ],
+  ]
+  for (const [label, handler] of pages) {
+    test(`${label}`, async () => {
+      const n = net({ 'https://example.com/p': handler })
+      const error = await failure(run(n.deps).call('web.fetch', { url: 'https://example.com/p' }))
+      expect(error.message).toMatch(ACTION)
+      if (label.startsWith('HTTP 4') && label !== 'HTTP 400') {
+        expect(error.message).toContain('gone; do not retry, use web.search for the current location')
+      }
+      if (label === 'timed out') expect(error.message).toContain('host slow or down; try later or use web.search')
+      const reason = blockedReason(error.message)
+      if (reason) expect(error.message).toContain(`blocked (${reason})`)
+    })
+  }
+
+  test('a page whose text carries NUL and a lone surrogate is returned clean, on the plain leg', async () => {
+    const n = net({
+      'https://example.com/nul': html(`<html><body><p>Price\u0000 list ${'x'.repeat(80)}</p></body></html>`),
+    })
+    const out = (await run(n.deps).call('web.fetch', { url: 'https://example.com/nul' })) as { text: string }
+    expect(out.text).toContain('Price list')
+    expect(out.text).not.toContain('\u0000')
+  })
+
+  test('the Extract leg is cleaned too: NUL and a lone surrogate never reach the answer', async () => {
+    const n = net({
+      'https://example.com/wall': status(403),
+      'https://api.tavily.com/extract': json({
+        results: [{ url: 'https://example.com/wall', raw_content: 'Ab\u0000c \ud800 d' }],
+      }),
+    })
+    const out = (await run({ ...n.deps, env: { TAVILY_API_KEY: 't' } }).call('web.fetch', {
+      url: 'https://example.com/wall',
+    })) as { text: string }
+    expect(out.text).toBe('Abc \ufffd d')
   })
 })
 
