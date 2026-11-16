@@ -116,6 +116,14 @@ describe('one definition, two doors', () => {
       expect(message).not.toContain('abc123')
       expect(message).not.toContain('hunter2')
       expect(causeOf(new Error('bad {"api_key":"sk-live-123456"} Bearer abc.def'))).not.toMatch(/live-123456|abc\.def/)
+      for (const text of [
+        'password: hunter2',
+        'x-api-key: abcdef123',
+        'Authorization: Basic dXNlcjpwYXNzd29yZA==',
+        'IU_API_KEY=abcdef123',
+      ]) {
+        expect(causeOf(new Error(`upstream replied ${text}`))).not.toMatch(/hunter2|abcdef123|dXNlcjpwYXNzd29yZA/)
+      }
     } finally {
       console.error = original
       void s.stop(true)

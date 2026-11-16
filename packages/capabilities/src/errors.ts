@@ -75,14 +75,20 @@ const CAUSE_MAX_CHARS = 300
 
 const SECRETS: [RegExp, string][] = [
   [/\bBearer\s+[\w.~+/=-]+/gi, 'Bearer [redacted]'],
+  [/\bBasic\s+[A-Za-z0-9+/]{12,}={0,2}/g, 'Basic [redacted]'],
   [/\bsk-[\w-]{6,}/g, 'sk-[redacted]'],
   // `api_key=`, `token=` in a URL and env-style `IU_API_KEY=`, `ARGO_API_SECRET=`, `GITHUB_TOKEN=`.
   [/\b([\w-]*(?:key|token|secret|password)[\w-]*)=[^\s&"',;]+/gi, '$1=[redacted]'],
+  // `password: x`, `x-api-key: x`, `Authorization: x` (a header or a log line).
+  [
+    /\b([\w-]*(?:key|token|secret|password|authorization)[\w-]*)\s*:\s*(?!(?:Bearer|Basic)\b)[^\s&"',;]+/gi,
+    '$1: [redacted]',
+  ],
   // JSON: `"token": "…"`, `"api_key":"…"`, `"authorization": "…"`.
   [/("[\w-]*(?:key|token|secret|password|authorization)[\w-]*"\s*:\s*)"(?:[^"\\]|\\.)*"/gi, '$1"[redacted]"'],
 ]
 
-/** Secret-shaped substrings of `text` redacted: bearer tokens, `sk-` keys, `key=value` pairs and JSON credential fields. The one table every outbound error text and span passes. */
+/** Secret-shaped substrings of `text` redacted: bearer and basic credentials, `sk-` keys, `key=value` and `key: value` pairs and JSON credential fields. The one table every outbound error text and span passes. */
 export function redactSecrets(text: string): string {
   let out = text
   for (const [pattern, replacement] of SECRETS) out = out.replace(pattern, replacement)
