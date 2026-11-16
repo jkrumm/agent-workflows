@@ -1,11 +1,11 @@
-import type { Json, ScoreJudge, Scorer, Verdict } from '@agent-workflows/runtime'
+import type { Json, ScoreJudge, Scorer, ScorerContext, Verdict } from '@agent-workflows/runtime'
 import { z } from 'zod'
 import { asRecord as record } from './util.ts'
 import { GoldenExpect, liveTarget, liveValue, matchExpect, withinMaxChars } from './golden.ts'
 import { type ResearchInputValue, ResearchOutput, type ResearchResult } from './schema.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
-export const RESEARCH_SCORER_VERSION = '2026-10-29.3'
+export const RESEARCH_SCORER_VERSION = '2026-11-16.1'
 
 /** A golden case's expected result (research-gateway `evals/golden.jsonl`: `expect`, optional `maxChars`). */
 export const ResearchReference = z.object({ expect: GoldenExpect, maxChars: z.number().int().positive().optional() })
@@ -62,13 +62,27 @@ async function supports(judge: ScoreJudge, claim: string, url: string): Promise<
  *   citations the judge could score, and when none could be `supported` is left out. A report without citations
  *   scores 0. A `live:` package the registry does not have (not found) or answers without a usable `latest` leaves
  *   `golden` unscored; a registry outage throws through the judge, and the runtime retries the scoring.
+ * Every score is also written under `<score>.<depth>` (`supported.deep`, `golden.standard`), the run's depth, so
+ * means, `agw eval compare` and drift read each depth apart without a grouping of their own: the depths run on
+ * different budgets (production: quick 9, standard 35, deep 76 tool calls) and one blended mean hides a regression in
+ * one of them. A run's tool calls and cost are not scores: the run record carries them (`agw eval run` prints them
+ * per depth, `compare` pairs them as `toolCalls` and `costUsd`).
  * `pass`: valid, and with a reference the golden check passed (an unscored golden never passes); without one, a
  * complete report.
  */
 export const researchScorer: Scorer<ResearchInputValue, ResearchReference> = {
   version: RESEARCH_SCORER_VERSION,
   reference: ResearchReference,
-  async score(_input, output, ctx): Promise<Verdict> {
+  async score(input, output, ctx): Promise<Verdict> {
+    const verdict = await scoreReport(output, ctx)
+    const depth = input?.depth ?? 'standard'
+    const perDepth = Object.entries(verdict.scores).map(([name, value]) => [`${name}.${depth}`, value] as const)
+    return { ...verdict, scores: { ...verdict.scores, ...Object.fromEntries(perDepth) } }
+  },
+}
+
+async function scoreReport(output: Json | null, ctx: ScorerContext<ResearchReference>): Promise<Verdict> {
+  {
     const parsed = ResearchOutput.safeParse(output)
     if (!parsed.success) {
       const scores: Record<string, number> = { valid: 0, complete: 0 }
@@ -128,7 +142,7 @@ export const researchScorer: Scorer<ResearchInputValue, ResearchReference> = {
     // With a reference only a golden pass passes: an unscored golden (a live value without a judge) never does.
     const pass = ctx.reference ? goldenPass === true : result.status === 'ok'
     return { scores, pass, ...(problems.length ? { feedback: problems.join('; ') } : {}) }
-  },
+  }
 }
 
 /** A golden case's reference, from a `cases.jsonl` line. */

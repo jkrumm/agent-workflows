@@ -1104,6 +1104,19 @@ describe('research scorer', () => {
     expect(matchExpect('Retry-After', { any: ['retry-after'] }, null).pass).toBe(true)
   })
 
+  test('every score is also written under the run depth, standard when the input has none', async () => {
+    const deep = await researchScorer.score({ query: 'q', depth: 'deep' }, report(), {
+      ...ctx,
+      reference: { expect: { any: ['\\b413\\b'] } },
+    })
+    expect(deep.scores).toMatchObject({ golden: 1, 'golden.deep': 1, valid: 1, 'valid.deep': 1, 'complete.deep': 1 })
+    expect(Object.keys(deep.scores).some((k) => k.endsWith('.standard'))).toBe(false)
+    const none = await researchScorer.score({} as never, report(), ctx)
+    expect(none.scores['valid.standard']).toBe(1)
+    const failed = await researchScorer.score({ query: 'q', depth: 'quick' }, null, ctx)
+    expect(failed.scores).toMatchObject({ valid: 0, 'valid.quick': 0, 'complete.quick': 0 })
+  })
+
   test('live: the registry value through the judge, a release tag without its v', async () => {
     const v = await researchScorer.score({} as never, report(), {
       ...ctx,
@@ -1173,7 +1186,16 @@ describe('research scorer', () => {
   test('an invalid or failed output scores 0', async () => {
     const v = await researchScorer.score({} as never, null, { ...ctx, judge, reference: { expect: { any: ['x'] } } })
     expect(v).toEqual({
-      scores: { valid: 0, complete: 0, golden: 0, supported: 0 },
+      scores: {
+        valid: 0,
+        complete: 0,
+        golden: 0,
+        supported: 0,
+        'valid.standard': 0,
+        'complete.standard': 0,
+        'golden.standard': 0,
+        'supported.standard': 0,
+      },
       pass: false,
       feedback: 'the run failed',
     })

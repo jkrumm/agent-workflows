@@ -13,6 +13,8 @@ export interface EvalCase {
   /** The workflow input on the materialized tree; `args` (the arm's extra input) win over the recorded input. */
   input(dir: string, args: Record<string, Json>): Record<string, Json>
   reference: Json
+  /** What the run's summary folds this case by under the arm's `args` (research: its depth); `summary.groups` stays empty without one. */
+  group?(args: Record<string, Json>): string | undefined
 }
 
 /** A module's own case reader: the cases file at `path` as replayable cases. */
@@ -34,6 +36,21 @@ export const plainSuite: Suite = {
       setup: false,
       input: (_dir, args) => ({ ...(c.input as Record<string, Json>), ...args }),
       reference: c.reference,
+    })),
+}
+
+/**
+ * `PlainCase` lines grouped by the input's `depth` (research): `agw eval run` reports every figure per depth as well
+ * as overall. A case without a depth runs at the workflow's default, `standard`.
+ */
+export const depthSuite: Suite = {
+  read: (path) =>
+    plainSuite.read(path).map((c) => ({
+      ...c,
+      group: (args) => {
+        const depth = c.input('', args).depth
+        return typeof depth === 'string' ? depth : 'standard'
+      },
     })),
 }
 
