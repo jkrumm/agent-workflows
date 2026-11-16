@@ -154,9 +154,9 @@ With `--account`, `prepare` reads the quota port and records on the job `ceiling
 reading, or neither window has a value), `quota_five_hour` and `quota_seven_day` in percent (null without a value).
 Without an account: `ceiling: unjudged`. `status <jobId>` shows `ceiling`, `quotaFiveHour` and `quotaSevenDay` (null on
 jobs older than migration 0019). The deep cap is the only hold: deep jobs per account (no account is its own bucket)
-since UTC midnight, not abandoned, the thread's own unsubmitted one excluded, ≥ `AGW_REVIEW_DEEP_CAP` (default 60) →
-held. Never downgraded. It is a runaway guard far above a busy day (15 deep reviews on one account was normal on
-2026-11-05). A deep tier that a `sensitive path` rule forces may pass the cap by half of it (`cap + max(1, cap/2)`), so routine deep reviews do not hold a security-adjacent change. The held reason names the UTC midnight the count resets at and `--account` (another Max account counts apart).
+since UTC midnight, not abandoned, the thread's own unsubmitted one excluded, ≥ `AGW_REVIEW_DEEP_CAP` (default 300) →
+held. Never downgraded. It is a runaway guard far above the factory's busiest day (112 deep jobs in 24 h, ~73 counted, on
+2026-11-16; 60 held leads' ships as a routine hold). The env var is read from the agw host, not the caller's. A deep tier that a `sensitive path` rule forces may pass the cap by half of it (`cap + max(1, cap/2)`), so routine deep reviews do not hold a security-adjacent change. The held reason names the UTC midnight the count resets at and `--account` (another Max account counts apart).
 
 ## Coverage
 

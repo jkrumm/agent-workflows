@@ -23,8 +23,8 @@ import type { PrepareInputValue, PrepareOutputValue } from './schema.ts'
 
 /** The cap is for a fix loop: submitted rounds in a row that ended with an open important finding. */
 export const MAX_ROUNDS = 3
-/** A runaway guard far above a busy day (~15 deep reviews per account); the quota reading is only recorded. */
-export const DEFAULT_DEEP_CAP = 60
+/** A runaway guard far above the factory's busiest day (112 deep jobs in 24 h on 2026-11-16, ~73 counted); the quota reading is only recorded. */
+export const DEFAULT_DEEP_CAP = 300
 /** A deep review that a sensitive path forces may pass the cap by this share of it: routine deep ones do not eat it. */
 const SENSITIVE_RESERVE = 0.5
 const PRIOR_LIMIT = 20
@@ -179,7 +179,7 @@ async function checkLimits(
   const who = at.account ?? 'no account'
   return {
     quota,
-    reason: `held: ${who} at the deep cap, ${today}/${cap} deep reviews today (UTC); the count resets at ${nextUtcMidnight(ctx.now()).toISOString()}, another Max account counts apart (--account), AGW_REVIEW_DEEP_CAP raises it`,
+    reason: `held: ${who} at the deep cap, ${today}/${cap} deep reviews today (UTC); the count resets at ${nextUtcMidnight(ctx.now()).toISOString()}, another Max account counts apart (--account), AGW_REVIEW_DEEP_CAP on the agw host raises it`,
   }
 }
 
