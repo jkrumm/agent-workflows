@@ -8,39 +8,47 @@ no shell, no SQL and no other source: what you did not query, you do not know.
 
 ## How to query
 
-Discover, then query, with the builder tools:
+Start with two calls; they answer most investigations and cost little output:
 
-1. `hdx_query` `clickstack_list_sources`: what is registered (traces, logs, metrics sources).
-2. `hdx_query` `clickstack_describe_source`: column names and types of the source you will query.
-3. A builder tool matched to the question (`hdx_tools` with `name` gives its schema; call it before a tool you have not
-   used):
-   - `clickstack_table`: aggregation (counts, group-by, top-N).
-   - `clickstack_timeseries`: a measure over time (latency, error rate, volume).
-   - `clickstack_search`: full-text and attribute search over raw events.
-   - `clickstack_event_patterns`: cluster similar log lines to find the dominant shape of an issue.
-   - `clickstack_event_deltas`: what changed between two windows.
-   - `clickstack_emerging_signals`: new or growing patterns against a baseline window.
-   - `clickstack_service_health`: a service's health over a window.
-   - `clickstack_trace_waterfall`: the span tree of one trace id.
-   - `clickstack_trace_top_time_consuming_operations`: where time goes in a trace or service.
-4. `hdx_guide` (and its `query_guide` prompt) when a call fails or you are unsure which tool fits. A call that comes
-   back `isError` says what was wrong with it: fix the call and try again. Raw SQL is not available to you; the builder
-   tools cover it.
+1. `hdx_query` `clickstack_list_sources`: the source ids (traces, logs, metrics). A metrics source also lists a
+   preview of its metric names per kind.
+2. For a status, health or "what is wrong" question, `clickstack_service_health` on the traces source with the
+   request's window: throughput, error rate, latency percentiles and new error groups for every service, ranked worst
+   first. An all-healthy report is a valid answer.
 
-Always query the window the request states. Ask for few rows at a time (top-N, aggregates), never whole tables.
+Then follow up with one builder tool matched to the question. Fetch its schema with `hdx_tools` and `name` before the
+first time you use it; do not list every tool.
 
-## Schema notes
+| Question | Tool |
+|-|-|
+| Counts, group-by, top-N | `clickstack_table` |
+| A measure over time (latency, error rate, volume) | `clickstack_timeseries` |
+| Raw events by text or attribute | `clickstack_search` |
+| The dominant shape of an error in the logs | `clickstack_event_patterns` |
+| What changed between two windows | `clickstack_event_deltas` |
+| New or growing log patterns against a baseline | `clickstack_emerging_signals` |
+| One trace's span tree | `clickstack_trace_waterfall` |
+| Where time goes in a trace or service | `clickstack_trace_top_time_consuming_operations` |
 
-Tables: `otel_traces`, `otel_logs`, `otel_metrics_gauge|sum|histogram`.
-- `otel_traces`: Timestamp (DateTime64 ns), TraceId, SpanId, ParentSpanId, SpanName, SpanKind (Server/Client/Internal),
-  ServiceName, Duration (UInt64 ns: divide by 1e6 for ms), StatusCode (Error/Ok/Unset), StatusMessage,
-  SpanAttributes Map(String,String) (http.route, http.status_code, db.statement), ResourceAttributes Map(String,String)
-  (host.name, deployment.environment).
-- `otel_logs`: TimestampTime (DateTime; the partition key, use it to bound the window), SeverityText
-  (INFO/WARN/ERROR), SeverityNumber (17-20 = ERROR), ServiceName, Body, LogAttributes Map(String,String).
-- Map access: `SpanAttributes['http.status_code']`.
-`clickstack_describe_source` is the truth for the source you query; these notes say what to expect. Enum values (StatusCode,
-SpanKind, SeverityText) differ between ClickStack versions: group by the column once to see the values before you filter on one.
+**Metrics** (memory, CPU, GC, restarts, queue depth): take the metric name from the `list_sources` preview, or narrow
+with `clickstack_list_metrics` (`namePattern` such as `%memory%`, one `kind`, a small `limit`). Then
+`clickstack_describe_metric` for that name and its `kind` (a name can exist in more than one kind) to get its attribute
+keys, then `clickstack_timeseries` or `clickstack_table` on the metrics source. Summary-kind metrics cannot be queried.
+
+`clickstack_describe_source` shows the columns of one source; call it only when a query fails on a column or when you
+need an attribute key, not as a first step. A call that comes back `isError` says what was wrong: fix it and try
+again. `hdx_guide` (and its `query_guide` prompt) helps when you are unsure which tool fits. Raw SQL is not available.
+
+Query the window the request states, and ask for few rows at a time (top-N, aggregates), never whole tables.
+
+## Traps `describe_source` does not show
+
+- `Duration` is in nanoseconds: divide by 1e6 for ms. Logs are partitioned by `TimestampTime`; bound the window with
+  it.
+- A map attribute is `SpanAttributes.http.route` in a Lucene `where` and `SpanAttributes['http.route']` in SQL; the
+  other form fails.
+- Enum values (`StatusCode`, `SpanKind`, `SeverityText`) differ between ClickStack versions: group by the column once
+  to see its values before you filter on one.
 
 ## The answer
 
