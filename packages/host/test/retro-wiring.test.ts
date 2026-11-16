@@ -3,28 +3,19 @@ import { createCapabilities, createRegistry } from '@agent-workflows/capabilitie
 import { rejection } from './support.ts'
 import { fakeTransports } from '@agent-workflows/testing/transports'
 import { loadConfig } from '../src/config.ts'
-import { ghCli } from '../src/workflows/retrospective/gh.ts'
+import { factorySignals, SIGNAL_REPO, SIGNAL_SOURCE } from '../src/workflows/retrospective/signals.ts'
 import { ToolGate } from '../src/tool-gate/index.ts'
 import { agentNames, createWorkflows, fingerprintWorkflows } from '../src/workflows/index.ts'
 
 const base = { AGW_API_SECRET: 'x'.repeat(40), AGW_MACHINE: 'm', AGW_PG_URL: 'postgres://u@h/d' }
 
 describe('retrospective config', () => {
-  test('the weekly schedule is on and issue filing off unless told otherwise', () => {
-    expect(loadConfig(base)).toMatchObject({ retroWeekly: true, retroFileIssues: false, retroIssueRepo: undefined })
+  test('the weekly schedule and its signals are on unless told otherwise', () => {
+    expect(loadConfig(base)).toMatchObject({ retroWeekly: true, retroSignals: true })
     for (const off of ['0', 'off', 'false'])
       expect(loadConfig({ ...base, AGW_RETRO_WEEKLY: off }).retroWeekly).toBe(false)
-  })
-
-  test('filing issues needs a well-formed repository', () => {
-    expect(() => loadConfig({ ...base, AGW_RETRO_FILE_ISSUES: '1' })).toThrow(
-      'AGW_RETRO_FILE_ISSUES needs AGW_RETRO_ISSUE_REPO',
-    )
-    expect(() => loadConfig({ ...base, AGW_RETRO_ISSUE_REPO: 'not a repo' })).toThrow('owner/name')
-    expect(loadConfig({ ...base, AGW_RETRO_FILE_ISSUES: 'true', AGW_RETRO_ISSUE_REPO: 'owner/name' })).toMatchObject({
-      retroFileIssues: true,
-      retroIssueRepo: 'owner/name',
-    })
+    for (const off of ['0', 'off', 'false'])
+      expect(loadConfig({ ...base, AGW_RETRO_SIGNALS: off }).retroSignals).toBe(false)
   })
 })
 
@@ -65,48 +56,42 @@ describe('registration', () => {
   })
 })
 
-describe('ghCli', () => {
-  const calls: string[][] = []
-  const run = (answer: string) => async (argv: string[]) => {
-    calls.push(argv)
-    return { exitCode: 0, stdout: answer, stderr: '' }
-  }
-  const HASH = '0123456789abcdef'
-
-  test('finds an issue by the marker in its body, verified against the body itself', async () => {
-    const gh = ghCli({
-      repo: 'owner/name',
-      run: run(
-        JSON.stringify([
-          { number: 4, url: 'u4', body: 'mentions agw-retro:0123456789abcdef but is not the marker' },
-          { number: 7, url: 'u7', body: `<!-- agw-retro:${HASH} -->\nrest` },
-        ]),
-      ),
+describe('factorySignals', () => {
+  test('files with the factory CLI, title and text as plain arguments, from the agent and for this repo', async () => {
+    const calls: { cmd: string[]; timeoutMs?: number }[] = []
+    const port = factorySignals({
+      bin: '/bin/factory',
+      run: async (cmd, options) => {
+        calls.push({ cmd, timeoutMs: options?.timeoutMs })
+        return { stdout: '', stderr: '', exitCode: 0, timedOut: false }
+      },
     })
-    expect(await gh.findByHash(HASH)).toEqual({ number: 7, url: 'u7' })
-    expect(await gh.findByHash('ffffffffffffffff')).toBeNull()
-    expect(calls[0]).toEqual(
-      expect.arrayContaining(['--repo', 'owner/name', '--state', 'all', '--search', `"agw-retro:${HASH}" in:body`]),
-    )
+    await port.file({ title: 't; rm -rf', text: 'line one\nline two' })
+    expect(calls[0]?.cmd).toEqual([
+      '/bin/factory',
+      'signal',
+      'file',
+      '--from',
+      SIGNAL_SOURCE,
+      '--repo',
+      SIGNAL_REPO,
+      '--title',
+      't; rm -rf',
+      '--text',
+      'line one\nline two',
+    ])
+    expect(SIGNAL_SOURCE).toBe('agent:agent-workflows')
+    expect(SIGNAL_REPO).toBe('agent-workflows')
   })
 
-  test('a search with no hit is null', async () => {
-    expect(await ghCli({ repo: 'owner/name', run: run('[]') }).findByHash(HASH)).toBeNull()
-  })
-
-  test('creates in the configured repository with the title and body as arguments, never through a shell', async () => {
-    calls.length = 0
-    const gh = ghCli({ repo: 'owner/name', run: run('https://example.com/owner/name/issues/12\n') })
-    expect(await gh.create({ title: 't; rm -rf', body: 'b' })).toEqual({
-      number: 12,
-      url: 'https://example.com/owner/name/issues/12',
-    })
-    expect(calls[0]).toEqual(['issue', 'create', '--repo', 'owner/name', '--title', 't; rm -rf', '--body', 'b'])
-  })
-
-  test('a failing gh surfaces its stderr; a malformed repository is refused at construction', async () => {
-    const gh = ghCli({ repo: 'owner/name', run: async () => ({ exitCode: 1, stdout: '', stderr: 'auth required' }) })
-    expect(await rejection(gh.create({ title: 't', body: 'b' }))).toContain('auth required')
-    expect(() => ghCli({ repo: 'nope' })).toThrow('owner/name')
+  test('a refusal, a timeout and a CLI that never ran each throw with their reason', async () => {
+    const failing = (result: { exitCode: number | null; stderr?: string; timedOut?: boolean; error?: string }) =>
+      factorySignals({
+        bin: 'factory',
+        run: async () => ({ stdout: '', stderr: result.stderr ?? '', timedOut: false, ...result }),
+      }).file({ title: 't', text: 'x' })
+    expect(await rejection(failing({ exitCode: 2, stderr: 'unknown repo\n' }))).toContain('exit 2: unknown repo')
+    expect(await rejection(failing({ exitCode: null, timedOut: true }))).toContain('timed out')
+    expect(await rejection(failing({ exitCode: null, error: 'spawn ENOENT' }))).toContain('spawn ENOENT')
   })
 })

@@ -34,10 +34,10 @@ import { gitRunner } from './review/route.ts'
 import { type HostOperation, type HostWorkflow, IDLE_TIMEOUT_S, MAX_REQUEST_BODY_BYTES } from './operations.ts'
 import { evalMineAutoPorts, pgLabelStepCosts } from './workflows/eval-mine/history.ts'
 import { pgLatestOverview } from './workflows/overview/latest.ts'
-import { ghCli } from './workflows/retrospective/gh.ts'
 import { RETRO_WORKFLOW_ID } from './workflows/retrospective/index.ts'
 import { pgJournalReader } from './workflows/retrospective/sample.ts'
 import { startRetroSchedule } from './workflows/retrospective/schedule.ts'
+import { factorySignals } from './workflows/retrospective/signals.ts'
 import { listTrackedFiles, type TrackedPaths } from './workflows/retrospective/tracked.ts'
 import { scorerJudge } from './judge.ts'
 import { type CapabilityCall, ToolGate } from './tool-gate/index.ts'
@@ -531,8 +531,8 @@ export function hostProcess(config: HostConfig, door?: ImageDoorOptions): Proces
       journal = pgJournalReader(readPool, base.schema)
       // The agents overview: its factory reader and quota are shared by `agw agents`, the `overview` workflow and the push.
       fleet = hostFleet({ env, logger, latestOverview: pgLatestOverview(readPool, base.schema) })
-      const gh = config.retroFileIssues && config.retroIssueRepo ? ghCli({ repo: config.retroIssueRepo }) : undefined
-      // Issues may name only paths this repo tracks; a release is a `git archive` of the commit (see tracked.ts).
+      const signals = config.retroSignals ? factorySignals({ env }) : undefined
+      // Signals may name only paths this repo tracks; a release is a `git archive` of the commit (see tracked.ts).
       const repoRoot = resolve(import.meta.dir, '../../..')
       let trackedList: Promise<TrackedPaths> | undefined
       const tracked = () =>
@@ -596,7 +596,7 @@ export function hostProcess(config: HostConfig, door?: ImageDoorOptions): Proces
           registry,
           toolGate,
           logger,
-          retro: { journal, learnings, gh, tracked },
+          retro: { journal, learnings, signals, tracked },
           fleet: { fleet: fleet.fleet },
           research: { ledger: pgToolLedger(ledgerPool, base.schema) },
           costHistory: {
@@ -650,7 +650,7 @@ export function hostProcess(config: HostConfig, door?: ImageDoorOptions): Proces
             workflows: workflows
               .filter((entry) => entry.agents?.length && entry !== retrospective)
               .map((entry) => entry.workflow.id),
-            fileIssues: config.retroFileIssues,
+            fileSignals: config.retroSignals,
             logger,
           })
           onClose(() => schedule.stop())

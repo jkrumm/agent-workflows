@@ -30,7 +30,8 @@ const output = (over: Record<string, unknown> = {}) => ({
   sampled: 4,
   proposals: [proposal()],
   learnings: [],
-  issues: [],
+  tidy: { merged: 0, activated: [], retired: [] },
+  signals: [],
   dropped: [],
   ...over,
 })
@@ -51,7 +52,13 @@ describe('retrospective scorer', () => {
     const learned = output({
       proposals: [],
       learnings: [
-        { agent: 'check', fact: 'Dependencies are installed once per checkout', evidence: [r2], learningId: null },
+        {
+          agent: 'check',
+          fact: 'Dependencies are installed once per checkout',
+          evidence: [r2],
+          learningId: null,
+          outcome: 'known' as const,
+        },
       ],
     })
     expect(score(input, learned, ctx(reference)).scores.found).toBe(1)

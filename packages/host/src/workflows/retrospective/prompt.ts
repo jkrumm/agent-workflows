@@ -13,6 +13,18 @@ function scrub(text: string | null, max: number): string | null {
   return text === null ? null : cut(scrubForPrompt(text), max)
 }
 
+/** `tools 12 (search ×5 (2 failed), fetch ×7 (3 repeated))`; just the count for a step that leaves no record of its tools. */
+function renderTools(step: SampledRun['steps'][number]): string {
+  if (step.tools.length === 0) return `tools ${step.toolCalls}`
+  const named = step.tools.map((t) => {
+    const trouble = [t.failed > 0 ? `${t.failed} failed` : '', t.repeats > 0 ? `${t.repeats} repeated` : '']
+      .filter(Boolean)
+      .join(', ')
+    return `${t.tool} ×${t.calls}${trouble ? ` (${trouble})` : ''}`
+  })
+  return `tools ${step.toolCalls} (${named.join(', ')})`
+}
+
 function renderRun(run: SampledRun, previewChars: number): string {
   const lines = [
     `### run ${run.runId} — ${run.status}${run.errorKind ? ` (${run.errorKind})` : ''}`,
@@ -21,7 +33,7 @@ function renderRun(run: SampledRun, previewChars: number): string {
   if (run.friction) lines.push(`friction: ${JSON.stringify(run.friction)}`)
   if (run.error) lines.push(`error: ${scrub(run.error, ERROR_CHARS)}`)
   for (const step of run.steps) {
-    const head = `- ${step.stepId} [${step.kind}, ${step.status}${step.model ? `, ${step.model}` : ''}] tools ${step.toolCalls}`
+    const head = `- ${step.stepId} [${step.kind}, ${step.status}${step.model ? `, ${step.model}` : ''}] ${renderTools(step)}`
     const error = step.error ? ` error(${step.errorKind ?? '?'}): ${scrub(step.error, ERROR_CHARS)}` : ''
     const output = previewChars > 0 && step.output ? ` output: ${scrub(step.output, previewChars)}` : ''
     lines.push(`${head}${error}${output}`)
@@ -53,6 +65,7 @@ export function retroPrompt(args: {
   return [
     `Workflow: ${workflow}. Window: the last ${windowDays} days. ${runs.length} finished runs sampled (failed runs first).`,
     `Agents this workflow runs (the only valid values for a learning's "agent", and valid proposal targets): ${agents.join(', ')}.`,
+    'A step lists its tools by name (and how often one failed or repeated an earlier call with the same arguments) only where the host recorded them; any other step shows just a count.',
     'Cite only run ids that appear below. Do not write absolute paths, URLs, host names or repository names anywhere in your answer.',
     '',
     renderSample(runs),

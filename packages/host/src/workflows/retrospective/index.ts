@@ -2,13 +2,13 @@ import { type Ctx, defineWorkflow, type Json, StepFailed, WorkflowError } from '
 import type { LearningsStore } from '../../learnings/index.ts'
 import type { HostWorkflow } from '../../operations.ts'
 import { requireEvalPurpose } from '../eval-fixture.ts'
-import type { GhPort } from './gh.ts'
 import type { TrackedPaths } from './tracked.ts'
-import { issueFor } from './issue.ts'
 import { checkAnalysis } from './normalize.ts'
 import { SUBMIT_RESULT_RETRY, retroPrompt } from './prompt.ts'
 import type { JournalReader, SampledRun } from './sample.ts'
 import { retroScorer } from './scorer.ts'
+import { MAX_SIGNALS_PER_RUN, rankProposals, signalFor } from './signal.ts'
+import type { SignalPort } from './signals.ts'
 import { RETRO_ANALYSIS, RETRO_INPUT, RETRO_OUTPUT, type RetroAnalysis, type RetroOutput } from './schema.ts'
 
 export const RETRO_WORKFLOW_ID = 'retrospective'
@@ -20,9 +20,9 @@ export interface RetrospectiveDeps {
   learnings: LearningsStore
   /** The agent names a hosted workflow runs, or undefined for a workflow that runs none (or does not exist). */
   agentsOf(workflow: string): readonly string[] | undefined
-  /** The GitHub port. A run with `fileIssues` fails fast without one. */
-  gh?: GhPort
-  /** The paths tracked in this repository (what the deploy ships); an issue may name only these. Read when issues are filed. */
+  /** The factory's signal port. A run with `fileSignals` fails fast without one. */
+  signals?: SignalPort
+  /** The paths tracked in this repository (what the deploy ships); a signal may name only these. Read when signals are filed. */
   tracked?: () => Promise<TrackedPaths>
   now?: () => Date
 }
@@ -43,14 +43,16 @@ async function analyze(ctx: Ctx, prompt: string): Promise<RetroAnalysis> {
 
 /**
  * `retrospective` (concept §7 tier 2): looks back on one workflow's recent finished runs and proposes. Proposals are
- * never applied: they come back as typed output and, when asked, as GitHub issues; learned facts are stored as
- * `proposed` and take effect only when a human activates them. No agent step runs when there is nothing to read.
+ * never applied: they come back as typed output and, when asked, as factory signals (at most
+ * {@link MAX_SIGNALS_PER_RUN}, the best-evidenced first; triage dedupes them and makes the Issue). Learned facts are
+ * stored as `proposed`; one proposed again by another run in a later week is activated, one not seen again for four
+ * weeks is retired (`learnings/store.ts`). No agent step runs when there is nothing to read.
  */
 export function createRetrospective(deps: RetrospectiveDeps): HostWorkflow {
   const now = deps.now ?? (() => new Date())
   const workflow = defineWorkflow({
     id: RETRO_WORKFLOW_ID,
-    version: '2026-11-03.1',
+    version: '2026-11-16.1',
     scorer: retroScorer,
     input: RETRO_INPUT,
     output: RETRO_OUTPUT,
@@ -61,9 +63,9 @@ export function createRetrospective(deps: RetrospectiveDeps): HostWorkflow {
       if (!agents || agents.length === 0) {
         throw new WorkflowError('invalid_input', `${input.workflow} is not a workflow that runs agents`)
       }
-      const filing = input.fileIssues && !input.fixture
-      if (filing && !(deps.gh && deps.tracked)) {
-        throw new WorkflowError('invalid_input', 'fileIssues is on but this host has no issue repository configured')
+      const filing = input.fileSignals && !input.fixture
+      if (filing && !(deps.signals && deps.tracked)) {
+        throw new WorkflowError('invalid_input', 'fileSignals is on but this host has no signal port configured')
       }
       const empty = {
         workflow: input.workflow,
@@ -71,7 +73,8 @@ export function createRetrospective(deps: RetrospectiveDeps): HostWorkflow {
         sampled: 0,
         proposals: [],
         learnings: [],
-        issues: [],
+        tidy: { merged: 0, activated: [], retired: [] },
+        signals: [],
         dropped: [],
       }
 
@@ -99,34 +102,47 @@ export function createRetrospective(deps: RetrospectiveDeps): HostWorkflow {
         agents,
       })
 
-      // Proposed, never active: a retrospective cannot change an agent's behaviour by itself.
-      const learnings = await ctx.effect('store-learnings', async () => {
+      // Proposed, not active: a fact becomes active when another run proposes it again in a later week (store.ts).
+      const learnings = await ctx.effect('record-learnings', async () => {
         const stored: RetroOutput['learnings'] = []
         // An eval case stores nothing: its runs are made up, and a fact learned from them would reach a real agent.
-        if (input.fixture) return checked.learnings.map((l) => ({ ...l, learningId: null }))
+        if (input.fixture) return checked.learnings.map((l) => ({ ...l, learningId: null, outcome: 'known' as const }))
         for (const l of checked.learnings) {
-          const { learning, created } = await deps.learnings.add({
+          const { learning, outcome } = await deps.learnings.add({
             agent: l.agent,
             fact: l.fact,
             source: ctx.runId,
             evidence: l.evidence,
+            at: now(),
           })
-          stored.push({ ...l, learningId: created ? learning.id : null })
+          stored.push({ ...l, learningId: learning.id, outcome })
         }
         return stored
       })
+      const tidy = await ctx.effect('tidy-learnings', async () => {
+        if (input.fixture) return { merged: 0, activated: [], retired: [] }
+        const report = await deps.learnings.tidy({ now: now() })
+        return {
+          merged: report.merged,
+          activated: report.activated.map((l) => l.id),
+          retired: report.retired.map((l) => l.id),
+        }
+      })
 
-      const issues: RetroOutput['issues'] = filing
-        ? await ctx.effect('file-issues', async () => {
-            const { gh, tracked } = deps
-            if (!gh || !tracked) throw new WorkflowError('invalid_input', 'no issue repository configured')
+      const signals: RetroOutput['signals'] = filing
+        ? await ctx.effect('file-signals', async () => {
+            const { signals: port, tracked } = deps
+            if (!port || !tracked) throw new WorkflowError('invalid_input', 'no signal port configured')
             const paths = await tracked()
-            const filed: RetroOutput['issues'] = []
+            const filed: RetroOutput['signals'] = []
             const seen = new Set<string>()
-            for (const proposal of checked.proposals) {
-              const draft = issueFor({
+            let budget = MAX_SIGNALS_PER_RUN
+            for (const proposal of rankProposals(checked.proposals)) {
+              const draft = signalFor({
                 workflow: input.workflow,
                 retroRunId: ctx.runId,
+                sampled: runs.length,
+                windowDays: input.window,
                 proposal,
                 agents,
                 tracked: paths,
@@ -135,21 +151,28 @@ export function createRetrospective(deps: RetrospectiveDeps): HostWorkflow {
                 filed.push({ hash: draft.hash, status: 'refused', reason: draft.reason })
                 continue
               }
-              // Dedupe by the proposal hash in the issue body: a rerun, a resumed effect and a proposal repeated next
-              // week all land here. The search index lags a new issue (gh.ts), so a repeat in that window can slip through.
-              const existing = seen.has(draft.hash) ? { url: undefined } : await gh.findByHash(draft.hash)
+              // Two proposals with one hash in a run collapse; a proposal made again next week is the factory triage's to dedupe.
+              if (seen.has(draft.hash)) {
+                filed.push({ hash: draft.hash, title: draft.title, status: 'duplicate' })
+                continue
+              }
               seen.add(draft.hash)
-              if (existing) {
+              if (budget === 0) {
+                filed.push({ hash: draft.hash, title: draft.title, status: 'capped' })
+                continue
+              }
+              budget--
+              try {
+                await port.file({ title: draft.title, text: draft.text })
+                filed.push({ hash: draft.hash, title: draft.title, status: 'filed' })
+              } catch (error) {
                 filed.push({
                   hash: draft.hash,
                   title: draft.title,
-                  status: 'duplicate',
-                  ...(existing.url ? { url: existing.url } : {}),
+                  status: 'failed',
+                  reason: error instanceof Error ? error.message : String(error),
                 })
-                continue
               }
-              const created = await gh.create({ title: draft.title, body: draft.body })
-              filed.push({ hash: draft.hash, title: draft.title, status: 'filed', url: created.url })
             }
             return filed
           })
@@ -161,7 +184,8 @@ export function createRetrospective(deps: RetrospectiveDeps): HostWorkflow {
         sampled: runs.length,
         proposals: checked.proposals,
         learnings,
-        issues,
+        tidy,
+        signals,
         dropped: checked.dropped,
       }
     },

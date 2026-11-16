@@ -8,21 +8,25 @@ const LearningSchema = z.object({
   agent: z.string(),
   fact: z.string(),
   source: z.string(),
+  sources: z.array(z.string()),
   evidence: z.array(z.string()),
+  weeks: z.array(z.string()),
   status: z.enum(LEARNING_STATUSES),
   createdAt: z.string(),
+  lastSeenAt: z.string(),
   activatedAt: z.string().nullable(),
   retiredAt: z.string().nullable(),
 })
 
-const VERSION = '2026-10-28.1'
+const VERSION = '2026-11-16.1'
 const AGENT_NAME = z.string().regex(/^[a-z][a-z0-9-]*$/, 'an agent definition name, e.g. review-senior-dev')
 
 /**
- * `agw learnings list|add|activate|retire` (concept §7): the per-agent learned facts. Each is a one-step workflow, so
+ * `agw learnings list|add|activate|retire|tidy` (concept §7): the per-agent learned facts. Each is a one-step workflow, so
  * the command appears in the generated CLI with the platform's contract, and a change to the store (who retired
- * what, when) leaves a run record. A retrospective only ever proposes; activation is the human step, and retire
- * reaches the next run of the agent at once.
+ * what, when) leaves a run record. A retrospective proposes; a fact it proposes again in a later week activates (`tidy`
+ * applies that rule, and the stale-fact retirement, to what is on file); a human can always activate or retire, and
+ * retire reaches the next run of the agent at once.
  */
 export function createLearningsWorkflows(store: LearningsStore): HostWorkflow[] {
   const one = z.object({ learning: LearningSchema })
@@ -81,6 +85,23 @@ export function createLearningsWorkflows(store: LearningsStore): HostWorkflow[] 
       },
     })
 
+  const tidy = defineWorkflow({
+    id: 'learnings.tidy',
+    version: VERSION,
+    input: z.object({}).strict(),
+    output: z.object({
+      merged: z.number().int().describe('Proposed duplicates folded into the fact they repeat'),
+      activated: z.array(LearningSchema),
+      retired: z.array(LearningSchema),
+    }),
+    async run(ctx) {
+      return ctx.step('tidy', async () => {
+        const report = await store.tidy()
+        return { merged: report.merged, activated: report.activated.map(toJson), retired: report.retired.map(toJson) }
+      })
+    },
+  })
+
   return [
     { workflow: list, summary: 'List the per-agent learned facts', cli: { defaultFormat: 'json' } },
     {
@@ -92,6 +113,11 @@ export function createLearningsWorkflows(store: LearningsStore): HostWorkflow[] 
       workflow: byId('learnings.activate', (id) => store.activate(id)),
       summary: 'Activate a proposed fact: the agent reads it back from its next run',
       cli: { positional: ['id'], mutating: true },
+    },
+    {
+      workflow: tidy,
+      summary: 'Apply the learnings rule: fold repeated proposals, activate facts seen in two weeks, retire stale ones',
+      cli: { mutating: true },
     },
     {
       workflow: byId('learnings.retire', (id) => store.retire(id)),

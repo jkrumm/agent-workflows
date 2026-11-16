@@ -28,6 +28,7 @@ const late: LearningsStore = {
   activate: (...a) => store.activate(...a),
   retire: (...a) => store.retire(...a),
   activeFor: (...a) => store.activeFor(...a),
+  tidy: (...a) => store.tidy(...a),
 }
 
 beforeAll(async () => {
@@ -91,6 +92,148 @@ describe('store', () => {
       learning: { id: first.learning.id, status: 'active', source: 'manual', retiredAt: null },
     })
     expect((await store.activeFor('store-dup')).map((l) => l.id)).toEqual([first.learning.id])
+  })
+
+  describe('the rule: dedupe, activate on a repeat, retire the stale', () => {
+    const W44 = new Date('2026-10-28T12:00:00Z')
+    const W45 = new Date('2026-11-03T12:00:00Z')
+    const W46 = new Date('2026-11-10T12:00:00Z')
+    const FACT = 'Fallow audit fails on files unreachable from the known entry points even when make check passes'
+
+    test('a fact worded differently is the same fact: stored once, the sighting recorded, the evidence merged', async () => {
+      const agent = 'rule-dedupe'
+      const first = await store.add({ agent, fact: FACT, source: 'run-a', evidence: ['e-1'], at: W44 })
+      expect(first).toMatchObject({ created: true, outcome: 'new' })
+      const sameWeek = await store.add({
+        agent,
+        fact: 'The fallow audit can fail on files that are unreachable from known entry points, even if make check passes.',
+        source: 'run-b',
+        evidence: ['e-2'],
+        at: W44,
+      })
+      expect(sameWeek).toMatchObject({ created: false, outcome: 'known', learning: { id: first.learning.id } })
+      expect(sameWeek.learning).toMatchObject({
+        status: 'proposed', // two runs in one week are one week
+        sources: ['run-a', 'run-b'],
+        weeks: ['2026-W44'],
+        evidence: ['e-1', 'e-2'],
+      })
+      expect(await store.list({ agent })).toHaveLength(1)
+    })
+
+    test('an unrelated fact of the same agent is stored beside it', async () => {
+      const agent = 'rule-unrelated'
+      await store.add({ agent, fact: FACT, source: 'run-a', at: W44 })
+      const other = await store.add({
+        agent,
+        fact: 'Code-path runs on the large frontend monorepo take between six and twenty-five minutes',
+        source: 'run-b',
+        at: W45,
+      })
+      expect(other).toMatchObject({ created: true, outcome: 'new' })
+      expect(await store.list({ agent })).toHaveLength(2)
+    })
+
+    test('proposed again by an independent run in a later week: activated and read back; the same run again changes nothing', async () => {
+      const agent = 'rule-activate'
+      const first = await store.add({ agent, fact: FACT, source: 'run-a', at: W44 })
+      const again = await store.add({ agent, fact: FACT, source: 'run-a', at: W45 }) // a resumed step, not an independent run
+      expect(again).toMatchObject({ outcome: 'known', learning: { status: 'proposed', weeks: ['2026-W44'] } })
+
+      const repeat = await store.add({ agent, fact: FACT, source: 'run-b', evidence: ['e-9'], at: W45 })
+      expect(repeat).toMatchObject({
+        created: false,
+        outcome: 'activated',
+        learning: { id: first.learning.id, status: 'active', weeks: ['2026-W44', '2026-W45'] },
+      })
+      expect(repeat.learning.activatedAt).not.toBeNull()
+      expect((await store.activeFor(agent)).map((l) => l.id)).toEqual([first.learning.id])
+      // an active fact seen once more stays as it is
+      expect(await store.add({ agent, fact: FACT, source: 'run-c', at: W46 })).toMatchObject({
+        outcome: 'repeat',
+        learning: { status: 'active' },
+      })
+    })
+
+    test('a retired fact is not proposed again by a repeat', async () => {
+      const agent = 'rule-retired'
+      const first = await store.add({ agent, fact: FACT, source: 'run-a', at: W44 })
+      await store.retire(first.learning.id)
+      const repeat = await store.add({ agent, fact: FACT, source: 'run-b', at: W45 })
+      expect(repeat).toMatchObject({ created: false, outcome: 'known', learning: { status: 'retired' } })
+      expect(await store.list({ agent })).toHaveLength(1)
+    })
+
+    test('a human’s add keeps the old exact-text rule and never ages out', async () => {
+      const agent = 'rule-manual'
+      const mine = await store.add({ agent, fact: FACT, source: 'manual' })
+      const reworded = await store.add({ agent, fact: `${FACT} (reworded)`, source: 'manual' })
+      expect(reworded.created).toBe(true) // a human's add is matched on the exact text only
+      const other = await store.add({
+        agent,
+        fact: 'A second human note about registry pages answering 500',
+        source: 'manual',
+      })
+      expect(other.created).toBe(true)
+      const report = await store.tidy({ now: new Date('2027-06-01T00:00:00Z'), agent })
+      expect(report.retired).toEqual([])
+      expect((await store.list({ agent })).map((l) => l.status)).toEqual(['proposed', 'proposed'])
+      expect(report.merged).toBe(1) // tidy still folds the two wordings of one human note
+      expect(mine.learning.sources).toEqual([])
+    })
+
+    test('a human who revives a retired fact owns it: the runs that once proposed it no longer age it out or activate it', async () => {
+      const agent = 'rule-revive'
+      const first = await store.add({ agent, fact: FACT, source: 'run-a', at: W44 })
+      await store.add({ agent, fact: FACT, source: 'run-b', at: W45 })
+      await store.retire(first.learning.id)
+      const back = await store.add({ agent, fact: FACT, source: 'manual' })
+      expect(back.learning).toMatchObject({ status: 'proposed', sources: [], weeks: [] })
+      const report = await store.tidy({ now: new Date('2027-06-01T00:00:00Z'), agent })
+      expect(report).toMatchObject({ merged: 0, activated: [], retired: [] })
+    })
+
+    test('tidy folds the duplicates on file, activates facts seen in two weeks and retires the stale', async () => {
+      const agent = 'rule-tidy'
+      // rows as they were stored before the rule: three wordings, a lone old fact, a lone recent one, a human's
+      const insert = (fact: string, source: string, created: Date, status = 'proposed') =>
+        t.pool.query(
+          `insert into "${t.schema}".learnings (agent, fact, source, sources, weeks, status, created_at, last_seen_at)
+           values ($1, $2, $3, $4, $5, $6, $7, $7)`,
+          [agent, fact, source, source === 'manual' ? [] : [source], source === 'manual' ? [] : ['w'], status, created],
+        )
+      await insert(FACT, 'run-1', W44)
+      await insert(`${FACT}.`.replace('Fallow audit', 'The fallow audit'), 'run-2', W45)
+      await insert('Fallow audit fails on unreachable files even when make check passes', 'run-3', W46)
+      await insert('The brain note about routing lists no concrete model ids anywhere in the page', 'run-1', W44)
+      await insert('Registry component pages answer 500 for individual items now and then', 'run-4', W46)
+      await insert('A human proposed this and nobody has looked at it for months and months now', 'manual', W44)
+      // the weeks column of a stored row is the ISO week of its creation
+      await t.pool.query(
+        `update "${t.schema}".learnings set weeks = array[to_char(created_at at time zone 'UTC', 'IYYY"-W"IW')] where agent = $1`,
+        [agent],
+      )
+
+      const report = await store.tidy({ now: new Date('2026-12-01T12:00:00Z'), agent })
+      expect(report.merged).toBe(2)
+      expect(report.activated).toHaveLength(1)
+      expect(report.activated[0]).toMatchObject({
+        status: 'active',
+        sources: ['run-1', 'run-2', 'run-3'],
+        weeks: ['2026-W44', '2026-W45', '2026-W46'],
+      })
+      // the lone fact last seen in W44 is more than four weeks old; the one from W46 is not; the human's stays
+      expect(report.retired.map((l) => l.fact)).toEqual([
+        'The brain note about routing lists no concrete model ids anywhere in the page',
+      ])
+      const left = await store.list({ agent })
+      expect(left.map((l) => l.status).sort()).toEqual(['active', 'proposed', 'proposed', 'retired'])
+      expect(await store.tidy({ now: new Date('2026-12-01T12:00:00Z'), agent })).toMatchObject({
+        merged: 0,
+        activated: [],
+        retired: [],
+      })
+    })
   })
 
   test('the read-back is ordered by activation, not by id: a late activation of an old fact comes last', async () => {
