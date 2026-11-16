@@ -40,8 +40,6 @@ export const OtelInput = z
         'a duration like 30m, 2h or 3d (ending now), or <from>/<to> as ISO-8601 instants with a zone (2026-10-27T08:00:00Z)',
       )
       .optional()
-      // The CLI turns a `--since 3d` into an instant for other workflows; this one takes the duration itself.
-      .meta({ 'x-agw-duration': true })
       .describe('The time window: a duration ending now, or an absolute <from>/<to>; default: the agent picks one'),
   })
   .strict()

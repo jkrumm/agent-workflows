@@ -100,7 +100,10 @@ const workflowOperationId = (id: string) => operationIdOf(id.replace(/-([a-z])/g
 export interface HostWorkflow {
   workflow: AnyWorkflow
   summary?: string
-  cli?: Pick<CliSpec, 'positional' | 'stdin' | 'mutating' | 'defaultFormat' | 'plainField' | 'serverOnly'>
+  cli?: Pick<
+    CliSpec,
+    'positional' | 'stdin' | 'mutating' | 'defaultFormat' | 'plainField' | 'serverOnly' | 'typedFlags'
+  >
   /** The agents the workflow's steps run, with their routes: they feed the run fingerprint (concept §5). */
   agents?: AgentRef[]
   /** Optional expensive work: the wallet gate refuses it at admission (concept §4). */
@@ -610,7 +613,11 @@ export function workflowOperation(entry: HostWorkflow, deps: OperationDeps): Hos
   if (!(input instanceof z.ZodObject)) throw new Error(`workflow ${workflow.id}: input must be a z.object`)
   assertNoReservedFlags(`workflow ${workflow.id}`, input)
   const properties = Object.keys(input.shape)
-  for (const name of [...(entry.cli?.positional ?? []), ...(entry.cli?.stdin ? [entry.cli.stdin] : [])]) {
+  for (const name of [
+    ...(entry.cli?.positional ?? []),
+    ...(entry.cli?.stdin ? [entry.cli.stdin] : []),
+    ...(entry.cli?.typedFlags ?? []),
+  ]) {
     if (!properties.includes(name))
       throw new Error(`workflow ${workflow.id}: cli names "${name}", not a property of its input`)
   }
@@ -624,6 +631,7 @@ export function workflowOperation(entry: HostWorkflow, deps: OperationDeps): Hos
     ...(entry.cli?.stdin ? { stdin: entry.cli.stdin } : {}),
     ...(entry.cli?.plainField ? { plainField: entry.cli.plainField } : {}),
     ...(entry.cli?.serverOnly ? { serverOnly: true } : {}),
+    ...(entry.cli?.typedFlags?.length ? { typedFlags: entry.cli.typedFlags } : {}),
   }
   const path = `/workflows/${workflow.id.split('.').join('/')}`
   return {

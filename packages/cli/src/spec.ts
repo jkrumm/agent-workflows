@@ -26,6 +26,8 @@ export interface XCli {
   resume?: { command: string[]; positional: string[] }
   hidden?: boolean
   serverOnly?: boolean
+  /** Input properties the host reads as typed: no time-flag conversion (`--since 3d` stays `3d`). */
+  typedFlags?: string[]
 }
 
 interface Parameter {
@@ -61,6 +63,8 @@ export interface Field {
   in: 'path' | 'query' | 'body'
   schema: Schema
   required: boolean
+  /** `x-cli.typedFlags`: the value goes to the host as typed. */
+  typed?: boolean
 }
 
 export interface Command {
@@ -164,6 +168,7 @@ function readXCli(raw: Partial<XCli>): XCli | string {
     ...(typeof raw.plainField === 'string' ? { plainField: raw.plainField } : {}),
     kind,
     ...(raw.serverOnly === true ? { serverOnly: true } : {}),
+    ...(names(raw.typedFlags).length ? { typedFlags: names(raw.typedFlags) } : {}),
     ...(resumeWords?.length ? { resume: { command: resumeWords, positional: names(raw.resume?.positional) } } : {}),
   }
 }
@@ -189,6 +194,7 @@ function buildCommand(doc: Document, path: string, method: string, op: Operation
       in: 'body',
       schema: schema ?? {},
       required: (body?.required ?? []).includes(name),
+      ...(x.typedFlags?.includes(name) ? { typed: true } : {}),
     })
   }
   const reserved = fields.find((f) => !x.positional.includes(f.name) && RESERVED_FLAGS.includes(f.flag))

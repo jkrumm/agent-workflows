@@ -246,7 +246,7 @@ describe('time flags', () => {
     expect((JSON.parse(iso.stdout) as { output: { since: string } }).output.since).toBe('2026-11-01T00:00:00Z')
   })
 
-  test('a --since the host reads as a duration (x-agw-duration) reaches it as typed', async () => {
+  test('a --since the host reads as a duration (x-cli.typedFlags) reaches it as typed', async () => {
     const r = await agw(['fixture', 'duration', '--since', '3d'])
     expect(r.code).toBe(EXIT.ok)
     expect((JSON.parse(r.stdout) as { output: { since: string } }).output.since).toBe('3d')
