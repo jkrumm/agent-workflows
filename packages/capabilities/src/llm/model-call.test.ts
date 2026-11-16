@@ -24,6 +24,11 @@ describe('parseJsonLoose', () => {
       `{ok}\n\`\`\`json\n${JSON.stringify(fenced)}\n\`\`\`\n{done}`,
       fenced,
     ],
+    [
+      'an unrelated snippet fence before the answer fence',
+      `\`\`\`ts\nconst a = {}\n\`\`\`\n\`\`\`json\n${json}\n\`\`\``,
+      object,
+    ],
     ['prose around unfenced JSON', `Here you go: ${json} Anything else?`, object],
   ])('%s', (_name, text, expected) => {
     expect(parseJsonLoose(text)).toEqual(expected)

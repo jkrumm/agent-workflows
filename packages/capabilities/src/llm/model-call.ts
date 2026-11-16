@@ -242,8 +242,8 @@ async function completeOn(
 /**
  * Best-effort JSON from a model answer, in code, before any re-ask. Candidates in order, the first that parses wins: the
  * text as is; what sits between the first code fence's opening and the last fence's closing (prose before or after it,
- * braces included, and fences inside a JSON string stay whole); the slice from the first `{` to the last `}`. `null`
- * when none parses.
+ * braces included, and fences inside a JSON string stay whole); each fenced block on its own that starts with `{` (an
+ * unrelated snippet fence before the answer's); the slice from the first `{` to the last `}`. `null` when none parses.
  */
 export function parseJsonLoose(raw: string): unknown {
   const text = raw.trim()
@@ -253,10 +253,13 @@ export function parseJsonLoose(raw: string): unknown {
     opening && closing >= opening.index + opening[0].length
       ? text.slice(opening.index + opening[0].length, closing)
       : null
+  const blocks = [...text.matchAll(/```(?:json)?[ \t]*\r?\n?([\s\S]*?)```/g)]
+    .map((m) => (m[1] ?? '').trim())
+    .filter((b) => b.startsWith('{'))
   const first = text.indexOf('{')
   const last = text.lastIndexOf('}')
   const sliced = first >= 0 && last > first ? text.slice(first, last + 1) : null
-  for (const candidate of [text, fenced?.trim(), sliced]) {
+  for (const candidate of [text, fenced?.trim(), ...blocks, sliced]) {
     if (!candidate) continue
     try {
       return JSON.parse(candidate)
