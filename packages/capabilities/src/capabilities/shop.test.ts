@@ -221,6 +221,9 @@ describe('blocked pages', () => {
     ])
       expect(detectBlock({ status: 200, html: await fixture(name), finalUrl: 'https://www.amazon.de/x' })).toBeNull()
     expect(detectBlock({ status: 429, html: '', finalUrl: 'https://www.amazon.de/s' })).toBe('rate-limited')
+    expect(detectBlock({ status: 503, html: 'Service Unavailable', finalUrl: 'https://www.amazon.de/s' })).toBe(
+      'rate-limited',
+    )
     expect(detectBlock({ status: 200, html: '', finalUrl: 'https://www.amazon.de/ap/signin?x=1' })).toBe(
       'login-required',
     )
@@ -494,6 +497,15 @@ describe('shop.search', () => {
     const r = rig({ shopRoutes: { [SEARCH_URL]: async () => page('slow down', 429) } })
     const error = await failure(r.search.call({ query: 'a' }, r.options))
     expect(error.message).toContain('blocked (rate-limited)')
+    expect(r.net.calls).toHaveLength(1)
+  })
+
+  test('a plain 503 is blocked (rate-limited) and the cooldown keeps the next calls off the shop', async () => {
+    const r = rig({ shopRoutes: { [SEARCH_URL]: async () => page('Service Unavailable', 503) } })
+    const first = await failure(r.search.call({ query: 'a' }, r.options))
+    expect(first.message).toContain('blocked (rate-limited)')
+    const second = await failure(r.search.call({ query: 'a', fresh: true }, r.options))
+    expect(second.message).toContain('blocked (cooldown)')
     expect(r.net.calls).toHaveLength(1)
   })
 
