@@ -35,20 +35,37 @@ function agwHdx(env: string): Hdx {
   }
 }
 
+/** The command and its flags, strictly: a misspelled `--dry-run` must stop, never run as a live apply. */
+function parseArgs(argv: string[]): { command: 'apply' | 'export'; env: string; dryRun: boolean } {
+  const [command, ...rest] = argv
+  if (command !== 'apply' && command !== 'export') throw new Error(`unknown command ${command ?? '(none)'}`)
+  let env = 'prod'
+  let dryRun = false
+  for (let i = 0; i < rest.length; i += 1) {
+    const flag = rest[i]
+    if (flag === '--env' && rest[i + 1] !== undefined) {
+      env = rest[i + 1] ?? env
+      i += 1
+    } else if (flag === '--dry-run' && command === 'apply') dryRun = true
+    else throw new Error(`unknown argument ${flag ?? ''}`)
+  }
+  return { command, env, dryRun }
+}
+
 async function main(argv: string[]): Promise<void> {
-  const command = argv[0]
-  const envFlag = argv.indexOf('--env')
-  const env = envFlag === -1 ? 'prod' : (argv[envFlag + 1] ?? 'prod')
-  if (command !== 'apply' && command !== 'export') {
-    console.error(USAGE)
+  let args: ReturnType<typeof parseArgs>
+  try {
+    args = parseArgs(argv)
+  } catch (error) {
+    console.error(`${error instanceof Error ? error.message : String(error)}\n${USAGE}`)
     process.exit(2)
   }
-  const hdx = agwHdx(env)
-  if (command === 'export') {
+  const hdx = agwHdx(args.env)
+  if (args.command === 'export') {
     for (const file of await exportDefinitions(hdx, DEFINITIONS, DASHBOARD, TAG)) console.log(`wrote ${file}`)
     return
   }
-  const lines = await apply(hdx, await loadDefinitions(DEFINITIONS), { dryRun: argv.includes('--dry-run') })
+  const lines = await apply(hdx, await loadDefinitions(DEFINITIONS), { dryRun: args.dryRun })
   for (const line of lines) console.log(line)
 }
 

@@ -164,19 +164,22 @@ export async function apply(hdx: Hdx, defs: Definitions, options: ApplyOptions):
   }
 
   const webhooks = await webhookIds(hdx)
-  // A dry run on a dashboard that does not exist yet has no ids to point an alert at.
-  const dashboards = options.dryRun && liveDashboard === undefined ? [] : data(await hdx.get('/dashboards'))
   const liveAlerts = data(await hdx.get('/alerts'))
+  // A dry run resolves nothing against the live dashboard (a tile added to the definitions is not there yet): it checks
+  // each alert's tile against the definition's tiles and its webhooks against the live ones.
+  const dashboards = options.dryRun ? [] : data(await hdx.get('/dashboards'))
+  const tileNames = new Set(defs.dashboard.tiles.map((t) => t.name))
   for (const alert of defs.alerts) {
     const existing = liveAlerts.find((a) => a.name === alert.name)
-    if (options.dryRun && dashboards.length === 0) {
+    if (options.dryRun) {
+      if (!tileNames.has(alert.tile))
+        throw new Error(`alert "${alert.name}": no tile "${alert.tile}" in the definition`)
+      for (const channel of alert.channels) lookup(webhooks, str(channel.webhook, 'a channel webhook'), 'webhook')
       lines.push(`would ${existing === undefined ? 'create' : 'update'} alert ${alert.name}`)
       continue
     }
     const request = alertBody(alert, dashboards, webhooks)
-    if (options.dryRun) {
-      lines.push(`would ${existing === undefined ? 'create' : 'update'} alert ${alert.name}`)
-    } else if (existing === undefined) {
+    if (existing === undefined) {
       await hdx.send('POST', '/alerts', request)
       lines.push(`created alert ${alert.name}`)
     } else {
@@ -185,6 +188,14 @@ export async function apply(hdx: Hdx, defs: Definitions, options: ApplyOptions):
     }
   }
   return lines
+}
+
+/** The file an alert is kept in: its name, slugified. `exportDefinitions` writes it, the definitions test holds the files to it. */
+export function alertFileName(name: string): string {
+  return `${name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')}.json`
 }
 
 /** Server-owned alert fields: never part of a definition. */
@@ -255,10 +266,7 @@ export async function exportDefinitions(hdx: Hdx, dir: string, dashboardName: st
       const { webhookId, ...channel } = c
       return { ...channel, webhook: webhooks.get(str(webhookId, 'a webhook id')) ?? '' }
     })
-    const file = `${str(alert.name, 'an alert name')
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '')}.json`
+    const file = alertFileName(str(alert.name, 'an alert name'))
     await writeFile(join(dir, 'alerts', file), `${JSON.stringify(sorted(def), null, 2)}\n`)
     out.push(`alerts/${file}`)
   }

@@ -3,7 +3,15 @@ import { mkdtemp, readdir, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { type AlertDef, apply, exportDefinitions, type Hdx, loadDefinitions, tileId } from '../src/index.ts'
+import {
+  type AlertDef,
+  alertFileName,
+  apply,
+  exportDefinitions,
+  type Hdx,
+  loadDefinitions,
+  tileId,
+} from '../src/index.ts'
 
 const DEFINITIONS = join(dirname(fileURLToPath(import.meta.url)), '..', 'definitions')
 
@@ -65,6 +73,12 @@ describe('definitions', () => {
     }
   })
 
+  test('each alert file is named by the slug of its alert name, so an export rewrites nothing', async () => {
+    const files = (await readdir(join(DEFINITIONS, 'alerts'))).sort()
+    const { alerts } = await loadDefinitions(DEFINITIONS)
+    expect(files).toEqual(alerts.map((a) => alertFileName(a.name)).sort())
+  })
+
   test('a public repo: no host, address or credential in a definition', async () => {
     const files = [
       join(DEFINITIONS, 'dashboard.json'),
@@ -84,6 +98,25 @@ describe('apply', () => {
     expect(writes).toEqual([])
     expect(lines[0]).toBe('would create dashboard agw')
     expect(lines).toHaveLength(1 + 7)
+  })
+
+  test('a dry run checks a new tile and its alert against the definition, not the live dashboard', async () => {
+    const { hdx, writes } = fakeHdx()
+    const defs = await loadDefinitions(DEFINITIONS)
+    await apply(hdx, defs, { dryRun: false })
+    writes.length = 0
+    const alert = defs.alerts[0]
+    if (alert === undefined) throw new Error('no alerts')
+    const tile = { ...defs.dashboard.tiles[0], name: 'a tile not applied yet' }
+    const next = {
+      dashboard: { ...defs.dashboard, tiles: [...defs.dashboard.tiles, tile] },
+      alerts: [...defs.alerts, { ...alert, name: 'a new alert', tile: 'a tile not applied yet' }],
+    }
+    const lines = await apply(hdx, next, { dryRun: true })
+    expect(lines).toContain('would create alert a new alert')
+    expect(writes).toEqual([])
+    const missing = { ...next, alerts: [{ ...alert, tile: 'no such tile' }] }
+    expect(await failure(apply(hdx, missing, { dryRun: true }))).toContain('no such tile')
   })
 
   test('creates the dashboard and alerts, resolving sources, connections, tiles and webhooks to ids', async () => {
@@ -177,5 +210,15 @@ describe('exportDefinitions', () => {
     )
     const key = (a: AlertDef) => [a.name, a.tile, a.threshold, a.interval].join('|')
     expect(new Set(back.alerts.map(key))).toEqual(new Set(defs.alerts.map(key)))
+  })
+})
+
+describe('cli', () => {
+  test('a misspelled flag stops with the usage instead of running a live apply', async () => {
+    const cli = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'cli.ts')
+    const proc = Bun.spawn(['bun', cli, 'apply', '--dryrun'], { stdout: 'pipe', stderr: 'pipe' })
+    const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited])
+    expect(code).toBe(2)
+    expect(stderr).toContain('unknown argument --dryrun')
   })
 })

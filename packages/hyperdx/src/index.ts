@@ -1,5 +1,6 @@
 export {
   type AlertDef,
+  alertFileName,
   apply,
   type ApplyOptions,
   type DashboardDef,
