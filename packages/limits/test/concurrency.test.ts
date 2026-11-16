@@ -71,6 +71,9 @@ test(`${RUNS} concurrent runs through both rules: one history query, none per st
       'conc.ocr',
       Array.from({ length: 30 }, () => ({ cost: 0.04, tokens: 2000, wallMs: 500, steps: 4 })),
     )
+    // The history read is async and reads whatever is done by then: under load it can land after some of the 25 runs
+    // finished and count them. Settle it on the seeded history first; the runs below then hit the cache.
+    expect((await cap.caps('conc.ocr')).basis.tree).toMatchObject({ kind: 'learned', sample: 30 })
     const ids = await Promise.all(
       Array.from({ length: RUNS }, async (_, i) => (await rt.start(wf, { i }, { purpose: 'test' })).runId),
     )
