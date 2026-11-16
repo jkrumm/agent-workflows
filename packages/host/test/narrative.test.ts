@@ -395,6 +395,7 @@ function setup(
 }
 
 const db = freshSchema('narrative')
+afterAll(() => db.drop())
 async function run(w: ReturnType<typeof setup>, input: Record<string, unknown>) {
   const rt = testRuntime({ schema: db.schema, workflows: [w.narrative.workflow, w.polish.workflow] })
   await rt.open()

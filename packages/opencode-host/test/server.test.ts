@@ -606,6 +606,21 @@ describe('buildServerConfig: the gateway', () => {
     expect(providers[PROVIDER_RESPONSES]?.headers).toBeUndefined()
   })
 
+  test("OpenCode's title agent runs on the label tier's model, through the Anthropic leg", () => {
+    const route = resolveRoute('cheap.title')
+    const config = buildServerConfig() as {
+      agents: { title: { model: string } }
+      providers: Record<string, { models: Record<string, { variants: { id: string }[] }> }>
+    }
+    const [provider, rest] = config.agents.title.model.split('/') as [string, string]
+    const [model, variant] = rest.split('#') as [string, string | undefined]
+    expect(provider).toBe(PROVIDER_ANTHROPIC)
+    expect(model).toBe(route.model)
+    expect(variant).toBe(route.effort)
+    // The model the agent names is a row the server serves, with that variant.
+    expect(config.providers[provider]?.models[model]?.variants.map((v) => v.id)).toContain(variant ?? 'none')
+  })
+
   test("the plugin is one absolute directory, the package's by default", () => {
     expect((buildServerConfig() as { plugins: string[] }).plugins).toEqual([ATTRIBUTION_PLUGIN])
     expect(isAbsolute(ATTRIBUTION_PLUGIN)).toBe(true)

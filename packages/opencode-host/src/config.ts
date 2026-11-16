@@ -228,6 +228,22 @@ function variantSettings(effort: string, provider: string): Record<string, unkno
 }
 
 /**
+ * The route whose model OpenCode's own housekeeping calls run on: the title agent, the one hidden agent that is not the
+ * session's (`conversation-background` in 2.0.32; verified in the binary, which maps a legacy `small_model` onto
+ * `agents.title.model`, and in the V2 migration guide). The table's label tier: the cheapest reliable Claude model, on
+ * the gateway's Anthropic leg, which pays from a credit pool. Compaction stays on the session's model: a summary of an
+ * agent's whole history is not a label.
+ */
+export const HOUSEKEEPING_ROUTE: RouteId = 'cheap.title'
+
+/** `<provider>/<model>[#effort]`, the form of an agent's `model` in the server config. */
+function housekeepingModel(): string {
+  const route = resolveRoute(HOUSEKEEPING_ROUTE)
+  const { providerID, id, variant } = refFor(route)
+  return `${providerID}/${id}${variant ? `#${variant}` : ''}`
+}
+
+/**
  * `OPENCODE_CONFIG_CONTENT`: the three providers with every `opencode`-wire route's model and its fallback's, and every
  * Claude model (`CLAUDE_MODELS`, priced with `claudeRate`, Opus included though no route runs it), each with every
  * effort variant it can run (`EFFORTS`; a Sonnet has no `none`), so a run whose arm moves an agent route to another of
@@ -283,6 +299,8 @@ export function buildServerConfig(
     // The room a summary has (`COMPACTION_BUFFER`); automatic compaction stays on (its default), and `keep` too.
     compaction: { buffer: COMPACTION_BUFFER },
     plugins: [options.plugin ?? ATTRIBUTION_PLUGIN],
+    // Titles and other background calls go to the label tier, not to OpenCode's default (HOUSEKEEPING_ROUTE).
+    agents: { title: { model: housekeepingModel() } },
     permissions: [
       ...basePolicy(),
       { action: 'question', resource: '*', effect: 'deny' },

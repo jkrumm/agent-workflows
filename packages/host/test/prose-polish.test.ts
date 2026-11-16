@@ -65,6 +65,7 @@ function setup(
 }
 
 const db = freshSchema('prose_polish')
+afterAll(() => db.drop())
 async function run(workflow: ReturnType<typeof setup>['workflow'], input: Record<string, unknown>) {
   const rt = testRuntime({ schema: db.schema, workflows: [workflow] })
   await rt.open()

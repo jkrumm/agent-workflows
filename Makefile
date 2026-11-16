@@ -22,6 +22,7 @@ help:
 # reaches the test run.
 # The test timeout scales with host load, sampled as each test file starts (bunfig.toml preload, packages/testing); tests that
 # pass their own timeout keep it.
+# Before the tests, packages/testing/src/sweep.ts drops test schemas (agw_t_*) older than a day: what a failed or interrupted run left.
 # Test files run in TEST_WORKERS parallel processes (bun test --parallel, which implies --isolate; see
 # bun.com/docs/test/parallel). Every file brings its own Postgres schema, so files do not collide, but each holds
 # connections: a worker per core on a big machine exhausts the server's slots. 4 matches CI and the mini's headroom.
@@ -42,12 +43,12 @@ check:
 	@bunx --no-install tsc --noEmit
 	@echo "==> test (bun test --parallel=$(TEST_WORKERS), slowest files first, load-scaled timeout per test file)"
 	@if [ -n "$$AGW_TEST_PG_URL" ] || ! command -v secrets-run >/dev/null 2>&1; then \
-		bun test $(BUN_TEST_FLAGS); \
+		bun packages/testing/src/sweep.ts && bun test $(BUN_TEST_FLAGS); \
 	else \
 		secrets-run run --env-file=.env.test.tpl -- sh -c \
 			'AGW_TEST_PG_URL="postgres://agent_workflows:$$(bun -e "process.stdout.write(encodeURIComponent(process.env.AGW_TEST_PG_PASSWORD))")@127.0.0.1:5432/agent_workflows"; \
 			USAGE_TEST_PG_URL="postgres://$$(bun -e "process.stdout.write(encodeURIComponent(process.env.USAGE_TEST_PG_USER))"):$$(bun -e "process.stdout.write(encodeURIComponent(process.env.USAGE_TEST_PG_PASSWORD))")@127.0.0.1:5432/postgres"; \
-			export AGW_TEST_PG_URL USAGE_TEST_PG_URL; exec bun test $(BUN_TEST_FLAGS)'; \
+			export AGW_TEST_PG_URL USAGE_TEST_PG_URL; bun packages/testing/src/sweep.ts; exec bun test $(BUN_TEST_FLAGS)'; \
 	fi
 	@echo "==> check passed"
 

@@ -1,5 +1,6 @@
 import { Pool } from 'pg'
 import { type Logger, Runtime, type RuntimeOptions } from '@agent-workflows/runtime'
+import { schemaName } from './sweep.ts'
 
 /** Tests need a real Postgres; an unset URL is a loud failure, never a skip. */
 export function testPgUrl(): string {
@@ -14,9 +15,13 @@ export function testPgUrl(): string {
 
 export const PG_URL = testPgUrl()
 
-/** A throwaway schema per test file (random suffix), so CI, the merge train and parallel workers never collide. */
+/**
+ * A throwaway schema per test file (creation time and random suffix in the name), so CI, the merge train and parallel
+ * workers never collide. The file must drop it in `afterAll` (`packages/testing/test/schema-drop.test.ts` holds every
+ * file to that); `make check` sweeps what a failed or interrupted run left, by age (`sweep.ts`).
+ */
 export function freshSchema(prefix: string): { schema: string; drop(): Promise<void> } {
-  const schema = `agw_t_${prefix}_${crypto.randomUUID().replaceAll('-', '').slice(0, 10)}`
+  const schema = schemaName(prefix)
   return {
     schema,
     drop: async () => {
