@@ -3,7 +3,14 @@ import type { Usage } from '../context.ts'
 import { fail } from '../errors.ts'
 import type { Env } from '../transports/config.ts'
 import type { HttpOptions } from '../transports/http.ts'
-import { type BrowserRead, browserFromEnv, type PageHold, pageHoldFromEnv, type RequestPolicy } from './browser.ts'
+import {
+  type BrowserRead,
+  browserFromEnv,
+  type PageHold,
+  pageHoldFromEnv,
+  parseMaxTabs,
+  type RequestPolicy,
+} from './browser.ts'
 import { askHumanHandoff, type HumanHandoff } from './handoff.ts'
 import { pinnedFetch } from './pinned.ts'
 
@@ -73,7 +80,18 @@ export function resolveWebDeps(deps: WebDeps = {}): ResolvedWebDeps {
     extractAfterTimeoutMs: deps.extractAfterTimeoutMs ?? EXTRACT_AFTER_TIMEOUT_MS,
     pageHold: (policy) =>
       deps.pageHold ?? pageHoldFromEnv(keyOf(deps.env ?? process.env, 'AGW_BROWSER_CDP_URL'), policy),
-    browser: (policy) => deps.browser ?? browserFromEnv(keyOf(deps.env ?? process.env, 'AGW_BROWSER_CDP_URL'), policy),
+    browser: (policy) => {
+      if (deps.browser) return deps.browser
+      const env = deps.env ?? process.env
+      const endpoint = keyOf(env, 'AGW_BROWSER_CDP_URL')
+      if (!endpoint) return undefined
+      try {
+        return browserFromEnv(endpoint, policy, parseMaxTabs(env.AGW_BROWSER_MAX_TABS))
+      } catch (error) {
+        if (!(error instanceof RangeError)) throw error
+        throw fail('NOT_CONFIGURED', `web.fetch unavailable: ${error.message}`)
+      }
+    },
   }
 }
 

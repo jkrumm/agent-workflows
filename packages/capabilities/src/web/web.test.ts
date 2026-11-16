@@ -7,7 +7,7 @@ import { createRegistry } from '../registry.ts'
 import { fakeTransports } from '@agent-workflows/testing/transports'
 import { fakeWeb } from './fake.ts'
 import { askHumanHandoff, askOnce, fakeHandoff, resetHandoffLimit } from './handoff.ts'
-import type { WebDeps } from './deps.ts'
+import { resolveWebDeps, type WebDeps } from './deps.ts'
 import { BLOCK_REASONS, blockedReason, createWebCapabilities, fetchFacts } from './index.ts'
 import { ReadCache } from './fetch.ts'
 import {
@@ -20,6 +20,7 @@ import {
   NO_POPUPS,
   keptHosts,
   pageHoldFromEnv,
+  parseMaxTabs,
   readViaCdp,
   type RequestPolicy,
 } from './browser.ts'
@@ -1589,7 +1590,10 @@ function fakeBrowser(
   const decisions: { url: string; allowed: boolean }[] = []
   const scripts: string[] = []
   const fronted: string[] = []
+  /** Every CDP command the reader sent, in order. */
+  const methods: string[] = []
   let opened = 0
+  let peak = 0
   let polls = 0
   const self = { port: 0 }
   const server = Bun.serve<undefined>({
@@ -1597,8 +1601,11 @@ function fakeBrowser(
     hostname: '127.0.0.1',
     fetch(req, srv) {
       const { pathname } = new URL(req.url)
-      if (pathname === '/json/new')
-        return Response.json({ id: `tab-${++opened}`, webSocketDebuggerUrl: `ws://127.0.0.1:${self.port}/page` })
+      if (pathname === '/json/new') {
+        opened++
+        peak = Math.max(peak, opened - closed.length)
+        return Response.json({ id: `tab-${opened}`, webSocketDebuggerUrl: `ws://127.0.0.1:${self.port}/page` })
+      }
       if (pathname.startsWith('/json/close/')) {
         closed.push(pathname.split('/').pop()!)
         return new Response('Target is closing')
@@ -1608,6 +1615,7 @@ function fakeBrowser(
     websocket: {
       message(ws, raw) {
         const { id, method, params } = JSON.parse(String(raw))
+        methods.push(method)
         if (method === 'Page.navigate') {
           navigated.push(params.url)
           ws.send(JSON.stringify({ id, result: { frameId: 'main' } }))
@@ -1667,7 +1675,7 @@ function fakeBrowser(
   const timed =
     (policy: RequestPolicy = allowAll) =>
     (url: string, signal: AbortSignal, options?: BrowserReadOptions) =>
-      readViaCdp(base, url, signal, policy, { settleMs: 400, pollMs: 40 }, options)
+      readViaCdp(base, url, signal, policy, { settleMs: 400, challengeMs: 400, pollMs: 40, maxTabs: 3 }, options)
   return {
     base,
     read: timed(),
@@ -1677,6 +1685,9 @@ function fakeBrowser(
     fronted,
     decisions,
     scripts,
+    methods,
+    /** The most tabs this browser had open at once. */
+    peak: () => peak,
     stop: () => void server.stop(true),
   }
 }
@@ -3570,5 +3581,207 @@ describe('web.fetch: parallel callers of a failing read', () => {
     const [joiner, leader] = [legsOf(a), legsOf(b)].sort((x, y) => x - y)
     expect(joiner).toBe(0)
     expect(leader).toBeGreaterThan(0)
+  })
+})
+
+describe('web.fetch browser leg: slow challenges, one tab per walled host, the tab cap', () => {
+  const allowAll: RequestPolicy = { allowUrl: async () => true, allowAddress: () => true }
+  const REAL = 'Die Jura E4 kostet 549 Euro. '.repeat(20)
+  const WALL = { title: 'Just a moment...', text: 'Checking your browser' }
+  const page = { title: 'Jura', text: REAL }
+  const signal = new AbortController().signal
+  // Scaled down by 50: the settle is 400 ms (20 s), a challenge may take 1,200 ms (45 s), a poll is 40 ms.
+  const timing = { settleMs: 400, challengeMs: 1_200, pollMs: 40 }
+
+  test('focus emulation is sent before the navigation, and no Input.* command ever reaches a page', async () => {
+    const browser = fakeBrowser([{ ...WALL }, { ...page }])
+    try {
+      await readViaCdp(browser.base, 'https://shop.example.com/', signal, allowAll, timing)
+      await keepViaCdp(browser.base, 'https://shop.example.com/', signal, allowAll)
+      expect(browser.methods.indexOf('Emulation.setFocusEmulationEnabled')).toBeGreaterThan(-1)
+      expect(browser.methods.indexOf('Emulation.setFocusEmulationEnabled')).toBeLessThan(
+        browser.methods.indexOf('Page.navigate'),
+      )
+      expect(browser.methods.filter((method) => method.startsWith('Input.'))).toEqual([])
+    } finally {
+      await dropAllKept()
+      browser.stop()
+    }
+  })
+
+  test('the reader never names an Input.* command', async () => {
+    const source = await Bun.file(new URL('./browser.ts', import.meta.url)).text()
+    expect(source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')).not.toMatch(/Input\.[a-z]/i)
+  })
+
+  test('a challenge that clears after the settle time is returned as the page; one that never clears ends at its own limit', async () => {
+    // 15 polls of challenge = 600 ms, past the 400 ms settle, inside the 1,200 ms challenge limit.
+    const clears = fakeBrowser([...Array.from({ length: 15 }, () => ({ ...WALL })), { ...page }])
+    const stuck = fakeBrowser([{ ...WALL }])
+    try {
+      const passed = await readViaCdp(clears.base, 'https://shop.example.com/', signal, allowAll, timing)
+      expect(passed.challenge).toBe(false)
+      expect(passed.text).toBe(REAL.trim())
+
+      const began = Date.now()
+      const walled = await readViaCdp(stuck.base, 'https://shop.example.com/', signal, allowAll, timing)
+      expect(walled.challenge).toBe(true)
+      expect(Date.now() - began).toBeGreaterThanOrEqual(1_150)
+    } finally {
+      clears.stop()
+      stuck.stop()
+    }
+  })
+
+  test('a page that is no challenge still ends at the settle time', async () => {
+    const thin = fakeBrowser([{ title: 'Jura', text: 'short' }])
+    try {
+      const began = Date.now()
+      const read = await readViaCdp(thin.base, 'https://shop.example.com/', signal, allowAll, timing)
+      const took = Date.now() - began
+      expect(read.challenge).toBe(false)
+      expect(took).toBeGreaterThanOrEqual(380)
+      expect(took).toBeLessThan(900)
+    } finally {
+      thin.stop()
+    }
+  })
+
+  test('a page gets its own settle time to hydrate once the challenge is gone', async () => {
+    // Cleared at 600 ms; the text then keeps growing, so only the settle window of 400 ms ends the read (about 1,000 ms in all).
+    const growing = fakeBrowser([
+      ...Array.from({ length: 15 }, () => ({ ...WALL })),
+      ...Array.from({ length: 40 }, (_, i) => ({ title: 'Jura', text: 'x'.repeat(10 + i) })),
+    ])
+    try {
+      const began = Date.now()
+      const read = await readViaCdp(growing.base, 'https://shop.example.com/', signal, allowAll, timing)
+      expect(read.challenge).toBe(false)
+      expect(Date.now() - began).toBeGreaterThanOrEqual(950)
+    } finally {
+      growing.stop()
+    }
+  })
+
+  test('two reads of a marked host do not hold two tabs at once; unmarked hosts run side by side', async () => {
+    const marked = fakeBrowser([{ ...page }])
+    const free = fakeBrowser([{ ...page }])
+    try {
+      await Promise.all(
+        [1, 2, 3].map(() =>
+          readViaCdp(marked.base, 'https://shop.example.com/a', signal, allowAll, timing, { challengedHost: true }),
+        ),
+      )
+      expect(marked.peak()).toBe(1)
+      expect(marked.closed).toHaveLength(3)
+
+      await Promise.all(
+        [1, 2, 3].map(() => readViaCdp(free.base, 'https://docs.example.com/a', signal, allowAll, timing)),
+      )
+      expect(free.peak()).toBe(3)
+    } finally {
+      marked.stop()
+      free.stop()
+    }
+  })
+
+  test('a read of a host that is in a challenge right now waits for the host, and a waiter that aborts frees the line', async () => {
+    const wall = fakeBrowser([{ ...WALL }])
+    const calm = fakeBrowser([{ ...page }])
+    try {
+      const first = readViaCdp(wall.base, 'https://shop.example.com/a', signal, allowAll, timing, {
+        challengedHost: true,
+      })
+      await Bun.sleep(100) // the first read has met the challenge
+      const left = new AbortController()
+      const aborted = readViaCdp(wall.base, 'https://shop.example.com/b', left.signal, allowAll, timing).then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+      const third = readViaCdp(wall.base, 'https://shop.example.com/c', signal, allowAll, timing)
+      left.abort(new Error('caller left'))
+      expect(((await aborted) as Error).message).toBe('caller left')
+      await Promise.all([first, third])
+      expect(wall.peak()).toBe(1)
+      // The host is free again: a read of it takes no lock.
+      expect((await readViaCdp(calm.base, 'https://shop.example.com/d', signal, allowAll, timing)).challenge).toBe(
+        false,
+      )
+    } finally {
+      wall.stop()
+      calm.stop()
+    }
+  })
+
+  test('the tab cap bounds the reads of every host', async () => {
+    const browser = fakeBrowser([{ ...page }])
+    try {
+      await Promise.all(
+        [1, 2, 3, 4].map((i) =>
+          readViaCdp(browser.base, `https://h${i}.example.com/`, signal, allowAll, { ...timing, maxTabs: 2 }),
+        ),
+      )
+      expect(browser.peak()).toBe(2)
+    } finally {
+      browser.stop()
+    }
+  })
+
+  test('AGW_BROWSER_MAX_TABS: default 8, 1 to 16 accepted, anything else refused', () => {
+    expect(parseMaxTabs(undefined)).toBe(8)
+    expect(parseMaxTabs('  ')).toBe(8)
+    expect([parseMaxTabs('1'), parseMaxTabs('16'), parseMaxTabs(' 5 ')]).toEqual([1, 16, 5])
+    for (const bad of ['0', '17', '-1', '3.5', 'many', '1e1']) expect(() => parseMaxTabs(bad)).toThrow(RangeError)
+    const env = { AGW_BROWSER_CDP_URL: 'http://127.0.0.1:9222', AGW_BROWSER_MAX_TABS: '17' }
+    expect(() => resolveWebDeps({ env }).browser(allowAll)).toThrow('AGW_BROWSER_MAX_TABS')
+    expect(resolveWebDeps({ env: { ...env, AGW_BROWSER_MAX_TABS: '4' } }).browser(allowAll)).toBeDefined()
+  })
+
+  describe('a host whose plain read met a Cloudflare challenge', () => {
+    const CF = '<title>Just a moment...</title> challenge-platform'
+    const setup = () => {
+      const reads: { url: string; challengedHost?: boolean }[] = []
+      const read = async (url: string, _signal: AbortSignal, options?: BrowserReadOptions) => {
+        reads.push({ url, ...(options?.challengedHost ? { challengedHost: true } : {}) })
+        return { finalUrl: url, title: 'Shop', text: REAL, challenge: false }
+      }
+      const n = net({ 'https://shop.example.com/': status(403, CF), 'https://other.example.org/': html(REAL) })
+      const { call } = run({ ...n.deps, browser: read })
+      return { reads, n, call }
+    }
+
+    test('the next read of the host skips the plain leg for 24 h and marks its tab', async () => {
+      const { reads, n, call } = setup()
+      const first = (await call('web.fetch', { url: 'https://shop.example.com/a' })) as { via: string }
+      expect(first.via).toBe('browser')
+      expect(n.to('https://shop.example.com/')).toHaveLength(1)
+
+      const second = (await call('web.fetch', { url: 'https://shop.example.com/b', fresh: true })) as {
+        via: string
+        legs: { leg: string }[]
+      }
+      expect([second.via, second.legs.map((leg) => leg.leg)]).toEqual(['browser', ['browser']])
+      expect(n.to('https://shop.example.com/')).toHaveLength(1) // no second plain request
+      expect(reads.map((r) => r.challengedHost === true)).toEqual([true, true])
+
+      setSystemTime(new Date(Date.now() + 23 * 60 * 60_000))
+      try {
+        await call('web.fetch', { url: 'https://shop.example.com/c', fresh: true })
+        expect(n.to('https://shop.example.com/')).toHaveLength(1)
+        setSystemTime(new Date(Date.now() + 2 * 60 * 60_000))
+        await call('web.fetch', { url: 'https://shop.example.com/d', fresh: true })
+        expect(n.to('https://shop.example.com/')).toHaveLength(2) // 25 h later: the plain read comes first again
+      } finally {
+        setSystemTime()
+      }
+    })
+
+    test('another host is read plain first and its browser tab is not marked', async () => {
+      const { reads, call } = setup()
+      await call('web.fetch', { url: 'https://shop.example.com/a' })
+      const other = (await call('web.fetch', { url: 'https://other.example.org/x' })) as { via: string }
+      expect(other.via).toBe('direct')
+      expect(reads).toHaveLength(1)
+    })
   })
 })

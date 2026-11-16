@@ -125,8 +125,11 @@ export const HANDOFF_INTERVAL_MS = 30 * 60_000
 export class WallMemory<R extends string = string> {
   private readonly walls = new Map<string, { reason: R; at: number }>()
 
+  /** `ttlMs`: how long a host is remembered (default the handoff interval). */
+  constructor(private readonly ttlMs = HANDOFF_INTERVAL_MS) {}
+
   remember(host: string, reason: R, now = Date.now()): void {
-    for (const [other, wall] of this.walls) if (now - wall.at >= HANDOFF_INTERVAL_MS) this.walls.delete(other)
+    for (const [other, wall] of this.walls) if (now - wall.at >= this.ttlMs) this.walls.delete(other)
     this.walls.set(host, { reason, at: now })
   }
 
@@ -134,7 +137,7 @@ export class WallMemory<R extends string = string> {
   recall(host: string, now = Date.now()): { reason: R; at: number } | undefined {
     const wall = this.walls.get(host)
     if (!wall) return undefined
-    if (now - wall.at < HANDOFF_INTERVAL_MS) return wall
+    if (now - wall.at < this.ttlMs) return wall
     this.walls.delete(host)
     return undefined
   }
