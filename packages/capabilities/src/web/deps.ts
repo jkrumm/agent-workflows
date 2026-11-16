@@ -3,15 +3,7 @@ import type { Usage } from '../context.ts'
 import { fail } from '../errors.ts'
 import type { Env } from '../transports/config.ts'
 import type { HttpOptions } from '../transports/http.ts'
-import {
-  type BrowserRead,
-  browserFromEnv,
-  type PageHold,
-  pageHoldFromEnv,
-  parseMaxTabs,
-  type RequestPolicy,
-} from './browser.ts'
-import { askHumanHandoff, type HumanHandoff } from './handoff.ts'
+import { type BrowserRead, browserFromEnv, parseMaxTabs, type RequestPolicy } from './browser.ts'
 import { pinnedFetch } from './pinned.ts'
 
 /**
@@ -34,10 +26,6 @@ export interface WebDeps {
   warn?: (message: string) => void
   /** Reads a page in a real browser. Default: the loopback CDP endpoint `AGW_BROWSER_CDP_URL` names, if it is set. */
   browser?: BrowserRead
-  /** Keeps a challenged page open in the browser for the owner. Default: tabs of the `AGW_BROWSER_CDP_URL` browser, if it is set. */
-  pageHold?: PageHold
-  /** Asks the owner to pass a bot wall the browser cannot. Default: `ask-human.sh` (see `handoff.ts`). */
-  handoff?: HumanHandoff
   /** How long Tavily Extract may take, retries included, once the plain read of the page timed out. Default 15 s. */
   extractAfterTimeoutMs?: number
 }
@@ -55,9 +43,6 @@ export interface ResolvedWebDeps {
   warn: (message: string) => void
   /** The browser reader, decided per call (the environment is read on each call); undefined when none is configured. `policy` vets every request an environment-configured browser makes. */
   browser: (policy: RequestPolicy) => BrowserRead | undefined
-  /** The kept tabs of the browser, decided per call like `browser`; `policy` keeps vetting every request of a kept page. */
-  pageHold: (policy: RequestPolicy) => PageHold | undefined
-  handoff: HumanHandoff
   extractAfterTimeoutMs: number
 }
 
@@ -76,10 +61,7 @@ export function resolveWebDeps(deps: WebDeps = {}): ResolvedWebDeps {
     env: () => deps.env ?? process.env,
     retry: deps.retry ?? {},
     warn,
-    handoff: deps.handoff ?? askHumanHandoff({ env: deps.env ?? process.env, warn }),
     extractAfterTimeoutMs: deps.extractAfterTimeoutMs ?? EXTRACT_AFTER_TIMEOUT_MS,
-    pageHold: (policy) =>
-      deps.pageHold ?? pageHoldFromEnv(keyOf(deps.env ?? process.env, 'AGW_BROWSER_CDP_URL'), policy),
     browser: (policy) => {
       if (deps.browser) return deps.browser
       const env = deps.env ?? process.env

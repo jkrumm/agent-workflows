@@ -6,9 +6,8 @@ import { resolveRoute } from '@agent-workflows/routes'
 import type { Usage } from '../context.ts'
 import { CapabilityCallError, fail } from '../errors.ts'
 import { fakeTransports } from '@agent-workflows/testing/transports'
-import type { BrowserPage, BrowserRead, PageHold } from '../web/browser.ts'
+import type { BrowserPage, BrowserRead } from '../web/browser.ts'
 import type { WebDeps } from '../web/deps.ts'
-import { fakeHandoff, resetHandoffLimit } from '../web/handoff.ts'
 import { createShopCapabilities } from './shop-capabilities.ts'
 import { assertShopUrl, isBlockedError } from './shop-fetch.ts'
 import { parseItemRef } from './shop-item.ts'
@@ -73,8 +72,6 @@ interface Rig {
   /** What the vision route answers, in order (the last repeats); the default is one fixed note. A picture is told by `request.images`. */
   vision?: Parameters<typeof fakeTransports>[0]['anthropic']
   browser?: BrowserRead
-  handoff?: ReturnType<typeof fakeHandoff>
-  pageHold?: PageHold
 }
 
 /** A browser reader that answers with `page` and records every read; it opens no process and no Chrome. */
@@ -87,11 +84,9 @@ function fakeShopBrowser(page: Partial<BrowserPage> & { html?: string }) {
   return { read, reads }
 }
 
-function rig({ shopRoutes = {}, anthropic, vision, browser, handoff, pageHold }: Rig = {}) {
+function rig({ shopRoutes = {}, anthropic, vision, browser }: Rig = {}) {
   const net = network(shopRoutes)
   if (browser) net.deps.browser = browser
-  if (handoff) net.deps.handoff = handoff
-  if (pageHold) net.deps.pageHold = pageHold
   const time = clock()
   // The vision route and the text routes share the Messages wire: a request with pictures takes the next vision reply,
   // any other the next text one.
@@ -368,16 +363,13 @@ describe('shop.search', () => {
   describe('bot check and the research Chrome', () => {
     const robot = async () => page(await fixture('robot-check-synthetic'), 503)
 
-    test('the browser passes the check: the page is parsed from its HTML, nobody is asked, the parsed page is cached', async () => {
-      resetHandoffLimit()
-      const handoff = fakeHandoff()
+    test('the browser passes the check: the page is parsed from its HTML, the parsed page is cached', async () => {
       const html = await fixture('search-augplatte')
       const browser = fakeShopBrowser({ html })
-      const r = rig({ shopRoutes: { [SEARCH_URL]: robot }, browser: browser.read, handoff })
+      const r = rig({ shopRoutes: { [SEARCH_URL]: robot }, browser: browser.read })
       const first = await r.search.call({ query: 'a' }, r.options)
       expect(first.results.map((x) => x.asin)).toContain('B0BLBS5SD6')
       expect(browser.reads).toEqual([{ url: `${SEARCH_URL}a`, html: true }])
-      expect(handoff.requests).toEqual([])
       expect(r.net.calls).toHaveLength(1)
       const again = await r.search.call({ query: 'a' }, r.options)
       expect(again.cached).toBe(true)
@@ -385,85 +377,46 @@ describe('shop.search', () => {
       expect(r.usage.map((u) => u.model)).toEqual(['shop-direct', 'shop-browser', 'cache'])
     })
 
-    test('the browser meets the check too: one handoff with the host only, blocked (bot-protection), cooldown set, no second browser read', async () => {
-      resetHandoffLimit()
-      const handoff = fakeHandoff()
+    test('the browser meets the check too: blocked (bot-protection), cooldown set, no second browser read', async () => {
       const browser = fakeShopBrowser({
         challenge: true,
         title: 'Bot Check',
         html: await fixture('robot-check-synthetic'),
       })
-      const r = rig({ shopRoutes: { [SEARCH_URL]: robot }, browser: browser.read, handoff })
+      const r = rig({ shopRoutes: { [SEARCH_URL]: robot }, browser: browser.read })
       const error = await failure(r.search.call({ query: 'a' }, r.options))
       expect(error.message).toContain('blocked (bot-protection)')
-      expect(error.message).toContain('the owner was asked')
+      expect(error.message).toEndWith('robot check on the search page in the research Chrome too (needs-human)')
       expect(isBlockedError(error)).toBe(true)
-      expect(handoff.requests).toEqual([{ host: 'www.amazon.de' }])
       const next = await failure(r.search.call({ query: 'b' }, r.options))
       expect(next.message).toContain('blocked (cooldown)')
       expect(browser.reads).toHaveLength(1)
       expect(r.net.calls).toHaveLength(1)
-      expect(handoff.requests).toHaveLength(1)
-    })
-
-    test('the page is kept open for the owner when he is asked, and its tab released once a read passes', async () => {
-      resetHandoffLimit()
-      const handoff = fakeHandoff()
-      const kept: string[] = []
-      const released: string[] = []
-      const pageHold: PageHold = {
-        keep: async (url) => void kept.push(url),
-        release: async (host) => void released.push(host),
-      }
-      const wall = fakeShopBrowser({
-        challenge: true,
-        title: 'Bot Check',
-        html: await fixture('robot-check-synthetic'),
-      })
-      const blockedRig = rig({ shopRoutes: { [SEARCH_URL]: robot }, browser: wall.read, handoff, pageHold })
-      await failure(blockedRig.search.call({ query: 'a' }, blockedRig.options))
-      expect(kept).toEqual([`${SEARCH_URL}a`])
-      expect(handoff.requests).toEqual([{ host: 'www.amazon.de', pageOpen: true }])
-      expect(released).toEqual([])
-
-      const passing = fakeShopBrowser({ html: await fixture('search-augplatte') })
-      const passRig = rig({ shopRoutes: { [SEARCH_URL]: robot }, browser: passing.read, handoff, pageHold })
-      await passRig.search.call({ query: 'a' }, passRig.options)
-      expect(released).toEqual(['www.amazon.de'])
     })
 
     test('a browser page that still is the robot check counts as a challenge', async () => {
-      resetHandoffLimit()
-      const handoff = fakeHandoff()
       const browser = fakeShopBrowser({ html: await fixture('robot-check-synthetic') })
-      const r = rig({ shopRoutes: { [SEARCH_URL]: robot }, browser: browser.read, handoff })
+      const r = rig({ shopRoutes: { [SEARCH_URL]: robot }, browser: browser.read })
       const error = await failure(r.search.call({ query: 'a' }, r.options))
       expect(error.message).toContain('blocked (bot-protection)')
-      expect(handoff.requests).toHaveLength(1)
     })
 
-    test('a browser that fails leaves the wall standing: blocked (bot-protection), cooldown, nobody is asked', async () => {
-      resetHandoffLimit()
-      const handoff = fakeHandoff()
+    test('a browser that fails leaves the wall standing: blocked (bot-protection), cooldown', async () => {
       const { BrowserFailure } = await import('../web/browser.ts')
       const r = rig({
         shopRoutes: { [SEARCH_URL]: robot },
         browser: async () => {
           throw new BrowserFailure('the browser is unreachable')
         },
-        handoff,
       })
       const error = await failure(r.search.call({ query: 'a' }, r.options))
       expect(error.message).toContain('blocked (bot-protection)')
-      expect(handoff.requests).toEqual([])
       expect((await failure(r.search.call({ query: 'b' }, r.options))).message).toContain('blocked (cooldown)')
     })
 
     test('a 429 and a sign-in redirect never touch the browser', async () => {
-      resetHandoffLimit()
-      const handoff = fakeHandoff()
       const browser = fakeShopBrowser({ html: await fixture('search-augplatte') })
-      const limited = rig({ shopRoutes: { [SEARCH_URL]: page('slow down', 429) }, browser: browser.read, handoff })
+      const limited = rig({ shopRoutes: { [SEARCH_URL]: page('slow down', 429) }, browser: browser.read })
       expect((await failure(limited.search.call({ query: 'a' }, limited.options))).message).toContain(
         'blocked (rate-limited)',
       )
@@ -473,23 +426,18 @@ describe('shop.search', () => {
             new Response(null, { status: 302, headers: { location: 'https://www.amazon.de/ap/signin?x=1' } }),
         },
         browser: browser.read,
-        handoff,
       })
       expect((await failure(signIn.search.call({ query: 'a' }, signIn.options))).message).toContain(
         'blocked (login-required)',
       )
       expect(browser.reads).toEqual([])
-      expect(handoff.requests).toEqual([])
     })
 
-    test("without a browser the robot check is today's block: no handoff", async () => {
-      resetHandoffLimit()
-      const handoff = fakeHandoff()
-      const r = rig({ shopRoutes: { [SEARCH_URL]: robot }, handoff })
+    test("without a browser the robot check is today's block", async () => {
+      const r = rig({ shopRoutes: { [SEARCH_URL]: robot } })
       const error = await failure(r.search.call({ query: 'a' }, r.options))
       expect(error.message).toContain('blocked (bot-protection)')
       expect(error.message).toContain('HTTP 503')
-      expect(handoff.requests).toEqual([])
     })
   })
 

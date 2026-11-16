@@ -3,8 +3,8 @@ import type { Ctx } from '../context.ts'
 import { CapabilityError, fail } from '../errors.ts'
 import { defineCapability } from '../procedure.ts'
 import { describe, failedResponse, isAbort, readJson, withRetries } from '../transports/http.ts'
-import { BrowserFailure, BrowserRefused, ownerPage } from './browser.ts'
-import { askOnce, HANDOFF_INTERVAL_MS, WallMemory } from './handoff.ts'
+import { BrowserFailure, BrowserRefused } from './browser.ts'
+import { WALL_INTERVAL_MS, WallMemory } from './wall.ts'
 import { type Pin, type ResolvedWebDeps, requireKey, webUsage, within } from './deps.ts'
 import { extractPdfPages, PdfTimeout } from './pdf.ts'
 import { TAVILY_USD_PER_CREDIT } from './search.ts'
@@ -243,17 +243,12 @@ const NEXT_STEP: Record<BlockReason, string> = {
   rejected: 'the site turned the plain read away; retry once with render, else use web.search for another source',
   'no-text': 'the page holds no readable text; retry once with render, else use web.search for another source',
   'unsupported-type': 'the page is not text or a PDF; do not retry, use web.search for a text source',
-  'needs-human': 'a person has to pass the wall; retry later, do not loop, or use web.search for another source',
+  'needs-human':
+    'an interactive check agw cannot pass and the owner is not asked; do not retry, use web.search for another source',
 }
 
 /** The one action a failed `web.fetch` ends with, from why it failed: a gone page, a block, a slow or down host. */
-function nextStep(
-  blocked: BlockReason | undefined,
-  status: number | undefined,
-  failures: readonly string[],
-  ownerAsked = false,
-): string {
-  if (blocked === 'needs-human' && ownerAsked) return 'the owner was asked; retry later, do not loop'
+function nextStep(blocked: BlockReason | undefined, status: number | undefined, failures: readonly string[]): string {
   if (status === 404 || status === 410) return 'gone; do not retry, use web.search for the current location'
   if (blocked) return NEXT_STEP[blocked]
   if (failures.some((line) => /timed out/i.test(line))) return 'host slow or down; try later or use web.search'
@@ -653,19 +648,16 @@ export const createFetch = (deps: ResolvedWebDeps) => {
         ctx.addUsage(webUsage('cache', 0))
         return shape(url, hit.read, hit.via, maxChars, { cached: true, at: hit.at }, { legs: [], startedAt })
       }
-      // A host that turned the last read away at a wall is not read again for the handoff interval: no browser settle, no
+      // A host that turned the last read away at a wall is not read again for the wall interval: no browser settle, no
       // paid read. `fresh` asks for a read of its own, and a pass of it clears the verdict.
       const host = hostOf(url)
       const wall = fresh || !host ? undefined : walls.recall(host)
       if (wall) {
         const minutes = Math.max(1, Math.round((Date.now() - wall.at) / 60_000))
-        const again =
-          wall.reason === 'needs-human'
-            ? 'a person has to pass the wall; once the owner did, read again with fresh, else use web.search for another source'
-            : `${nextStep(wall.reason, undefined, [])}; fresh reads the host again`
+        const again = `${nextStep(wall.reason, undefined, [])}; fresh reads the host again`
         throw fail(
           'UPSTREAM_ERROR',
-          `web.fetch: blocked (${wall.reason}) · known wall: ${host} turned a read away ${minutes} min ago and none has passed since (remembered for ${HANDOFF_INTERVAL_MS / 60_000} min) · ${again}`,
+          `web.fetch: blocked (${wall.reason}) · known wall: ${host} turned a read away ${minutes} min ago and none has passed since (remembered for ${WALL_INTERVAL_MS / 60_000} min) · ${again}`,
           { legs: [], wallMs: Date.now() - startedAt },
         )
       }
@@ -730,9 +722,6 @@ export const createFetch = (deps: ResolvedWebDeps) => {
         const free = () => ctx.addUsage(webUsage('direct', 0))
         const policy = publicOnlyPolicy(deps, 'web.fetch')
         const browser = deps.browser(policy)
-        const pageHold = deps.pageHold(policy)
-        // The URL the browser met a wall at, for the owner to find on screen when he is asked.
-        let challenged: string | undefined
         // A PDF is no page a browser reads as text: it goes the plain way even when a rendered read was asked for.
         const isPdf = /\.pdf(?:$|[?#])/i.test(url)
         // A host that answered the plain client with a Cloudflare challenge goes to the browser first, as a rendered read does.
@@ -795,10 +784,7 @@ export const createFetch = (deps: ResolvedWebDeps) => {
               ...(host && challengedHosts.recall(host) ? { challengedHost: true } : {}),
             })
             ctx.addUsage(webUsage('browser', 0))
-            // A read that passes ends the handoff of its host: the tab kept for the owner is no longer needed.
-            if (!page.challenge) void pageHold?.release(new URL(target).hostname).catch(() => undefined)
             if (page.challenge) {
-              challenged = target
               outcome = 'challenge'
               // Still a wall after the settle time: a person has to pass it once (the profile keeps the cookie). The page's
               // own title is not repeated: it is untrusted text.
@@ -967,18 +953,13 @@ export const createFetch = (deps: ResolvedWebDeps) => {
 
         // A kept thin read is still a read: better than an error for a short page.
         if (kept.found && kept.found.read.text.length > 0) return { ...kept.found, tried, legs }
-        // Asked only once every leg has failed: a wall the Tavily read got past needs no person.
-        const page = challenged ? ownerPage(pageHold, challenged, ctx.signal) : undefined
-        const ownerAsked =
-          blocked === 'needs-human' && (await askOnce(deps.handoff, new URL(url).hostname, Date.now(), page))
-        if (ownerAsked) failures.push('the owner was asked to solve it')
-        // Every leg failed at a wall: the next read of the host is answered from here for the handoff interval. A
+        // Every leg failed at a wall: the next read of the host is answered from here for the wall interval. A
         // browser that could not read at all (and met no challenge) proves nothing about the wall, so it is not kept.
         if (host && blocked && WALL_REASONS.includes(blocked) && (blocked === 'needs-human' || !browserFailed))
           walls.remember(host, blocked)
         throw fail(
           'UPSTREAM_ERROR',
-          `web.fetch: ${blocked ? `blocked (${blocked}) · ` : ''}${failures.join(' · ')} · ${nextStep(blocked, pageStatus, failures, ownerAsked)}`,
+          `web.fetch: ${blocked ? `blocked (${blocked}) · ` : ''}${failures.join(' · ')} · ${nextStep(blocked, pageStatus, failures)}`,
           failureData(pageStatus),
         )
       }
