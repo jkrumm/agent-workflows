@@ -164,6 +164,19 @@ describe('a start whose answer is lost', () => {
     expect(runs.size).toBe(1)
   })
 
+  test('a host that is cut and then stays down still hands the key back: the first attempt may have landed', async () => {
+    const runs: RunStore = new Map()
+    const host = await startFakeHost({ runs, lostAnswers: 1, downAfterLost: true })
+    const result = await agw(sandbox({ deploying: true }), host.url, deploy, {
+      AGW_API_SECRET: host.secret,
+      AGW_RESTART_WAIT_S: '2',
+    })
+    expect(result.code).toBe(7)
+    const { error } = lastJson(result.stderr)
+    expect(error.hint).toMatch(/^the run may have started; retry with --idempotency-key [0-9a-f-]{36}$/)
+    expect(runs.size).toBe(1)
+  })
+
   test('a 503 from a process that is up but not serving is retried the same way', async () => {
     const { runs, host, result } = await started({ refuseStarts: { count: 2, status: 503 } })
     expect(result.code).toBe(0)

@@ -243,6 +243,8 @@ export interface FakeHostOptions {
   port?: number
   /** The first n workflow starts are recorded, then their answer is cut mid-body: the caller never sees it. */
   lostAnswers?: number
+  /** The host stops listening right after it cuts an answer (a restart that does not come back). */
+  downAfterLost?: boolean
   /** Answers the first n workflow starts with this status before anything is recorded (a process that is up but not serving). */
   refuseStarts?: { count: number; status: number }
 }
@@ -448,6 +450,7 @@ export async function startFakeHost(options: FakeHostOptions = {}): Promise<Fake
         if (lostAnswers > 0) {
           lostAnswers--
           const cut = new ReadableStream({ start: (controller) => controller.error(new Error('connection cut')) })
+          if (options.downAfterLost) setTimeout(() => void server.stop(true), 20)
           return new Response(cut, { headers: { 'content-type': 'application/json' } })
         }
         return waitFor(run, request)

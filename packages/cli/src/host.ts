@@ -383,6 +383,12 @@ export class Host {
     let firstFailure: number | undefined // the bound counts from here, not from the request: a long run that is cut still gets its retries
     let bound: { boundMs: number; deploying: boolean } | undefined
     let noticed = false
+    let mayHaveLanded = false // an earlier attempt was cut or got a 5xx: the request may have reached the process
+    // A refused connection after an attempt that may have landed no longer proves nothing was sent.
+    const giveUp = (error: unknown) =>
+      mayHaveLanded && error instanceof Unreachable
+        ? new LostAnswer('network', error.message, { hint: error.hint, details: error.details })
+        : error
     for (let failures = 0; ; failures++) {
       try {
         return await this.attempt({ method, url, path, headers, options, deadlineS })
@@ -392,14 +398,15 @@ export class Host {
         const again =
           refused ||
           (retriesLost && (error instanceof LostAnswer || (typeof status === 'number' && RESTART_STATUS.has(status))))
-        if (!rides || !again || options.signal?.aborted) throw error
+        if (error instanceof LostAnswer || (typeof status === 'number' && status >= 500)) mayHaveLanded = true
+        if (!rides || !again || options.signal?.aborted) throw giveUp(error)
         bound ??= (({ boundS, deploying }) => ({ boundMs: boundS * 1000, deploying }))(
           restartBoundS(this.env, this.target ? `com.jkrumm.agent-workflows-${this.target.name}` : HOST_LABEL),
         )
         firstFailure ??= Date.now()
         const elapsed = Date.now() - firstFailure
         const delay = Math.min(RESTART_BACKOFF_MS * 2 ** failures, RESTART_BACKOFF_MAX_MS)
-        if (elapsed + delay > bound.boundMs) throw error
+        if (elapsed + delay > bound.boundMs) throw giveUp(error)
         if (!noticed && elapsed + delay > RESTART_NOTICE_AFTER_MS) {
           noticed = true
           this.notice?.(
