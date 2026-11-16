@@ -7,18 +7,26 @@ import { complete, parseJsonLoose, toUsage } from './model-call.ts'
 describe('parseJsonLoose', () => {
   const object = { report: 'a {brace} inside', n: 1 }
   const json = JSON.stringify(object)
+  const fenced = { report: '## A\n```ts\ncode {x}\n```\n', n: 2 }
 
   test.each([
-    ['bare', json],
-    ['a json fence', `\`\`\`json\n${json}\n\`\`\``],
-    ['a bare fence', `\`\`\`\n${json}\n\`\`\``],
+    ['bare', json, object],
+    ['a json fence', `\`\`\`json\n${json}\n\`\`\``, object],
+    ['a bare fence', `\`\`\`\n${json}\n\`\`\``, object],
     [
       'a fence with prose before and after, braces included',
       `Done {as asked}:\n\`\`\`json\n${json}\n\`\`\`\nNote {x} follows.`,
+      object,
     ],
-    ['prose around unfenced JSON', `Here you go: ${json} Anything else?`],
-  ])('%s', (_name, text) => {
-    expect(parseJsonLoose(text)).toEqual(object)
+    ['a code fence inside a JSON string', `\`\`\`json\n${JSON.stringify(fenced)}\n\`\`\``, fenced],
+    [
+      'a fence in the string, prose with braces around',
+      `{ok}\n\`\`\`json\n${JSON.stringify(fenced)}\n\`\`\`\n{done}`,
+      fenced,
+    ],
+    ['prose around unfenced JSON', `Here you go: ${json} Anything else?`, object],
+  ])('%s', (_name, text, expected) => {
+    expect(parseJsonLoose(text)).toEqual(expected)
   })
 
   test('prose with no object and broken JSON are null', () => {

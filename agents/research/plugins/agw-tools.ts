@@ -5,8 +5,9 @@
 // own read tool cannot reach it (external_directory is denied).
 //
 // This file is the template for every agent's tools: copy it to agents/<name>/plugins/agw-tools.ts and change only
-// `id` and `TOOLS` (name, description, input schema). This copy also shows the gate's budget `note` after an answer. The compiler copies a plugins/ directory per agent and nothing
-// from outside it, so the forwarding stays a few lines repeated per agent (packages/host/README.md §Tool gate).
+// `id` and `TOOLS` (name, description, input schema); the `note` line in `forward` (the gate's budget nudge) is only for an
+// agent whose grant sets a `budget`. The compiler copies a plugins/ directory per agent and nothing from outside it, so
+// the forwarding stays a few lines repeated per agent (packages/host/README.md §Tool gate).
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'

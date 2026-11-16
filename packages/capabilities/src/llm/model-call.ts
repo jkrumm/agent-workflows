@@ -240,24 +240,31 @@ async function completeOn(
 }
 
 /**
- * Best-effort JSON from a model answer, in code, before any re-ask: a fenced block anywhere in the text (the one that
- * holds the object, with prose before or after it), else the text as is, then the slice from the first `{` to the last
- * `}`. `null` on failure.
+ * Best-effort JSON from a model answer, in code, before any re-ask. Candidates in order, the first that parses wins: the
+ * text as is; what sits between the first code fence's opening and the last fence's closing (prose before or after it,
+ * braces included, and fences inside a JSON string stay whole); the slice from the first `{` to the last `}`. `null`
+ * when none parses.
  */
 export function parseJsonLoose(raw: string): unknown {
-  let s = raw.trim()
-  const fenced = [...s.matchAll(/```(?:json)?[ \t]*\r?\n?([\s\S]*?)\s*```/g)]
-    .map((m) => (m[1] ?? '').trim())
-    .find((body) => body.startsWith('{'))
-  if (fenced !== undefined) s = fenced
-  const first = s.indexOf('{')
-  const last = s.lastIndexOf('}')
-  if (first >= 0 && last > first) s = s.slice(first, last + 1)
-  try {
-    return JSON.parse(s)
-  } catch {
-    return null
+  const text = raw.trim()
+  const opening = /```(?:json)?[ \t]*\r?\n?/.exec(text)
+  const closing = text.lastIndexOf('```')
+  const fenced =
+    opening && closing >= opening.index + opening[0].length
+      ? text.slice(opening.index + opening[0].length, closing)
+      : null
+  const first = text.indexOf('{')
+  const last = text.lastIndexOf('}')
+  const sliced = first >= 0 && last > first ? text.slice(first, last + 1) : null
+  for (const candidate of [text, fenced?.trim(), sliced]) {
+    if (!candidate) continue
+    try {
+      return JSON.parse(candidate)
+    } catch {
+      // the next candidate
+    }
   }
+  return null
 }
 
 function retryPrompt(prompt: string, rejected: string, reason: string): string {
