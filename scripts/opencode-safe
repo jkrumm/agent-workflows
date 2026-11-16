@@ -3,7 +3,8 @@
 #
 # `opencode run` retries connect errors and 5xx forever. This wrapper probes the model endpoint
 # with `curl --max-time 5` first. The gateway (the mini) counts as reachable only when its
-# `/health` answers 2xx with status ok (a degraded gateway does not). An IU OpenAI base counts
+# `/health` answers 200 with status ok, or 503 `degraded` for no eligible credit pool alone (`reasons` exactly
+# `["no-eligible-pool"]`: IU still serves); any other degraded answer does not. An IU OpenAI base counts
 # on any HTTP response below 500 (401/404 included); a connect error, the 5 s timeout or a
 # 5xx does not.
 # It puts NO wall-clock ceiling on opencode itself (an agentic run killed mid-work reads as a
