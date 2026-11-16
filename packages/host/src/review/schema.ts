@@ -1,4 +1,4 @@
-// Review v4 contracts: the reviewer agent's reply (`docs/spikes/review-v4/reviewer.md` §Reply), REVIEW_OUTPUT v4 and the
+// Review v4 contracts: the reviewer agent's reply (the dotfiles `agents/reviewer.md`, §Reply), REVIEW_OUTPUT v4 and the
 // operations' inputs and outputs.
 import { z } from 'zod'
 import { ACCOUNT_ID_PATTERN } from '../fleet/quota.ts'
@@ -109,6 +109,12 @@ export const ReviewOutputV4 = z.object({
     repeats: z.number().int().describe('Findings the thread already holds'),
     nits: z.number().int().describe('Nits past the REVIEW.md cap'),
   }),
+  unreviewed: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Stat paths the reply did not echo (absent: none). `covered` treats them as not reviewed; the next prepare on the thread diffs from this round's diff base, so they are read again",
+    ),
   base: z.string(),
   diffBase: z.string(),
   head: z.string(),
@@ -166,6 +172,19 @@ export const PrepareOutput = z.object({
   status: z.enum(['ready', 'skipped', 'held', 'needs-human']),
   reason: z.string().optional().describe('held (the deep cap) and needs-human: why'),
   jobId: z.string().optional(),
+  summary: z.string().optional().describe('One line: tier, round, file and line counts, the rule'),
+  promptFile: z.string().optional().describe('The prompt line as a file in the job dir: read it when stdout was cut'),
+  prompt: z.string().optional().describe('The reviewer agent prompt line (also the content of `promptFile`)'),
+  reused: z
+    .literal(true)
+    .optional()
+    .describe(
+      'The prepared, unsubmitted job of this thread, head tree and tier came back as it was: nothing was abandoned',
+    ),
+  note: z
+    .string()
+    .optional()
+    .describe('What prepare did to the scope that the caller did not ask for (a merge-base diff)'),
   thread: z.string(),
   round: z.number().int(),
   tier: TIER.optional(),
@@ -183,17 +202,20 @@ export const PrepareOutput = z.object({
     .enum(['ok', 'unknown', 'unjudged'])
     .optional()
     .describe('The quota reading recorded on the job. ok: a reading; unknown: none; unjudged: no account given'),
-  prompt: z.string().optional().describe('The reviewer agent prompt line'),
 })
 export type PrepareOutputValue = z.output<typeof PrepareOutput>
 
-export const CancelInput = z.object({ jobId: z.string().min(1).describe('A prepared job') }).strict()
+/** Accepted by the operations that do not read a repo, so a caller that passes it everywhere is not refused. */
+const IGNORED_CWD = CWD.optional().describe('Accepted and ignored: the job names its repo')
+
+export const CancelInput = z.object({ jobId: z.string().min(1).describe('A prepared job'), cwd: IGNORED_CWD }).strict()
 
 export const CancelOutput = z.object({ status: z.literal('cancelled'), jobId: z.string() })
 
 export const SubmitInput = z
   .object({
     jobId: z.string().min(1).describe('The job from prepare'),
+    cwd: IGNORED_CWD,
     attempt: z.number().int().positive().describe('The reviewer attempt; a submit is idempotent per (job, attempt)'),
     reply: z.string().min(1).describe("The reviewer agent's JSON reply"),
     account: z
@@ -207,8 +229,17 @@ export const SubmitInput = z
 export const DisposeInput = z
   .object({
     jobId: z.string().min(1).describe('A job of the finding thread'),
-    findingId: z.string().min(1).describe('The finding id'),
-    disposition: z.enum(DISPOSITIONS).describe('What happened to the finding'),
+    cwd: IGNORED_CWD,
+    findingId: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('The finding id; several as a comma-separated list (all or none are disposed)'),
+    disposition: z.enum(DISPOSITIONS).optional().describe('What happened to the findings'),
+    allOpen: z
+      .enum(DISPOSITIONS)
+      .optional()
+      .describe("Instead of ids: this disposition for every open finding of the job's thread"),
     reason: z.string().optional().describe('Why (wrong, intentional, irrelevant)'),
   })
   .strict()
@@ -231,6 +262,9 @@ export const FindingRecord = z.object({
 })
 export type FindingRecordValue = z.output<typeof FindingRecord>
 
+/** One id: that finding as before. Several ids or `--all-open`: `{ disposed }`, in the order given. */
+export const DisposeOutput = z.union([FindingRecord, z.object({ disposed: z.array(FindingRecord) })])
+
 export const StatusInput = z
   .object({
     jobId: z.string().min(1).optional().describe('A job: its state and its thread findings'),
@@ -249,6 +283,16 @@ export const JobSummary = z.object({
   outcome: z.enum(OUTCOMES).nullable(),
   openImportant: z.number().int().describe('Open important findings of the thread'),
   ageS: z.number().int(),
+})
+
+export const StalledThread = z.object({
+  thread: z.string(),
+  threadKey: z.string().optional().describe('The key the thread was started with (absent on older jobs)'),
+  jobId: z.string().describe('The last submitted round, outcome actionable'),
+  round: z.number().int(),
+  tier: TIER,
+  openImportant: z.number().int(),
+  ageS: z.number().int().describe('Seconds since that round was submitted'),
 })
 
 export const StatusOutput = z.object({
@@ -282,6 +326,12 @@ export const StatusOutput = z.object({
     .optional(),
   findings: z.array(FindingRecord).optional(),
   jobs: z.array(JobSummary).optional(),
+  stalled: z
+    .array(StalledThread)
+    .optional()
+    .describe(
+      'With --cwd: threads of the repo (last 14 days, newest 10) whose last submitted round was actionable and that no round followed: the fix loop stopped. Prepare on the thread (--thread <id>) re-reviews it',
+    ),
 })
 
 export const RouteInput = z
@@ -325,10 +375,13 @@ export const CoveredOutput = z.object({
        * Why a commit that needs a review has none covering it. `no-review`: no submitted job of the last 30 days touched
        * its files; `tier-too-low`: reviews touched them, all below the tier it needs; `stale`: a review at its tier
        * exists, but its head is neither this commit, nor part of its history, nor the same patch; `open-important`:
-       * reviewed at its tier, but the thread still has open important findings (`findings`).
+       * reviewed at its tier, but the thread still has open important findings (`findings`); `unreviewed`: reviewed at
+       * its tier, but the reply did not read some of the commit's files (`unreviewed`).
        */
-      reason: z.enum(['open-important', 'no-review', 'stale', 'tier-too-low']).optional(),
+      reason: z.enum(['open-important', 'no-review', 'stale', 'tier-too-low', 'unreviewed']).optional(),
       findings: z.array(z.string()).optional(),
+      /** `unreviewed`: a review at the tier exists but its reply left these files of the commit out (a later round reads them). */
+      unreviewed: z.array(z.string()).optional(),
       /** `stale` and `tier-too-low`: the newest submitted jobs that touched the commit's files (`agw review status <id>`). */
       related: z.array(z.string()).optional(),
     }),
@@ -343,7 +396,12 @@ const STATS_BY = ['tier', 'rule', 'prompt', 'repo'] as const
 
 export const StatsInput = z
   .object({
-    since: z.string().optional().describe('ISO datetime: only jobs created at or after it (default: all time)'),
+    since: z
+      .string()
+      .optional()
+      .describe(
+        'ISO datetime or a duration back from now (30m, 24h, 7d, 2w): only jobs created at or after it (default: all time)',
+      ),
     repo: z.string().min(1).optional().describe('Exact repo id (as `status` prints it)'),
     by: z.enum(STATS_BY).default('tier').describe('Group by tier, normalized rule, reviewer prompt or repo'),
     bucket: z.enum(['week']).optional().describe('ISO week, Monday 00:00 UTC; with --by = one group per week and key'),
@@ -373,6 +431,12 @@ const StatsMetrics = z.object({
   anchoredShare: z.number().nullable().describe('Of findings with a known value'),
   lineValidShare: z.number().nullable().describe('Of findings with a known value'),
   deepRound2: z.object({ count: z.number().int(), share: z.number().nullable() }),
+  stalled: z
+    .number()
+    .int()
+    .describe(
+      'Threads whose last submitted round was actionable and that no later round followed (the fix loop stopped)',
+    ),
 })
 export type StatsMetricsValue = z.output<typeof StatsMetrics>
 

@@ -166,6 +166,7 @@ export interface StatsJob {
   reviewerPrompt: string | null
   outcome: string | null
   wallS: number | null
+  thread: string
   createdAt: Date
 }
 export interface StatsFinding {
@@ -400,6 +401,62 @@ export function reviewLedger(pool: ReviewPool, schema: string) {
       return toFinding(unchanged.rows[0])
     },
 
+    /** Sets one disposition on several findings in one transaction: all of them or, on an error, none. */
+    async disposeMany(ids: string[], disposition: Disposition, reason: string | null, at: Date): Promise<Finding[]> {
+      if (ids.length === 0) return []
+      return transaction(async (client) => {
+        await client.query(
+          `update ${findings} set disposition = $2, reason = $3, disposed_at = $4
+            where id = any($1::text[]) and (disposition <> $2 or reason is distinct from $3)`,
+          [ids, disposition, reason, at],
+        )
+        const all = await client.query(`select * from ${findings} where id = any($1::text[])`, [ids])
+        const byId = new Map((all.rows as Row[]).map((r) => [r.id as string, toFinding(r)]))
+        return ids.flatMap((id) => (byId.has(id) ? [byId.get(id) as Finding] : []))
+      })
+    },
+
+    /**
+     * Threads of `repo` whose last submitted round (created since `since`) was actionable and that no prepared job
+     * followed: the fix loop stopped. Newest first, with the thread's open important findings.
+     */
+    async stalledThreads(repo: string, since: Date, limit: number): Promise<(Job & { openImportant: number })[]> {
+      const { rows } = await pool.query(
+        `with last as (
+           select distinct on (thread) * from ${jobs} where repo = $1 and state = 'submitted'
+            order by thread, round desc, submitted_at desc)
+         select l.*, (select count(*)::int from ${findings} f
+                       where f.repo = l.repo and f.thread = l.thread and f.tag = 'important' and f.disposition = 'open')
+                     as open_important
+           from last l
+          where l.output->>'outcome' = 'actionable' and l.created_at >= $2
+            and not exists (select 1 from ${jobs} n
+                             where n.repo = l.repo and n.thread = l.thread and n.state = 'prepared' and n.round > l.round)
+          order by l.created_at desc, l.id desc limit $3`,
+        [repo, since, limit],
+      )
+      return rows.map((r) => ({ ...toJob(r), openImportant: r.open_important as number }))
+    },
+
+    /** The prepared, unsubmitted job a repeat prepare of the same thread, head tree, diff base and tier would make. */
+    async preparedMatch(at: {
+      repo: string
+      root: string
+      thread: string
+      headTree: string
+      diffBase: string
+      tier: Tier
+    }): Promise<Job | null> {
+      const { rows } = await pool.query(
+        `select * from ${jobs}
+          where repo = $1 and root = $2 and thread = $3 and head_tree = $4 and diff_base = $5 and tier = $6
+            and state = 'prepared' and transport = 'in-session'
+          order by created_at desc, id desc limit 1`,
+        [at.repo, at.root, at.thread, at.headTree, at.diffBase, at.tier],
+      )
+      return rows[0] ? toJob(rows[0]) : null
+    },
+
     /** The newest jobs of `repo`, with the thread's open important findings. */
     async recentJobs(repo: string, limit: number): Promise<(Job & { openImportant: number })[]> {
       const { rows } = await pool.query(
@@ -444,7 +501,7 @@ export function reviewLedger(pool: ReviewPool, schema: string) {
       const args = [input.since, input.repo]
       const [jobRows, findingRows] = await Promise.all([
         pool.query(
-          `select j.id, j.repo, j.tier, j.rule, j.round, j.state, j.reviewer_prompt, j.created_at, j.submitted_at,
+          `select j.id, j.repo, j.thread, j.tier, j.rule, j.round, j.state, j.reviewer_prompt, j.created_at, j.submitted_at,
                   j.output->>'outcome' as outcome
              from ${jobs} j where ${where}`,
           args,
@@ -459,6 +516,7 @@ export function reviewLedger(pool: ReviewPool, schema: string) {
         jobs: jobRows.rows.map((r) => ({
           id: r.id as string,
           repo: r.repo as string,
+          thread: r.thread as string,
           tier: r.tier as Tier,
           rule: r.rule as string,
           round: r.round as number,

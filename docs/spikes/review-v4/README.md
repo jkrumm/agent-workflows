@@ -30,7 +30,7 @@ the mini in the lead's own Claude Code session (account `me2`, Max 5x) as Sonnet
 
 | File | What |
 |-|-|
-| `reviewer.md` | The agent (prompt v2.1); `data/reviewer-v1.md` is the first version |
+| (`reviewer.md`) | Moved: the live agent is the dotfiles `agents/reviewer.md`; `data/reviewer-v1.md` is the first version |
 | `review-verifier.md` | The vote agent (deep only) |
 | `REVIEW.agent-workflows.md`, `REVIEW.dotfiles.md` | Per-repo REVIEW.md drafts: what failure looks like, `none` and `sensitive` globs |
 | `route.py` | The deterministic router; `distribution.sh` routes the last N merged PRs (`data/route-*.txt`) |

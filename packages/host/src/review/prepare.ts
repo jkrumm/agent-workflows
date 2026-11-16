@@ -1,5 +1,5 @@
 // `agw review prepare`: thread and round from the ledger, the route, the quota reading and the deep cap, a throwaway worktree
-// at the head and the job dir the reviewer agent reads (`docs/spikes/review-v4/reviewer.md` §The job).
+// at the head and the job dir the reviewer agent reads (`README.md` §The job dir).
 import { createHash, randomBytes } from 'node:crypto'
 import {
   existsSync,
@@ -16,6 +16,7 @@ import { join, sep } from 'node:path'
 import { tail } from '../process.ts'
 import { removeClone, removeEscapingSymlinks, sweepStaleClones } from './clone.ts'
 import { jobsRoot, type QuotaReading, type ReviewContext } from './context.ts'
+import type { Job } from './ledger.ts'
 import { isAncestor, repoIdentity, type ResolvedScope, resolveRoot, resolveScope, threadId, tryGit } from './repo.ts'
 import { routeRange, type Seat, type Tier } from './route.ts'
 import type { PrepareInputValue, PrepareOutputValue } from './schema.ts'
@@ -24,7 +25,10 @@ import type { PrepareInputValue, PrepareOutputValue } from './schema.ts'
 export const MAX_ROUNDS = 3
 /** A runaway guard far above a busy day (~15 deep reviews per account); the quota reading is only recorded. */
 export const DEFAULT_DEEP_CAP = 60
+/** A deep review that a sensitive path forces may pass the cap by this share of it: routine deep ones do not eat it. */
+const SENSITIVE_RESERVE = 0.5
 const PRIOR_LIMIT = 20
+const PROMPT_FILE = 'prompt.txt'
 const HISTORY_COMMITS = 15
 const STALE_TREE_MS = 24 * 3_600_000
 const STALE_JOB_MS = 14 * 24 * 3_600_000
@@ -32,6 +36,8 @@ const CLONE_TIMEOUT_MS = 120_000
 const BASE32 = 'abcdefghijklmnopqrstuvwxyz234567'
 
 export const newJobId = (): string => `rv_${[...randomBytes(20)].map((b) => BASE32[b % 32]).join('')}`
+
+const nextUtcMidnight = (now: Date) => new Date(utcMidnight(now).getTime() + 86_400_000)
 
 function deepCap(env: Record<string, string | undefined>): number {
   const raw = Number(env.AGW_REVIEW_DEEP_CAP)
@@ -130,7 +136,7 @@ export async function prepare(ctx: ReviewContext, input: PrepareInputValue): Pro
   let ready = false
   try {
     const out = await prepareResolved(ctx, input, { root, repo, jobId, jobDir, resolved })
-    ready = out.status === 'ready'
+    ready = out.status === 'ready' && !out.reused // a reused job keeps its own dir; this call's clone and dir go
     return out
   } finally {
     if (!ready) {
@@ -155,20 +161,52 @@ async function resolveThread(
   return { thread: threadId(repo, key), threadKey: key }
 }
 
-/** The quota reading (recorded) and the deep cap, the only hold: `reason` when the job is held. */
+/**
+ * The quota reading (recorded) and the deep cap, the only hold: `reason` when the job is held. A sensitive path that forces
+ * deep may pass the cap by `SENSITIVE_RESERVE` of it, so routine deep reviews cannot hold a security-adjacent change.
+ */
 async function checkLimits(
   ctx: ReviewContext,
-  at: { account: string | null; tier: Tier; thread: string },
+  at: { account: string | null; tier: Tier; rule: string; thread: string },
 ): Promise<{ quota: QuotaRecord; reason?: string }> {
   const quota = await readQuota(ctx, at.account)
   if (at.tier !== 'deep') return { quota }
-  const cap = deepCap(ctx.env)
+  const base = deepCap(ctx.env)
+  const forced = at.rule.startsWith('sensitive path:')
+  const cap = forced ? base + Math.max(1, Math.floor(base * SENSITIVE_RESERVE)) : base
   const today = await ctx.ledger.deepCount(at.account, utcMidnight(ctx.now()), at.thread)
   if (today < cap) return { quota }
+  const who = at.account ?? 'no account'
   return {
     quota,
-    reason: `held: ${at.account ?? 'no account'} at the deep cap, ${today}/${cap} deep reviews today (UTC)`,
+    reason: `held: ${who} at the deep cap, ${today}/${cap} deep reviews today (UTC); the count resets at ${nextUtcMidnight(ctx.now()).toISOString()}, another Max account counts apart (--account), AGW_REVIEW_DEEP_CAP raises it`,
   }
+}
+
+/** One line for the caller: what the job is, so a cut stdout still says what was prepared. */
+function summaryOf(job: {
+  tier: Tier
+  round: number
+  rule: string
+  changes: { added: number; removed: number }[]
+}): string {
+  const added = job.changes.reduce((n, c) => n + c.added, 0)
+  const removed = job.changes.reduce((n, c) => n + c.removed, 0)
+  const files = job.changes.length
+  return `${job.tier} review, round ${job.round}: ${files} ${files === 1 ? 'file' : 'files'}, +${added} -${removed}; ${job.rule}`
+}
+
+const promptLine = (job: { jobDir: string; worktree: string; tier: Tier; round: number }) =>
+  `job=${job.jobDir} worktree=${job.worktree} tier=${job.tier} round=${job.round}`
+
+/** A prepared job a repeat prepare may hand back: its dir and tree are still on disk. */
+function reusable(job: Job, account: string | null, context: string): boolean {
+  return (
+    job.account === account &&
+    job.intent === context &&
+    existsSync(join(job.jobDir, PROMPT_FILE)) &&
+    existsSync(job.worktree)
+  )
 }
 
 const scopeOf = (input: PrepareInputValue) =>
@@ -191,6 +229,7 @@ async function writeJobDir(
     files: string[]
     reviewMd: string | null
     route: { tier: Tier; seat: Seat | null }
+    prompt: string
   },
 ): Promise<void> {
   const { git, ledger } = ctx
@@ -248,6 +287,7 @@ async function writeJobDir(
   }))
   writeFileSync(paths.prior, `${JSON.stringify(prior, null, 1)}\n`)
   writeFileSync(paths.reviewMd, job.reviewMd ?? 'This repository has no REVIEW.md at the base of the change.\n')
+  writeFileSync(join(jobDir, PROMPT_FILE), `${job.prompt}\n`)
   const { tier, seat } = job.route
   writeFileSync(
     join(jobDir, 'job.json'),
@@ -280,7 +320,13 @@ async function prepareResolved(
     last !== null &&
     (last.base === base || (await isAncestor(git, gitDir, last.head, head))) &&
     (await tryGit(git, gitDir, ['cat-file', '-e', `${last.head}^{commit}`])) !== null
-  const diffBase = followsLast && last ? last.head : base
+  // A round that left files unreviewed is read again from its own diff base: the missing files come back with the rest.
+  const unreviewed = last?.output?.unreviewed?.length ? last : null
+  const rereadBase =
+    unreviewed && (await tryGit(git, gitDir, ['cat-file', '-e', `${unreviewed.diffBase}^{commit}`])) !== null
+      ? unreviewed.diffBase
+      : null
+  const diffBase = followsLast && last ? (rereadBase ?? last.head) : base
   const threadDeep = followsLast && (await ledger.threadTiers(repo, [thread])).some((t) => t.tier === 'deep')
   const decision = await routeRange({
     git,
@@ -295,7 +341,39 @@ async function prepareResolved(
   const decided = { tier: route.tier, seat: route.seat, rule: route.rule, decidedBy: route.decidedBy, diffBase }
   if (route.tier === 'none') return { status: 'skipped', ...common, ...decided }
 
-  const limits = await checkLimits(ctx, { account, tier: route.tier, thread })
+  const headTree = (await git(gitDir, ['rev-parse', `${head}^{tree}`])).trim()
+  // The same request again (the agent lost the prompt and prepared once more): the prepared job comes back, nothing is abandoned.
+  const same = await ledger.preparedMatch({ repo, root, thread, headTree, diffBase, tier: route.tier })
+  if (same && reusable(same, account, input.context ?? '')) {
+    const changeList = Array.isArray(same.route.changes)
+      ? (same.route.changes as { added: number; removed: number }[])
+      : []
+    return {
+      status: 'ready',
+      jobId: same.id,
+      summary: summaryOf({ tier: same.tier, round: same.round, rule: same.rule, changes: changeList }),
+      promptFile: join(same.jobDir, PROMPT_FILE),
+      prompt: promptLine(same),
+      reused: true,
+      ...(resolved.note ? { note: resolved.note } : {}),
+      thread,
+      round: same.round,
+      base: same.base,
+      head: same.head,
+      account: same.account,
+      tier: same.tier,
+      seat: same.seat,
+      rule: same.rule,
+      decidedBy: same.decidedBy,
+      diffBase: same.diffBase,
+      jobDir: same.jobDir,
+      worktree: same.worktree,
+      files: same.files,
+      ceiling: same.ceiling ?? 'unjudged',
+    }
+  }
+
+  const limits = await checkLimits(ctx, { account, tier: route.tier, rule: route.rule, thread })
   const { quota } = limits
   if (limits.reason) return { status: 'held', reason: limits.reason, ...common, ...decided, ceiling: quota.ceiling }
 
@@ -304,7 +382,14 @@ async function prepareResolved(
   mkdirSync(jobDir, { recursive: true })
   const worktree = resolved.clone ?? join(jobDir, 'tree')
   if (!resolved.clone) await makeWorktree(ctx, root, worktree, head)
-  const headTree = (await git(gitDir, ['rev-parse', `${head}^{tree}`])).trim()
+  const prompt = promptLine({ jobDir, worktree, tier: route.tier, round })
+  // summary and promptFile first, the long prompt line last: a stdout cut short still names the job and where the prompt is
+  const jobPointers = {
+    summary: summaryOf({ tier: route.tier, round, rule: route.rule, changes }),
+    promptFile: join(jobDir, PROMPT_FILE),
+    prompt,
+    ...(resolved.note ? { note: resolved.note } : {}),
+  }
 
   await writeJobDir(ctx, {
     input,
@@ -316,6 +401,7 @@ async function prepareResolved(
     files,
     reviewMd,
     route: { tier: route.tier, seat: route.seat },
+    prompt,
   })
 
   await ledger.insertJob({
@@ -356,12 +442,12 @@ async function prepareResolved(
   return {
     status: 'ready',
     jobId,
+    ...jobPointers, // right after the id: a stdout cut short still holds what the caller needs
     ...common,
     ...decided,
     jobDir,
     worktree,
     files,
     ceiling: quota.ceiling,
-    prompt: `job=${jobDir} worktree=${worktree} tier=${route.tier} round=${round}`,
   }
 }

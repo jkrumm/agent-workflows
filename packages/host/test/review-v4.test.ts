@@ -170,22 +170,45 @@ describe('prepare', () => {
     expect(await jobRowOfAccount('hot')).toMatchObject({ ceiling: 'ok', quota_five_hour: 95, quota_seven_day: 99 })
   })
 
-  test('the deep cap holds a deep review past N per account and day; never a downgrade', async () => {
+  test('the deep cap holds a routine deep review past N per account and day; never a downgrade', async () => {
     const s = service({ env: { AGW_REVIEW_DEEP_CAP: '1' } })
-    const one = repo({ 'REVIEW.md': REVIEW_MD, 'core/x.ts': lines(2) })
-    write(one, 'core/x.ts', lines(3))
+    const big = () => {
+      const r = repo({ 'REVIEW.md': REVIEW_MD, 'src/a.ts': lines(2) })
+      write(r, 'src/a.ts', lines(900)) // > 800 changed code lines: deep by size
+      return r
+    }
+    const one = big()
     const first = await ready(s.prepare({ cwd: one, account: 'capped' }))
     expect(first).toMatchObject({ tier: 'deep' })
-    // a re-prepare of the same thread restarts the round; it does not count against itself
-    expect(await s.prepare({ cwd: one, account: 'capped' })).toMatchObject({ status: 'ready', tier: 'deep' })
-    const two = repo({ 'REVIEW.md': REVIEW_MD, 'core/y.ts': lines(2) })
-    write(two, 'core/y.ts', lines(3))
-    expect(await s.prepare({ cwd: two, account: 'capped' })).toMatchObject({
-      status: 'held',
-      tier: 'deep',
-      reason: 'held: capped at the deep cap, 1/1 deep reviews today (UTC)',
-    })
+    // a repeat prepare of the same thread is that job again; it does not count against itself
+    expect(await s.prepare({ cwd: one, account: 'capped' })).toMatchObject({ status: 'ready', jobId: first.jobId })
+    const two = big()
+    const held = await s.prepare({ cwd: two, account: 'capped' })
+    expect(held).toMatchObject({ status: 'held', tier: 'deep' })
+    expect(held.reason).toStartWith('held: capped at the deep cap, 1/1 deep reviews today (UTC); the count resets at ')
+    expect(held.reason).toContain('--account')
     expect(await s.prepare({ cwd: two, account: 'other' })).toMatchObject({ status: 'ready', tier: 'deep' })
+  })
+
+  test('a sensitive path that forces deep may pass the cap by half of it; then it is held too', async () => {
+    const s = service({ env: { AGW_REVIEW_DEEP_CAP: '2' } })
+    const sensitive = () => {
+      const r = repo({ 'REVIEW.md': REVIEW_MD, 'core/x.ts': lines(2) })
+      write(r, 'core/x.ts', lines(3))
+      return r
+    }
+    const routine = () => {
+      const r = repo({ 'REVIEW.md': REVIEW_MD, 'src/a.ts': lines(2) })
+      write(r, 'src/a.ts', lines(900))
+      return r
+    }
+    await ready(s.prepare({ cwd: routine(), account: 'reserve' }))
+    await ready(s.prepare({ cwd: routine(), account: 'reserve' })) // 2/2 routine deep
+    expect(await s.prepare({ cwd: routine(), account: 'reserve' })).toMatchObject({ status: 'held' })
+    expect(await s.prepare({ cwd: sensitive(), account: 'reserve' })).toMatchObject({ status: 'ready', tier: 'deep' }) // 2 < 3
+    const held = await s.prepare({ cwd: sensitive(), account: 'reserve' })
+    expect(held).toMatchObject({ status: 'held' })
+    expect(held.reason).toContain('3/3 deep reviews today')
   })
 
   test('--min raises the routed tier', async () => {
@@ -198,15 +221,89 @@ describe('prepare', () => {
     })
   })
 
-  test('a re-prepare abandons the unsubmitted job of the same round', async () => {
+  test('a repeat prepare of the same head returns the same prepared job and abandons nothing', async () => {
     const root = repo({ 'src/a.ts': lines(2) })
     write(root, 'src/a.ts', lines(3))
     const first = await ready(service().prepare({ cwd: root }))
+    const again = await ready(service().prepare({ cwd: root }))
+    expect(again).toMatchObject({ jobId: first.jobId, reused: true, round: 1, jobDir: first.jobDir })
+    expect(again.prompt).toBe(first.prompt)
+    expect(again.summary).toBe(first.summary)
+    expect((await jobRow(first.jobId)).state).toBe('prepared')
+    expect(existsSync(first.jobDir)).toBe(true)
+    expect(existsSync(first.worktree)).toBe(true)
+    expect(
+      Number(
+        (await pool.query(`select count(*) from "${db.schema}".review_jobs where thread = $1`, [first.thread])).rows[0]
+          .count,
+      ),
+    ).toBe(1)
+  })
+
+  test('prepare writes the prompt to a file in the job dir and leads its output with it', async () => {
+    const root = repo({ 'src/a.ts': lines(2) })
+    write(root, 'src/a.ts', lines(5))
+    const out = await ready(service().prepare({ cwd: root }))
+    expect(out.promptFile).toBe(join(out.jobDir, 'prompt.txt'))
+    expect(readFileSync(out.promptFile as string, 'utf8')).toBe(`${out.prompt}\n`)
+    expect(out.summary).toMatch(/^\w+ review, round 1: 1 file, \+3 -0; /)
+    // a stdout cut after 400 bytes still holds the job id, the summary and where the prompt is
+    const head = JSON.stringify(out).slice(0, 400)
+    expect(head).toContain(out.jobId)
+    expect(head).toContain('"summary"')
+    expect(head).toContain('"promptFile"')
+  })
+
+  test('a changed work tree is another request: the earlier prepared job is abandoned', async () => {
+    const root = repo({ 'src/a.ts': lines(2) })
+    write(root, 'src/a.ts', lines(3))
+    const first = await ready(service().prepare({ cwd: root }))
+    write(root, 'src/a.ts', lines(4))
     const second = await ready(service().prepare({ cwd: root }))
+    expect(second.jobId).not.toBe(first.jobId)
+    expect(second.reused).toBeUndefined()
     expect(second.thread).toBe(first.thread)
     expect(second.round).toBe(1)
     expect((await jobRow(first.jobId)).state).toBe('abandoned')
     await rejects(service().submit({ jobId: first.jobId, attempt: 1, reply: fakeReviewer(first.jobDir) }), /abandoned/)
+  })
+
+  test('another context or tier is another request', async () => {
+    const root = repo({ 'src/a.ts': lines(2) })
+    write(root, 'src/a.ts', lines(3))
+    const first = await ready(service().prepare({ cwd: root, context: 'one' }))
+    const second = await ready(service().prepare({ cwd: root, context: 'two' }))
+    expect(second.jobId).not.toBe(first.jobId)
+    const third = await ready(service().prepare({ cwd: root, context: 'two', min: 'deep' }))
+    expect(third.jobId).not.toBe(second.jobId)
+    expect(third.reused).toBeUndefined()
+  })
+
+  test('a..b with a base that moved past the merge base diffs from the merge base, as a...b', async () => {
+    const root = repo({ 'src/a.ts': lines(2), 'src/m.ts': lines(2) })
+    const fork = git(root, 'rev-parse', 'HEAD')
+    git(root, 'checkout', '-q', '-b', 'feature')
+    const tip = commit(root, { 'src/a.ts': lines(5) }, 'feature change')
+    git(root, 'checkout', '-q', 'master')
+    const moved = commit(root, { 'src/m.ts': lines(7) }, 'master moved')
+    git(root, 'checkout', '-q', 'feature')
+
+    const out = await ready(service().prepare({ cwd: root, scope: `${moved}..${tip}` }))
+    expect(out.base).toBe(fork)
+    expect(out.diffBase).toBe(fork)
+    expect(out.note).toContain('not an ancestor')
+    expect(out.note).toContain(fork.slice(0, 12))
+    expect(out.files).toEqual(['src/a.ts'])
+    const threeDot = await ready(service().prepare({ cwd: root, scope: `${moved}...${tip}`, thread: 'three-dot' }))
+    expect(readFileSync(join(out.jobDir, 'diff.patch'), 'utf8')).toBe(
+      readFileSync(join(threeDot.jobDir, 'diff.patch'), 'utf8'),
+    )
+    expect(git(root, 'diff', '-M', `${fork}..${tip}`)).toBe(
+      readFileSync(join(out.jobDir, 'diff.patch'), 'utf8').trimEnd(),
+    )
+    // an ancestor base is taken as given, with no note
+    const plain = await ready(service().prepare({ cwd: root, scope: `${fork}..${tip}`, thread: 'plain' }))
+    expect(plain.note).toBeUndefined()
   })
 
   test('scopes: a bad ref and pr with scope are refused', async () => {
@@ -230,15 +327,38 @@ describe('submit', () => {
     return ready(s.prepare({ cwd: root, thread: `submit-${crypto.randomUUID()}` }))
   }
 
-  test('a files list that differs from stat.txt is refused and nothing is written', async () => {
+  test('a files list with a path that is not in stat.txt is refused and nothing is written', async () => {
     const job = await prepareChange()
     const reply = fakeReviewer(job.jobDir, [{ tag: 'important', file: 'src/a.ts', message: 'x' }], {
       files: ['src/a.ts', 'src/zzz.ts'],
     })
-    await rejects(s.submit({ jobId: job.jobId, attempt: 1, reply }), /missing: src\/b\.ts; extra: src\/zzz\.ts/)
+    await rejects(s.submit({ jobId: job.jobId, attempt: 1, reply }), /extra: src\/zzz\.ts/)
     expect((await jobRow(job.jobId)).state).toBe('prepared')
     expect(await findingRows(job.thread)).toEqual([])
     expect(existsSync(job.worktree)).toBe(true)
+  })
+
+  test('a reply that leaves stat.txt files out is accepted: they are recorded as unreviewed', async () => {
+    const job = await prepareChange()
+    const reply = fakeReviewer(job.jobDir, [{ tag: 'nit', file: 'src/a.ts', message: 'x' }], { files: ['src/a.ts'] })
+    const out = await s.submit({ jobId: job.jobId, attempt: 1, reply })
+    expect(out).toMatchObject({ outcome: 'clean', unreviewed: ['src/b.ts'] })
+    expect(out.summary).toBe('1 nit. 1 file unreviewed (the next prepare on the thread reads it).')
+    const row = await jobRow(job.jobId)
+    expect(row.state).toBe('submitted')
+    expect(row.output.unreviewed).toEqual(['src/b.ts'])
+    expect((await s.status({ jobId: job.jobId })).job?.output?.unreviewed).toEqual(['src/b.ts'])
+    // the same attempt again is the stored output
+    expect(await s.submit({ jobId: job.jobId, attempt: 1, reply: 'anything' })).toEqual(out)
+  })
+
+  test('a reply that echoes none of the text files is no review and is refused', async () => {
+    const job = await prepareChange()
+    await rejects(
+      s.submit({ jobId: job.jobId, attempt: 1, reply: fakeReviewer(job.jobDir, [], { files: [] }) }),
+      /echoes none of the files in stat\.txt.*missing: src\/a\.ts, src\/b\.ts/,
+    )
+    expect((await jobRow(job.jobId)).state).toBe('prepared')
   })
 
   test('a binary file of the range may be listed in the reply or left out; a text file may not', async () => {
@@ -1054,5 +1174,139 @@ describe('acceptance criteria', () => {
     const job = await small(s)
     const reply = fakeReviewer(job.jobDir, [], { criteria: [{ item: 'x', status: 'maybe' }] })
     await rejects(s.submit({ jobId: job.jobId, attempt: 1, reply }), /reviewer schema/)
+  })
+})
+
+describe('files the reviewer left out', () => {
+  test('covered counts them as unreviewed; the next prepare on the thread reads them again', async () => {
+    const s = service()
+    const root = repo({ 'src/a.ts': lines(2), 'src/b.ts': lines(2) })
+    const start = git(root, 'rev-parse', 'HEAD')
+    write(root, 'src/a.ts', lines(3))
+    write(root, 'src/b.ts', lines(3))
+    const first = await ready(s.prepare({ cwd: root }))
+    const out = await s.submit({
+      jobId: first.jobId,
+      attempt: 1,
+      reply: fakeReviewer(first.jobDir, [], { files: ['src/a.ts'] }),
+    })
+    expect(out.unreviewed).toEqual(['src/b.ts'])
+    const c1 = commit(root, {}, 'commit the reviewed tree')
+
+    const before = await s.covered({ cwd: root, range: `${start}..HEAD` })
+    expect(before).toMatchObject({ covered: false, state: 'uncovered', uncovered: [c1] })
+    expect(before.commits[0]).toMatchObject({ coveredBy: null, reason: 'unreviewed', unreviewed: ['src/b.ts'] })
+
+    // the head did not move, but the round read the diff without b: round 2 diffs from the same base again
+    const again = await ready(s.prepare({ cwd: root, scope: `${start}..HEAD` }))
+    expect(again).toMatchObject({ round: 2, diffBase: start, thread: first.thread })
+    expect([...(again.files ?? [])].sort()).toEqual(['src/a.ts', 'src/b.ts'])
+    const second = await s.submit({ jobId: again.jobId, attempt: 1, reply: fakeReviewer(again.jobDir) })
+    expect(second.unreviewed).toBeUndefined()
+    expect(await s.covered({ cwd: root, range: `${start}..HEAD` })).toMatchObject({ covered: true })
+  })
+
+  test('a commit that does not touch the unreviewed file is still covered', async () => {
+    const s = service()
+    const root = repo({ 'src/a.ts': lines(2), 'src/b.ts': lines(2) })
+    const start = git(root, 'rev-parse', 'HEAD')
+    write(root, 'src/a.ts', lines(3))
+    const job = await ready(s.prepare({ cwd: root, min: 'standard' }))
+    // the reply echoes a.ts only, but b.ts is not in this job's diff: nothing is unreviewed
+    const out = await s.submit({ jobId: job.jobId, attempt: 1, reply: fakeReviewer(job.jobDir) })
+    expect(out.unreviewed).toBeUndefined()
+    commit(root, {}, 'the reviewed change')
+    expect(await s.covered({ cwd: root, range: `${start}..HEAD` })).toMatchObject({ covered: true })
+  })
+})
+
+describe('dispose several findings', () => {
+  const plant = async () => {
+    const s = service()
+    const root = repo({ 'src/a.ts': lines(2) })
+    write(root, 'src/a.ts', lines(4))
+    const job = await ready(s.prepare({ cwd: root, min: 'standard' }))
+    await s.submit({
+      jobId: job.jobId,
+      attempt: 1,
+      reply: fakeReviewer(job.jobDir, [
+        { tag: 'important', file: 'src/a.ts', message: 'one' },
+        { tag: 'important', file: 'src/a.ts', message: 'two' },
+        { tag: 'nit', file: 'src/a.ts', message: 'three' },
+      ]),
+    })
+    return { s, job }
+  }
+  const states = async (thread: string) => (await findingRows(thread)).map((r) => r.disposition)
+
+  test('a comma-separated list disposes all of them; one id answers as before', async () => {
+    const { s, job } = await plant()
+    const many = await s.dispose({
+      jobId: job.jobId,
+      findingId: `${job.thread}-1,${job.thread}-2`,
+      disposition: 'fixed',
+    })
+    expect(many).toMatchObject({ disposed: [{ id: `${job.thread}-1` }, { id: `${job.thread}-2` }] })
+    expect(await states(job.thread)).toEqual(['fixed', 'fixed', 'open'])
+    const one = await s.dispose({
+      jobId: job.jobId,
+      findingId: `${job.thread}-3`,
+      disposition: 'irrelevant',
+      reason: 'dead',
+    })
+    expect(one).toMatchObject({ id: `${job.thread}-3`, disposition: 'irrelevant', reason: 'dead' })
+  })
+
+  test('an id outside the thread refuses the whole call: nothing is disposed', async () => {
+    const { s, job } = await plant()
+    await rejects(
+      s.dispose({ jobId: job.jobId, findingId: `${job.thread}-1,${job.thread}-9`, disposition: 'fixed' }),
+      /not in the thread/,
+    )
+    expect(await states(job.thread)).toEqual(['open', 'open', 'open'])
+  })
+
+  test('--all-open disposes every open finding of the thread, and only those', async () => {
+    const { s, job } = await plant()
+    await s.dispose({ jobId: job.jobId, findingId: `${job.thread}-1`, disposition: 'wrong' })
+    const all = await s.dispose({ jobId: job.jobId, allOpen: 'fixed' })
+    expect(all).toMatchObject({ disposed: [{ id: `${job.thread}-2` }, { id: `${job.thread}-3` }] })
+    expect(await states(job.thread)).toEqual(['wrong', 'fixed', 'fixed'])
+    expect(await s.dispose({ jobId: job.jobId, allOpen: 'fixed' })).toEqual({ disposed: [] })
+  })
+
+  test('ids with --all-open, no disposition and --all-open open are refused', async () => {
+    const { s, job } = await plant()
+    await rejects(s.dispose({ jobId: job.jobId, findingId: `${job.thread}-1`, allOpen: 'fixed' }), /not both/)
+    await rejects(s.dispose({ jobId: job.jobId, findingId: `${job.thread}-1` }), /--all-open <disposition>/)
+    await rejects(s.dispose({ jobId: job.jobId, allOpen: 'open' }), /changes nothing/)
+  })
+})
+
+describe('a fix loop that stopped', () => {
+  test('status --cwd names a thread whose actionable round no round followed; stats counts it', async () => {
+    const s = service()
+    const root = repo({ 'src/a.ts': lines(2) })
+    write(root, 'src/a.ts', lines(4))
+    const job = await ready(s.prepare({ cwd: root, min: 'standard', thread: 'stalled-one' }))
+    await s.submit({
+      jobId: job.jobId,
+      attempt: 1,
+      reply: fakeReviewer(job.jobDir, [{ tag: 'important', file: 'src/a.ts', message: 'broken' }]),
+    })
+    const listed = await s.status({ cwd: root })
+    expect(listed.stalled).toMatchObject([
+      { thread: job.thread, threadKey: 'stalled-one', jobId: job.jobId, round: 1, openImportant: 1 },
+    ])
+    const repoId = (await s.status({ jobId: job.jobId })).job?.repo as string
+    expect((await s.stats({ repo: repoId })).total.stalled).toBe(1)
+
+    // a re-review in flight is not stalled
+    write(root, 'src/a.ts', lines(5))
+    const next = await ready(s.prepare({ cwd: root, min: 'standard', thread: 'stalled-one' }))
+    expect((await s.status({ cwd: root })).stalled).toEqual([])
+    expect((await s.stats({ repo: repoId })).total.stalled).toBe(0)
+    await s.cancel({ jobId: next.jobId })
+    expect((await s.status({ cwd: root })).stalled).toHaveLength(1)
   })
 })

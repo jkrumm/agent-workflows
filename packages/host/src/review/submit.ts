@@ -66,17 +66,30 @@ function binaryPaths(route: Job['route']): Set<string> {
   return new Set(changes.flatMap((c) => (c.binary && c.path ? [c.path] : [])))
 }
 
-function filesProblem(expected: string[], echoed: string[], optional: Set<string>): string | null {
+/**
+ * The reply's files against stat.txt. A path the reply echoes that stat.txt does not hold is an error (the reviewer read
+ * another change); stat paths the reply leaves out are `unreviewed` and recorded, never an error, unless it echoes none
+ * of the text files (a reply that read nothing is no review).
+ */
+function checkFiles(
+  expected: string[],
+  echoed: string[],
+  optional: Set<string>,
+): { problem: string } | { unreviewed: string[] } {
   const want = new Set(expected)
   const got = new Set(echoed)
-  const missing = [...want].filter((p) => !got.has(p) && !optional.has(p))
   const extra = [...got].filter((p) => !want.has(p))
-  if (missing.length === 0 && extra.length === 0) return null
-  return [
-    'the reply files do not match stat.txt; re-ask the reviewer for every file',
-    ...(missing.length ? [`missing: ${missing.join(', ')}`] : []),
-    ...(extra.length ? [`extra: ${extra.join(', ')}`] : []),
-  ].join('; ')
+  const required = expected.filter((p) => !optional.has(p))
+  const missing = required.filter((p) => !got.has(p))
+  if (extra.length > 0) {
+    return { problem: `the reply files are not all in stat.txt; re-ask the reviewer; extra: ${extra.join(', ')}` }
+  }
+  if (required.length > 0 && missing.length === required.length) {
+    return {
+      problem: `the reply echoes none of the files in stat.txt; re-ask the reviewer; missing: ${missing.join(', ')}`,
+    }
+  }
+  return { unreviewed: missing }
 }
 
 function refuseState(job: Job, attempt: number): ReviewOutputV4Value | null {
@@ -97,8 +110,8 @@ export async function submit(
   const stored = refuseState(known, input.attempt)
   if (stored) return stored
   const reply = parseReply(input.reply)
-  const problem = filesProblem(known.files, reply.files, binaryPaths(known.route))
-  if (problem) throw new ReviewError(problem)
+  const checked = checkFiles(known.files, reply.files, binaryPaths(known.route))
+  if ('problem' in checked) throw new ReviewError(checked.problem)
 
   const anchoring = await anchorFindings({ worktree: known.worktree, jobDir: known.jobDir, findings: reply.findings })
   const result = await ledger.transaction(async (client) => {
@@ -110,7 +123,7 @@ export async function submit(
     const existing = await ledger.threadFindings(job.repo, job.thread, client)
     const account = job.account ?? input.account ?? null
     const priorFixRounds = await ledger.fixLoopRounds(job.repo, job.thread, client)
-    const output = assemble({ ...job, account }, reply, existing, anchoring, priorFixRounds)
+    const output = assemble({ ...job, account }, reply, existing, anchoring, priorFixRounds, checked.unreviewed)
     for (const f of output.newFindings) await ledger.insertFinding(client, f)
     for (const t of output.touched) await ledger.touchFinding(client, t.id, job.id, t.reopen)
     await ledger.markSubmitted(client, job.id, input.attempt, output.output, ctx.now(), account)
@@ -119,6 +132,11 @@ export async function submit(
   if (result.fresh) removeWorktree(ctx, known.jobDir, known.worktree)
   return result.output
 }
+
+const unreviewedNote = (unreviewed: string[]): string =>
+  unreviewed.length === 0
+    ? ''
+    : ` ${unreviewed.length} ${unreviewed.length === 1 ? 'file' : 'files'} unreviewed (the next prepare on the thread reads ${unreviewed.length === 1 ? 'it' : 'them'}).`
 
 /** The highest `<thread>-<n>` number the thread holds. */
 const highestIndex = (existing: Finding[]): number =>
@@ -202,8 +220,9 @@ function reviewOutput(input: {
   dropped: { repeats: number; nits: number }
   /** Submitted rounds in the thread's fix loop before this one. */
   priorFixRounds: number
+  unreviewed: string[]
 }): ReviewOutputV4Value {
-  const { job, reply, kept } = input
+  const { job, reply, kept, unreviewed } = input
   const important = kept.some((f) => f.tag === 'important')
   const stuck = important && input.priorFixRounds + 1 >= MAX_ROUNDS
   return {
@@ -217,12 +236,13 @@ function reviewOutput(input: {
     account: job.account,
     intent: reply.intent,
     outcome: !important ? 'clean' : stuck ? 'needs-human' : 'actionable',
-    summary: summarize(kept),
+    summary: summarize(kept) + unreviewedNote(unreviewed),
     findings: kept,
     checked: reply.checked,
     ...(reply.criteria?.length ? { criteria: reply.criteria } : {}),
     stepBack: reply.stepBack?.trim() || (stuck ? DEFAULT_STEP_BACK : null),
     files: job.files,
+    ...(unreviewed.length ? { unreviewed } : {}),
     dropped: input.dropped,
     base: job.base,
     diffBase: job.diffBase,
@@ -236,6 +256,7 @@ function assemble(
   existing: Finding[],
   anchoring: Map<string, Anchoring>,
   priorFixRounds: number,
+  unreviewed: string[],
 ) {
   const byId = new Map(existing.map((f) => [f.id, f]))
   const byKey = new Map<string, Finding>()
@@ -278,7 +299,7 @@ function assemble(
   }
 
   return {
-    output: reviewOutput({ job, reply, kept, dropped, priorFixRounds }),
+    output: reviewOutput({ job, reply, kept, dropped, priorFixRounds, unreviewed }),
     newFindings: fresh.map((f) => newFinding(job, f)),
     touched,
   }

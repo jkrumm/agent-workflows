@@ -46,7 +46,30 @@ const share = (findings: StatsFinding[], key: 'anchored' | 'lineValid') => {
   return ratio(known.filter((f) => f[key] === true).length, known.length)
 }
 
-function metricsOf(jobs: StatsJob[], findings: StatsFinding[]): StatsMetricsValue {
+/**
+ * The last submitted job of every thread whose last submitted round was actionable and that no prepared job followed:
+ * the fix loop stopped. Each counts once, in the group its job sits in.
+ */
+export function stalledJobs(jobs: StatsJob[]): Set<string> {
+  const byThread = new Map<string, StatsJob[]>()
+  for (const job of jobs)
+    byThread.set(`${job.repo}\0${job.thread}`, [...(byThread.get(`${job.repo}\0${job.thread}`) ?? []), job])
+  const stalled = new Set<string>()
+  for (const group of byThread.values()) {
+    const submitted = group.filter((j) => j.state === 'submitted')
+    const last = submitted.reduce<StatsJob | null>(
+      (best, j) =>
+        best === null || j.round > best.round || (j.round === best.round && j.createdAt > best.createdAt) ? j : best,
+      null,
+    )
+    if (last?.outcome !== 'actionable') continue
+    if (group.some((j) => j.state === 'prepared' && j.round > last.round)) continue
+    stalled.add(last.id)
+  }
+  return stalled
+}
+
+function metricsOf(jobs: StatsJob[], findings: StatsFinding[], stalled: Set<string>): StatsMetricsValue {
   const submitted = jobs.filter((j) => j.state === 'submitted')
   const walls = submitted.flatMap((j) => (j.wallS === null ? [] : [j.wallS])).sort((a, b) => a - b)
   const first = submitted.filter((j) => j.round === 1)
@@ -67,6 +90,7 @@ function metricsOf(jobs: StatsJob[], findings: StatsFinding[]): StatsMetricsValu
     anchoredShare: share(findings, 'anchored'),
     lineValidShare: share(findings, 'lineValid'),
     deepRound2: { count: deepRound2, share: ratio(deepRound2, submitted.length) },
+    stalled: jobs.filter((j) => stalled.has(j.id)).length,
   }
 }
 
@@ -89,7 +113,7 @@ export function weekStartOf(date: Date): string {
   return new Date(monday).toISOString().slice(0, 10)
 }
 
-function groupsOf(jobs: StatsJob[], findings: StatsFinding[], by: By) {
+function groupsOf(jobs: StatsJob[], findings: StatsFinding[], by: By, stalled: Set<string>) {
   const groupOf = new Map<string, StatsJob[]>()
   const keyOfJob = new Map<string, string>()
   for (const job of jobs) {
@@ -102,6 +126,7 @@ function groupsOf(jobs: StatsJob[], findings: StatsFinding[], by: By) {
     ...metricsOf(
       groupOf.get(key)!,
       findings.filter((f) => keyOfJob.get(f.jobId) === key),
+      stalled,
     ),
   }))
   return groups
@@ -115,8 +140,9 @@ export function computeStats(input: {
   since: string | null
 }): StatsOutputValue {
   const { by, jobs, findings } = input
-  const total = metricsOf(jobs, findings)
-  if (input.bucket !== 'week') return { since: input.since, by, groups: groupsOf(jobs, findings, by), total }
+  const stalled = stalledJobs(jobs)
+  const total = metricsOf(jobs, findings, stalled)
+  if (input.bucket !== 'week') return { since: input.since, by, groups: groupsOf(jobs, findings, by, stalled), total }
   const weekJobs = new Map<string, StatsJob[]>()
   for (const job of jobs) {
     const week = weekStartOf(job.createdAt)
@@ -131,6 +157,7 @@ export function computeStats(input: {
         inWeek,
         findings.filter((f) => ids.has(f.jobId)),
         by,
+        stalled,
       ),
     }
   })

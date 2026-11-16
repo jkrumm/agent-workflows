@@ -35,6 +35,7 @@ describe('computeStats', () => {
   const job = (id: string, extra: Partial<StatsJob> = {}): StatsJob => ({
     id,
     repo: 'r',
+    thread: 't',
     tier: 'standard',
     rule: 'default',
     round: 1,
@@ -65,6 +66,7 @@ describe('computeStats', () => {
       anchoredShare: null,
       lineValidShare: null,
       deepRound2: { count: 0, share: null },
+      stalled: 0,
     })
   })
 
@@ -80,5 +82,31 @@ describe('computeStats', () => {
       ['deep', 2, 1, 0],
     ])
     expect(out.groups[1]?.deepRound2).toEqual({ count: 1, share: 0.5 })
+  })
+
+  test('stalled: a thread whose last submitted round was actionable and that no prepared round followed', () => {
+    const at = (n: number) => new Date(`2026-01-0${n}T00:00:00Z`)
+    const out = computeStats({
+      jobs: [
+        // stopped on round 1
+        job('s1', { thread: 'stopped', outcome: 'actionable', createdAt: at(1) }),
+        // a fix round followed and was clean
+        job('f1', { thread: 'fixed', outcome: 'actionable', createdAt: at(1) }),
+        job('f2', { thread: 'fixed', round: 2, outcome: 'clean', createdAt: at(2) }),
+        // a re-review is in flight
+        job('p1', { thread: 'running', outcome: 'actionable', createdAt: at(1) }),
+        job('p2', { thread: 'running', round: 2, state: 'prepared', outcome: null, wallS: null, createdAt: at(2) }),
+        // the next round was abandoned: still stopped, counted once
+        job('a1', { thread: 'dropped', outcome: 'actionable', createdAt: at(1) }),
+        job('a2', { thread: 'dropped', round: 2, state: 'abandoned', outcome: null, wallS: null, createdAt: at(2) }),
+        // a human is needed: not a dropped fix loop
+        job('h1', { thread: 'human', outcome: 'needs-human', createdAt: at(1) }),
+      ],
+      findings: [],
+      by: 'tier',
+      since: null,
+    })
+    expect(out.total.stalled).toBe(2)
+    expect(out.groups[0]?.stalled).toBe(2)
   })
 })

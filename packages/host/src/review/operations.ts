@@ -10,7 +10,7 @@ import {
   CoveredInput,
   CoveredOutput,
   DisposeInput,
-  FindingRecord,
+  DisposeOutput,
   PrepareInput,
   PrepareOutput,
   ReviewError,
@@ -97,7 +97,7 @@ export function reviewOperations(service: ReviewService): Record<(typeof OPERATI
         summary:
           'Prepare one review job: route the change, record the account quota reading, write the job dir the reviewer agent reads',
         description:
-          'status ready: run the reviewer agent with `prompt` on `seat`, then `agw review submit`. skipped: tier none. held: the deep cap only (wait, never downgrade); the account quota is recorded, not judged. needs-human: three rounds in a row on the thread ended with an important finding (a clean round resets the count).',
+          'status ready: run the reviewer agent with `prompt` (also in the file `promptFile`) on `seat`, then `agw review submit`; a repeat prepare of the same thread, head tree and tier returns the same prepared job (`reused`). skipped: tier none. held: the deep cap only (wait, never downgrade); the account quota is recorded, not judged. needs-human: three rounds in a row on the thread ended with an important finding (a clean round resets the count).',
         cli: { mutating: true },
         input: PrepareInput,
         output: PrepareOutput,
@@ -120,7 +120,7 @@ export function reviewOperations(service: ReviewService): Record<(typeof OPERATI
       {
         summary: "Submit the reviewer agent's JSON reply (stdin); prints REVIEW_OUTPUT v4",
         description:
-          'Idempotent per (job, attempt). Refused for an abandoned job, another attempt of a submitted one, or a files list that differs from stat.txt (nothing is written: re-ask the agent).',
+          'Idempotent per (job, attempt). Refused for an abandoned job, another attempt of a submitted one, or a files list with a path that is not in stat.txt (nothing is written: re-ask the agent). A list that leaves stat.txt paths out is accepted: they are recorded as `unreviewed`, `covered` does not count them, the next prepare on the thread reads them. A list that echoes none of them is refused.',
         cli: { mutating: true, positional: ['jobId'], stdin: 'reply' },
         input: SubmitInput,
         output: ReviewOutputV4,
@@ -130,10 +130,12 @@ export function reviewOperations(service: ReviewService): Record<(typeof OPERATI
     reviewDispose: op(
       'dispose',
       {
-        summary: 'Answer one finding: fixed, wrong, intentional, irrelevant, or open again',
+        summary: 'Answer findings: fixed, wrong, intentional, irrelevant, or open again',
+        description:
+          "One id: that finding. `<id1>,<id2>` (comma-separated): all of them or, when an id is not in the job's thread, none; prints `{disposed}`. `--all-open <disposition>` (no ids): every open finding of the job's thread.",
         cli: { mutating: true, positional: ['jobId', 'findingId', 'disposition'] },
         input: DisposeInput,
-        output: FindingRecord,
+        output: DisposeOutput,
       },
       (input) => service.dispose(input),
     ),

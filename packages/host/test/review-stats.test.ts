@@ -222,6 +222,7 @@ describe('review stats from direct ledger rows', () => {
       anchoredShare: 0.5,
       lineValidShare: 0.75,
       deepRound2: { count: 1, share: 0.5 },
+      stalled: 1, // j3: actionable, alone in its thread
     })
     expect(out.groups[0]).toMatchObject({
       round1: { jobs: 1, clean: 1, cleanRate: 1 },

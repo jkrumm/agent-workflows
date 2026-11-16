@@ -1,8 +1,8 @@
 # Review v4 (agw's side)
 
 One routed reviewer agent on the Max subscriptions; agw only prepares the job, ingests the agent's JSON reply and keeps
-the ledger. **No LLM call anywhere in this module.** Design: `docs/spikes/review-v4/wiring.md`; the agent:
-`docs/spikes/review-v4/reviewer.md`. Review v1 (the LLM `agw review` workflow) is deleted; the process helpers live in
+the ledger. **No LLM call anywhere in this module.** Design: `docs/spikes/review-v4/wiring.md`; the agent: the dotfiles
+`agents/reviewer.md` (installed at `~/.claude/agents/reviewer.md`, the file `prepare` fingerprints). Review v1 (the LLM `agw review` workflow) is deleted; the process helpers live in
 `src/process.ts`, the clone helpers (`cloneForRef`, `removeEscapingSymlinks`, `sweepStaleClones`) in `clone.ts` and the
 scope checks in `scope.ts`.
 
@@ -16,18 +16,20 @@ CLI exits non-zero naming it.
 
 | Command | What |
 |-|-|
-| `agw review prepare --cwd <dir> [--scope uncommitted\|head\|<ref>\|<a>..<b> \| --pr N \| --branch B] [--context] [--min] [--thread] [--account]` | Thread, round, route, quota reading, deep cap, job dir. `status`: `ready` (run the agent with `prompt` on `seat`), `skipped` (tier none), `held` (the deep cap; wait, the tier is never lowered), `needs-human` (a 4th fix-loop round: three in a row ended with an important finding) |
-| `agw review cancel <jobId>` | A `prepared` job is abandoned and its tree removed → `{status: 'cancelled', jobId}`. A submitted or abandoned job is refused naming its state |
-| `agw review submit <jobId> --attempt <n> [--account <a>]` (reply on stdin) | REVIEW_OUTPUT v4. Idempotent per (job, attempt): the same attempt gets the stored output back, another attempt is refused naming the winner. `--account` sets the job's account only when it has none |
-| `agw review dispose <jobId> <findingId> fixed\|wrong\|intentional\|irrelevant\|open [--reason]` | The answer to a finding of the job's thread; idempotent |
-| `agw review status [<jobId>] [--cwd]` | A job (a running review is `prepared`) with its `thread` id and `threadKey` (absent on jobs older than the key) and its thread's findings, or the 10 newest jobs of the repo at `--cwd` |
+| `agw review prepare --cwd <dir> [--scope uncommitted\|head\|<ref>\|<a>..<b> \| --pr N \| --branch B] [--context] [--min] [--thread] [--account]` | Thread, round, route, quota reading, deep cap, job dir. `status`: `ready` (run the agent with `prompt`, also in `promptFile`, on `seat`; `reused` when it is the prepared job of an identical earlier call), `skipped` (tier none), `held` (the deep cap; wait, the tier is never lowered), `needs-human` (a 4th fix-loop round: three in a row ended with an important finding) |
+| `agw review cancel <jobId> [--cwd]` | A `prepared` job is abandoned and its tree removed → `{status: 'cancelled', jobId}`. A submitted or abandoned job is refused naming its state |
+| `agw review submit <jobId> --attempt <n> [--account <a>] [--cwd]` (reply on stdin) | REVIEW_OUTPUT v4. Idempotent per (job, attempt): the same attempt gets the stored output back, another attempt is refused naming the winner. `--account` sets the job's account only when it has none |
+| `agw review dispose <jobId> <id>[,<id>...] fixed\|wrong\|intentional\|irrelevant\|open [--reason] [--cwd]`, or `<jobId> --all-open <disposition>` | The answer to findings of the job's thread; idempotent. One id: that finding. A list or `--all-open` (every open finding of the thread; `open` is refused): `{disposed: [...]}`. An id outside the thread refuses the call and disposes nothing |
+| `agw review status [<jobId>] [--cwd]` | A job (a running review is `prepared`) with its `thread` id and `threadKey` (absent on jobs older than the key) and its thread's findings, or the 10 newest jobs of the repo at `--cwd` plus `stalled`: threads of the last 14 days (newest 10) whose last submitted round was actionable and that no prepared round followed, so the fix loop is not silently dropped (`prepare --thread <id>` re-reviews it) |
 | `agw review route --cwd --base --head [--min]` | `routeRange` alone; no ledger (HTTP `/review/route`) |
 | `agw review covered --cwd --range <a>..<b>` | Coverage of each first-parent commit; exit 0 either way, read `covered` and `state` (`covered`, `uncovered`, `no-review`); each uncovered commit carries a `reason` (below) |
-| `agw review stats [--since <iso>] [--repo <id>] [--by tier\|rule\|prompt\|repo] [--bucket week]` | The ledger's quality numbers (below); read-only, JSON, no `--cwd` (HTTP `/review/stats`) |
+| `agw review stats [--since <iso>\|<duration>] [--repo <id>] [--by tier\|rule\|prompt\|repo] [--bucket week]` | The ledger's quality numbers (below); read-only, JSON, no `--cwd` (HTTP `/review/stats`) |
 
 `prepare`, `cancel`, `submit` and `dispose` change state, so the CLI asks for `--commit` (non-TTY callers must pass it).
 
-`--cwd` is required wherever a repo is read (the CLI does not fill it).
+`--cwd` is required wherever a repo is read (the CLI does not fill it). `cancel`, `submit` and `dispose` take it too and ignore it (the job names its repo), so a caller may pass it to every verb.
+
+`review stats --since` is an ISO date or timestamp or a duration back from now (`30m`, `24h`, `7d`, `2w`; `src/since.ts`); the otel workflow's own `since` window already took durations. The narrative workflow's `since` stays ISO only: a workflow input is hashed for idempotent replays, and a duration resolved at parse time would hash differently on every retry.
 
 ## Scopes and the snapshot
 
@@ -35,7 +37,7 @@ CLI exits non-zero naming it.
 -A`, `write-tree`, `commit-tree -p HEAD` as `agw`. The caller's index, HEAD, refs and work tree are never written; the
 blobs, tree and commit **do land in the caller's object store, unreferenced** (git's gc prunes them after its expiry).
 No change against HEAD is an empty diff (tier none). `head` = HEAD~1..HEAD, `<ref>` = merge-base(ref, HEAD)..HEAD,
-`<a>..<b>` as given. `pr`/`branch` fetch into a throwaway clone (`cloneForRef`, under `<stateDir>/review-clones/`)
+`<a>..<b>` as given when `a` is an ancestor of `b`; otherwise (`origin/master..HEAD` after master advanced) the diff starts at the merge base, as `a...b` does, and prepare says so in `note`: a plain `a..b` would show master's own commits reversed. The job's `base` is then the merge base, so `covered` answers for the commits of the branch. `pr`/`branch` fetch into a throwaway clone (`cloneForRef`, under `<stateDir>/review-clones/`)
 and diff against the merge base with origin's default branch; that clone is the job's worktree. No path scopes.
 
 Repo identity: origin normalized to `host/owner/name`, else the realpath of the main worktree's toplevel, so worktrees
@@ -43,7 +45,7 @@ share it. Thread: `sha256(repo \0 key)[:12]`, key `--thread` (or the 12-hex id o
 
 ## The job dir
 
-`<stateDir>/review-jobs/<jobId>/`: `job.json` (pointers; `files.agentsMd` is in the worktree), `diff.patch`
+`<stateDir>/review-jobs/<jobId>/`: `prompt.txt` (the prompt line prepare prints as `prompt`; `promptFile` is its path), `job.json` (pointers; `files.agentsMd` is in the worktree), `diff.patch`
 (`diff -M diffBase..head`), `stat.txt` (`--numstat --no-renames`), `intent.md` (`--context`, the scope line, the commits
 of base..head unless a snapshot), `history.txt` (15 commits on the touched paths before base), `prior.json` (≤ 20 ledger
 findings of the repo on the touched paths, newest first, with `sameThread` and the disposition as `state`), `REVIEW.md`
@@ -92,12 +94,11 @@ dropped or refused for them. They appear in REVIEW_OUTPUT (when not null) and on
 
 The reply may carry `criteria: [{item, status: met|not-met|unclear, evidence}]`. A non-empty list is copied into
 REVIEW_OUTPUT as `criteria`; a `not-met` item without an important finding is stored, not an error, and `outcome` stays
-code's (`clean` without important findings). The field is optional and the reviewer prompt does not emit it yet (the
-prompt is a separate Issue); a reply that carries it is stored as is.
+code's (`clean` without important findings). The reviewer prompt emits it (1,612 of 1,617 jobs audited on 2026-11-16 carry it); the field stays optional and a reply that carries it is stored as is.
 
 ## Stats
 
-`agw review stats` aggregates the ledger in code (no LLM). `--since` (ISO datetime; a malformed one is refused) and
+`agw review stats` aggregates the ledger in code (no LLM). `--since` (ISO datetime or a duration such as `7d`; a malformed one is refused) and
 `--repo` (exact repo id) filter jobs by creation; jobs of repos whose id contains `/.agw-verify` or `/.agw-eval-recall`
 are left out. Output `{since, by, groups: [{key, ...metrics}], total}`, groups sorted by key (`--by tier`: none, light,
 standard, deep).
@@ -131,12 +132,11 @@ submitted jobs (`submitted_at − created_at`, null when none); `round1` `jobs`,
 tag for `important` and `nit` (`open`, `fixed`, `wrong`, `intentional`, `irrelevant`), both attributed to the job that
 first reported the finding; `precision` for `important` and `nit` = fixed / (fixed + wrong + irrelevant), null when
 that is 0; `anchoredShare` and `lineValidShare` over findings whose value is not null (null when none); `deepRound2`
-`count` and `share` of the group's submitted jobs (tier deep, round ≥ 2).
+`count` and `share` of the group's submitted jobs (tier deep, round ≥ 2); `stalled` (threads whose last submitted round was actionable and that no prepared round followed, counted in the group of that last job; `needs-human` is not stalled).
 
 ## Convergence
 
-Round = last submitted round of the thread + 1; a re-prepare abandons the thread's unsubmitted job (only when a new job
-is written: a held or skipped prepare leaves a running review alone). The cap is for a fix loop: a prepare after three submitted rounds in a row that ended with an important finding is refused (`needs-human`); a clean round ends the loop, so a re-review of a settled thread (after a rebase) is not counted. From round 2
+Round = last submitted round of the thread + 1. **A repeat prepare is idempotent**: a prepared, unsubmitted job of the same repo, `cwd` root, thread, head **tree** (a snapshot's commit differs per call, its tree does not), diff base, tier, account and `--context` is returned as it is (`reused: true`), nothing is abandoned and no tree is built. Any other prepare of the thread abandons its unsubmitted job (only when a new job is written: a held or skipped prepare leaves a running review alone). The cap is for a fix loop: a prepare after three submitted rounds in a row that ended with an important finding is refused (`needs-human`); a clean round ends the loop, so a re-review of a settled thread (after a rebase) is not counted. From round 2
 the diff starts at the last reviewed head when it is an ancestor of the new head or the two share the base (two
 snapshots on one base), else at the base. Submit: a reply finding matches a thread finding E by `stillOpen` with E's id,
 else by file + class + normalized message, then by E's disposition: `wrong`, `intentional` or `irrelevant` is a dropped
@@ -145,7 +145,7 @@ id with `stillOpen` and E back to `open` in the same transaction. Two reply find
 a new finding; a `stillOpen` with an unknown id matches by key or is new. Nits past
 REVIEW.md `nits` are dropped (counted). Code decides `outcome` (`clean` without important, `needs-human` at the third fix-loop round in a row,
 else `actionable`), `summary` (counts only), `stepBack` (the reply's, or a fixed default at that round with important left)
-and `tier` (the job's). The echoed `files` must equal the stat paths (the empty-diff guard), except that a binary file (numstat `-	-`) may be listed or left out; nothing is written otherwise.
+and `tier` (the job's). The echoed `files` may leave stat paths out: they are stored in the output as `unreviewed` (the summary says so), `covered` does not count a job for a commit that touches one (`reason: unreviewed`, `unreviewed` names the files), and the next prepare on the thread diffs from that round's diff base, so they are read again with the rest. An unreviewed file does not force a round by itself and never changes `outcome`. A path the reply echoes that stat.txt lacks, or a reply that echoes none of the text files, is refused and nothing is written; a binary file (numstat `-	-`) may be listed or left out.
 
 ## Quota reading and deep cap
 
@@ -156,7 +156,7 @@ Without an account: `ceiling: unjudged`. `status <jobId>` shows `ceiling`, `quot
 jobs older than migration 0019). The deep cap is the only hold: deep jobs per account (no account is its own bucket)
 since UTC midnight, not abandoned, the thread's own unsubmitted one excluded, ≥ `AGW_REVIEW_DEEP_CAP` (default 60) →
 held. Never downgraded. It is a runaway guard far above a busy day (15 deep reviews on one account was normal on
-2026-11-05).
+2026-11-05). A deep tier that a `sensitive path` rule forces may pass the cap by half of it (`cap + max(1, cap/2)`), so routine deep reviews do not hold a security-adjacent change. The held reason names the UTC midnight the count resets at and `--account` (another Max account counts apart).
 
 ## Coverage
 
@@ -173,7 +173,7 @@ ship can tell a review that was never recorded from one that does not match. A *
 whose `base` ≤ `c^` and whose files include one of the commit's. `no-review`: no related job. `tier-too-low`: related
 jobs, none at the tier `c` needs (`related` names the newest three). `stale`: a related job at the tier exists, but its
 head is neither `c`'s tree, nor a descendant of `c`, nor the same patch, nor `c` plus changes that route none
-(`related` as above). `open-important`: above. `state` is `covered`, `no-review` (every uncovered commit is
+(`related` as above). `open-important`: above. `unreviewed`: a job at the tier exists, but its reply left out files the commit touches (`unreviewed` names them; the next prepare on the thread reads them). `state` is `covered`, `no-review` (every uncovered commit is
 `no-review`) or `uncovered`. A range `covered` could not read is not an answer: the call fails (non-zero exit, a
 message naming the git or ledger read), never `covered: false`.
 

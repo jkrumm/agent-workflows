@@ -89,6 +89,51 @@ describe('agw review prepare → submit through the host', () => {
     expect(unknown.body.message).toMatch(/unknown job rv_nope/)
   })
 
+  test('submit, dispose and cancel accept --cwd and ignore it; dispose takes several ids and --all-open', async () => {
+    write(root, 'src/a.ts', lines(4))
+    const prepared = await agw(['review', 'prepare', '--cwd', root, '--thread', 'dispose-batch'])
+    const { jobId, jobDir, thread } = prepared.body
+    const reply = fakeReviewer(jobDir, [
+      { tag: 'important', file: 'src/a.ts', message: 'first problem' },
+      { tag: 'important', file: 'src/a.ts', message: 'second problem' },
+      { tag: 'nit', file: 'src/a.ts', message: 'a nit' },
+    ])
+    const submitted = await agw(['review', 'submit', '--cwd', root, jobId, '--attempt', '1'], reply)
+    expect(submitted.status).toBe(200)
+    expect(submitted.body.findings).toHaveLength(3)
+
+    const batch = await agw(['review', 'dispose', '--cwd', root, jobId, `${thread}-1,${thread}-2`, 'fixed'])
+    expect(batch.status).toBe(200)
+    expect(batch.body.disposed.map((f: { id: string; disposition: string }) => [f.id, f.disposition])).toEqual([
+      [`${thread}-1`, 'fixed'],
+      [`${thread}-2`, 'fixed'],
+    ])
+
+    const single = await agw(['review', 'dispose', jobId, `${thread}-3`, 'wrong', '--reason', 'not a bug'])
+    expect(single.body).toMatchObject({ id: `${thread}-3`, disposition: 'wrong', reason: 'not a bug' })
+
+    const refused = await agw(['review', 'dispose', jobId, `${thread}-1,${thread}-nope`, 'open'])
+    expect(refused.status).toBe(400)
+    expect(refused.body.message).toMatch(/finding .*-nope is not in the thread/)
+    const unchanged = await agw(['review', 'status', jobId])
+    expect(unchanged.body.findings.map((f: { disposition: string }) => f.disposition)).toEqual([
+      'fixed',
+      'fixed',
+      'wrong',
+    ])
+
+    // --all-open disposes what is still open, here after the first two were reopened
+    await agw(['review', 'dispose', jobId, `${thread}-1,${thread}-2`, 'open'])
+    const all = await agw(['review', 'dispose', '--cwd', root, jobId, '--all-open', 'fixed'])
+    expect(all.status).toBe(200)
+    expect(all.body.disposed.map((f: { id: string }) => f.id)).toEqual([`${thread}-1`, `${thread}-2`])
+
+    write(root, 'src/a.ts', lines(5))
+    const next = await agw(['review', 'prepare', '--cwd', root, '--thread', 'cancel-cwd'])
+    const cancelled = await agw(['review', 'cancel', '--cwd', root, next.body.jobId])
+    expect(cancelled.body).toEqual({ status: 'cancelled', jobId: next.body.jobId })
+  })
+
   test('stats answers over HTTP through the CLI parser; a bad --since is a 400', async () => {
     const stats = await agw(['review', 'stats', '--by', 'rule'])
     expect(stats.status).toBe(200)
@@ -103,6 +148,10 @@ describe('agw review prepare → submit through the host', () => {
 
     const bad = await agw(['review', 'stats', '--since', 'not a date'])
     expect(bad.status).toBe(400)
-    expect(bad.body.message).toMatch(/since must be an ISO datetime/)
+    expect(bad.body.message).toMatch(/since must be an ISO date or timestamp/)
+
+    const relative = await agw(['review', 'stats', '--since', '7d'])
+    expect(relative.status).toBe(200)
+    expect(relative.body.since).toMatch(/^\d{4}-\d{2}-\d{2}T/)
   })
 })
