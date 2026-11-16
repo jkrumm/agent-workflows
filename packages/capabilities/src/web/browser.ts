@@ -263,7 +263,9 @@ export const NO_POPUPS = `(function (window, document) {
     if (target && !SELF.test(target)) el.setAttribute(attribute, "_self")
   }
   var act = function (event) {
-    var node = event.target && event.target.closest ? event.target : null
+    // The element clicked, also inside a shadow root (where event.target is the shadow host).
+    var node = (event.composedPath ? event.composedPath()[0] : null) || event.target
+    if (!node || !node.closest) return
     if (!node) return
     var link = node.closest("a[href], area[href]")
     if (link) {

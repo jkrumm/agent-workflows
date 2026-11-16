@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, setSystemTime, test } from 'bun:test'
+import { runInNewContext } from 'node:vm'
 import { createCapabilities } from '../capabilities/index.ts'
 import type { Usage } from '../context.ts'
 import { CapabilityCallError } from '../errors.ts'
@@ -2933,10 +2934,7 @@ describe('the challenged page kept open for the owner', () => {
       addEventListener: (type: string, handler: (event: unknown) => void) => void (listeners[type] = handler),
       querySelector: () => base,
     }
-    new Function(
-      'globalThis',
-      `with (globalThis) { ${NO_POPUPS.replace('})(window, document)', '})(globalThis, document)')} }`,
-    )(Object.assign(win, { window: win, document: doc }))
+    runInNewContext(NO_POPUPS, { window: win, document: doc })
     expect((win.open as () => unknown)()).toBeNull()
     expect(() => Object.defineProperty(win, 'open', { value: () => 1 })).toThrow()
 
@@ -2970,6 +2968,16 @@ describe('the challenged page kept open for the owner', () => {
     const named = element({ target: '_top' })
     expect(hit('click', { link: named }).prevented).toBe(false)
     expect(named.attrs.target).toBe('_top')
+    // Inside a shadow root event.target is the host: the clicked element is the composed path's first.
+    const shadowed = element({ target: '_blank' })
+    listeners.click!({
+      type: 'click',
+      button: 0,
+      target: { closest: () => null },
+      composedPath: () => [{ closest: (selector: string) => (selector.startsWith('a[href]') ? shadowed : null) }],
+      preventDefault: () => undefined,
+    })
+    expect(shadowed.attrs.target).toBe('_self')
     // A link with no target of its own follows the document's <base target>.
     base = element({ target: '_blank' })
     const inherited = element({ href: '/x' })
