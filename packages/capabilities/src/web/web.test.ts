@@ -3466,7 +3466,25 @@ describe('web.fetch: tuning of the chain', () => {
       const again = await failure(call('web.fetch', { url: 'https://shop.example.com/b' }))
       expect(blockedReason(first.message)).toBe('cloudflare-challenge')
       expect(blockedReason(again.message)).toBe('cloudflare-challenge')
+      expect(again.message).toContain('fresh reads the host again')
       expect(n.calls).toHaveLength(sent)
+    })
+
+    test('a browser that was down says nothing about the wall: the plain verdict is not remembered', async () => {
+      let reads = 0
+      const down = async () => {
+        reads++
+        throw new BrowserFailure('the browser is unreachable')
+      }
+      const n = net({
+        'https://shop.example.com/': status(403, WALL),
+        'https://api.tavily.com/extract': json({ results: [] }),
+      })
+      const { call } = run({ ...n.deps, env: { TAVILY_API_KEY: 't' }, browser: down })
+      await failure(call('web.fetch', { url: 'https://shop.example.com/a' }))
+      const again = await failure(call('web.fetch', { url: 'https://shop.example.com/b' }))
+      expect(reads).toBe(2)
+      expect(again.message).not.toContain('known wall')
     })
   })
 

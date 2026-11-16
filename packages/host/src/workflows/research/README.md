@@ -49,7 +49,7 @@ agent's `tools` counts. `--depth` defaults to `standard`. A long run waits like 
   pages enter the prompt as a fenced block of data under "Parallel research"; their pages are citable as for a
   follow-up; the agent is told to settle contradictions between them against a primary source and say so. A run that
   does not exist, is not research or is not `done` fails the new run `invalid_input` (`cannot use as context: …`).
-- **Fetch cache.** `web.fetch` keeps every complete read for 6 hours in the process (300 entries, 60 M characters), so
+- **Fetch cache.** `web.fetch` keeps every complete read for 6 hours in the process (up to 1000 entries inside 10 MB of text, the least recently read evicted first), so
   parallel runs reading the same shop page read it once; the output says `cached` and `fetchedAt`, and `fresh` (the
   CLI's `--fresh`) reads again. Failures and thin script-shell reads are never kept.
 - **Follow-up** (`--follow-up <runId>`, `followUp` in the input): the query is a new question about a finished

@@ -628,7 +628,7 @@ export const createFetch = (deps: ResolvedWebDeps) => {
         const again =
           wall.reason === 'needs-human'
             ? 'a person has to pass the wall; once the owner did, read again with fresh, else use web.search for another source'
-            : nextStep(wall.reason, undefined, [])
+            : `${nextStep(wall.reason, undefined, [])}; fresh reads the host again`
         throw fail(
           'UPSTREAM_ERROR',
           `web.fetch: blocked (${wall.reason}) · known wall: ${host} turned a read away ${minutes} min ago and none has passed since (remembered for ${HANDOFF_INTERVAL_MS / 60_000} min) · ${again}`,
@@ -689,6 +689,8 @@ export const createFetch = (deps: ResolvedWebDeps) => {
         let blocked: BlockReason | undefined
         // The plain read of the page itself timed out: the host is slow or down, and Extract gets a short budget.
         let directTimedOut = false
+        // The browser leg failed without meeting a wall (down, a tab that timed out): it says nothing about the wall.
+        let browserFailed = false
         // A direct read that went out costs nothing, and says so: the run is priced at $0, not unknown. A refused URL
         // sends nothing and reports nothing.
         const free = () => ctx.addUsage(webUsage('direct', 0))
@@ -789,6 +791,7 @@ export const createFetch = (deps: ResolvedWebDeps) => {
             if (error instanceof BrowserRefused) throw fail('URL_REFUSED', `web.fetch: ${error.message}`)
             if (!(error instanceof BrowserFailure)) throw error
             outcome = /timed out/i.test(error.message) ? 'timeout' : 'failed'
+            browserFailed = true
             // The browser being down is worth a line in the log: the paid Tavily read below may quietly cover for it.
             deps.warn(`web.fetch: the browser fallback failed: ${error.message}`)
             failures.push(`${where('browser', target)}: ${error.message}`)
@@ -862,8 +865,10 @@ export const createFetch = (deps: ResolvedWebDeps) => {
         const ownerAsked =
           blocked === 'needs-human' && (await askOnce(deps.handoff, new URL(url).hostname, Date.now(), page))
         if (ownerAsked) failures.push('the owner was asked to solve it')
-        // Every leg failed at a wall: the next read of the host is answered from here for the handoff interval.
-        if (host && blocked && WALL_REASONS.includes(blocked)) walls.remember(host, blocked)
+        // Every leg failed at a wall: the next read of the host is answered from here for the handoff interval. A
+        // browser that could not read at all (and met no challenge) proves nothing about the wall, so it is not kept.
+        if (host && blocked && WALL_REASONS.includes(blocked) && (blocked === 'needs-human' || !browserFailed))
+          walls.remember(host, blocked)
         throw fail(
           'UPSTREAM_ERROR',
           `web.fetch: ${blocked ? `blocked (${blocked}) · ` : ''}${failures.join(' · ')} · ${nextStep(blocked, pageStatus, failures, ownerAsked)}`,
