@@ -121,6 +121,18 @@ describe('a long reason is clipped to the factory contract, not re-asked', () =>
       answers(output)
     }
   })
+
+  test('a reason on two lines is joined onto one, with one model call', async () => {
+    const before = t.iu.requests.length
+    answers(withAnswers([first, { ...second, reason: 'one\ntwo' }]))
+    try {
+      const { body } = await run()
+      expect((body.output as typeof output).answers[1]).toEqual({ ...second, reason: 'one two' })
+      expect(t.iu.requests.length - before).toBe(1)
+    } finally {
+      answers(output)
+    }
+  })
 })
 
 describe('an answer that does not fit the request fails the run, nothing is repaired', () => {
@@ -142,7 +154,6 @@ describe('an answer that does not fit the request fails the run, nothing is repa
   test('a sha that is not in the request', () => failsWith(withAnswers([first, { ...second, sha: 'ffffff0' }])))
   test('an unknown class', () => failsWith(withAnswers([first, { ...second, class: 'concurrency' }])))
   test('an extra answer', () => failsWith(withAnswers([first, second, { ...second }])))
-  test('a reason on two lines', () => failsWith(withAnswers([first, { ...second, reason: 'one\ntwo' }])))
 
   test('a wrong first answer is re-asked once, and the second answer stands', async () => {
     const before = t.iu.requests.length

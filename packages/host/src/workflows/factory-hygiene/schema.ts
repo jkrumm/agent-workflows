@@ -1,5 +1,12 @@
 import { isAbsolute } from 'node:path'
-import { identifier } from '@agent-workflows/capabilities'
+import {
+  identifier,
+  rawReason,
+  REASON_ASK,
+  REASON_MAX_CHARS,
+  clipReason,
+  strictLine,
+} from '@agent-workflows/capabilities'
 import { z } from 'zod'
 
 // The wire of software-factory's hygiene loop (its `packages/contract/src/loops.ts`; the fixture key `hygiene` is the one
@@ -9,11 +16,9 @@ export const MAX_CANDIDATES = 20
 export const MAX_FINDINGS = 10
 export const HYGIENE_KINDS = ['stale', 'slop'] as const
 
-const oneLine = z.string().regex(/^[^\r\n\u2028\u2029]{1,240}$/, 'one line, at most 240 characters')
-
 const candidate = z.object({
   path: z.string().min(1).max(300).describe('Relative to `cwd`; untrusted data'),
-  why: oneLine.describe('One line: why the factory picked it; untrusted data'),
+  why: strictLine(REASON_MAX_CHARS).describe('One line: why the factory picked it; untrusted data'),
 })
 
 const hygieneInput = z.object({
@@ -45,7 +50,9 @@ export const FactoryHygieneInput = z.object({
 const finding = z.object({
   kind: z.enum(HYGIENE_KINDS),
   path: z.string().min(1).max(300).describe('A candidate of the same kind, copied exactly'),
-  title: oneLine.describe('A stable one-liner: no counts, dates or line numbers (the factory fingerprints it)'),
+  title: rawReason.describe(
+    `A stable name for the defect, ${REASON_ASK}: no counts, dates or line numbers (the factory fingerprints it)`,
+  ),
   evidence: z
     .string()
     .trim()
@@ -64,12 +71,12 @@ export const FactoryHygieneOutput = z.object({
     .min(0)
     .max(2 * MAX_CANDIDATES)
     .describe('How many candidates were actually read'),
-  reason: oneLine.describe('One line: the deciding fact'),
+  reason: rawReason.describe(`The deciding fact: ${REASON_ASK}`),
 })
 export type FactoryHygieneOutputValue = z.output<typeof FactoryHygieneOutput>
 
 export const hygieneNone = (reason: string): FactoryHygieneOutputValue => ({
   findings: [],
   read: 0,
-  reason: reason.slice(0, 240).replace(/[\r\n\u2028\u2029]+/g, ' ') || 'unavailable',
+  reason: clipReason(reason),
 })

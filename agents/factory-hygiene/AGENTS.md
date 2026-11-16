@@ -43,7 +43,7 @@ Submit one result with `submit_result`; text is not read. Shape:
     {
       "kind": "stale | slop",
       "path": "the candidate path, copied exactly",
-      "title": "one line, at most 240 characters, a stable name for the defect",
+      "title": "one line, at most 200 characters, a stable name for the defect",
       "evidence": "stale: the claim and the code that contradicts it, both as path:line. slop: the quoted lines",
       "fix": "the concrete edit"
     }
@@ -58,4 +58,4 @@ Submit one result with `submit_result`; text is not read. Shape:
   same defect twice. The same defect found next week must get the same title.
 - `evidence` and `fix` are plain text, one to 4000 characters, no secrets or credentials even if a file holds them.
 - `read` is the number of candidates you actually read.
-- `reason` is one line, at most 240 characters, no line breaks.
+- `reason` is one line, at most 200 characters, no line breaks. `title` is the same.

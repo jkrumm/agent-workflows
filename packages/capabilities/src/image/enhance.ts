@@ -1,7 +1,6 @@
 import { z } from 'zod'
 import type { Ctx } from '../context.ts'
-import { fail } from '../errors.ts'
-import { complete, type LlmDeps, parseJsonLoose } from '../llm/model-call.ts'
+import { completeJson, type LlmDeps } from '../llm/model-call.ts'
 import { defineCapability } from '../procedure.ts'
 import type { ResolvedImageDeps } from './deps.ts'
 import { estimateCost, snapToNearestPreset } from './estimate.ts'
@@ -356,8 +355,6 @@ export function resolveSettings(
   }
 }
 
-const RETRY_ECHO_CHARS = 4_000
-
 export function createEnhance(deps: ResolvedImageDeps, llm: LlmDeps) {
   return defineCapability({
     id: 'image.enhance',
@@ -368,34 +365,19 @@ export function createEnhance(deps: ResolvedImageDeps, llm: LlmDeps) {
     // `agw image` is the workflow, and the host refuses a command that is the prefix of another: one hyphenated word.
     cli: { command: ['image-enhance'], positional: ['brief'], defaultFormat: 'json' },
     async handler(input, ctx: Ctx) {
-      const route = deps.route('image.enhance', ctx)
       // The text the gate and the verbatim check read: what this round adds (the brief, or an iteration's delta).
       const source = input.brief ?? input.delta ?? ''
       const applied = modeApplied(input.mode, source)
       const { system, user } = planMessages(input, applied)
 
-      // The route is pinned: a re-ask stays on the route that answered (the planner has no fallback).
-      let prompt = user
-      let reason = ''
-      let plan: LlmPlan | undefined
-      for (let attempt = 1; attempt <= 2 && !plan; attempt++) {
-        const { text } = await complete(llm, { routeId: 'image.enhance', system, prompt, json: true, ctx }, route)
-        const parsed = parseJsonLoose(text)
-        const checked = parsed === null ? null : llmPlan.safeParse(parsed)
-        if (checked?.success) plan = checked.data
-        else {
-          reason =
-            checked === null
-              ? 'the response was not a valid JSON object'
-              : `the JSON did not match the schema: ${checked.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ')}`
-          prompt = `${user}\n\n---\nRETRY: your previous response was rejected: ${reason}\n\nPrevious response (truncated):\n${text.slice(0, RETRY_ECHO_CHARS)}\n\nReply again with ONLY the corrected JSON object — no commentary, no code fences.`
-        }
-      }
-      if (!plan)
-        throw fail('INVALID_OUTPUT', `image.enhance: planner output rejected after 2 attempts, ${reason}`, {
-          attempts: 2,
-          reason,
-        })
+      // One re-ask on the route that answered; a drained credit or an outage moves the call to the route's fallback.
+      const { data: plan, route } = await completeJson(llm, {
+        routeId: 'image.enhance',
+        system,
+        prompt: user,
+        schema: llmPlan,
+        ctx,
+      })
 
       // In passthrough the model's own prompt is not trusted to leave the brief alone: the brief (or current prompt) is the prompt.
       const base = (input.currentPrompt ?? input.brief ?? '').trim()

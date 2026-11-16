@@ -166,7 +166,19 @@ export {
   type ProseRegister,
   proseContextLines,
   proseRubric,
+  JSON_ANSWER,
+  untrustedPreamble,
 } from './capabilities/prose-prompts.ts'
+export {
+  clipLine,
+  clipReason,
+  collapseLine,
+  rawReason,
+  REASON_ASK,
+  REASON_ASK_CHARS,
+  REASON_MAX_CHARS,
+  strictLine,
+} from './capabilities/one-line.ts'
 export {
   MAX_PAGE_CHARS,
   NARRATIVE_LIMITS,

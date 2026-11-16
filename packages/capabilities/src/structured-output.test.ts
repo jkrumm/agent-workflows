@@ -37,6 +37,7 @@ const CASES: { capability: string; route: RouteId; input: Record<string, unknown
       sessionCount: 1,
     },
   },
+  { capability: 'image.enhance', route: 'image.enhance', input: { brief: 'a red circle on white' } },
   {
     capability: 'prose.critique',
     route: 'prose.review',
@@ -52,7 +53,7 @@ const CASES: { capability: string; route: RouteId; input: Record<string, unknown
 ]
 
 /** Optional properties: strict `json_schema` answers 400, so these go to a GPT fallback as JSON mode. */
-const NOT_STRICT = ['prose.critique']
+const NOT_STRICT = ['prose.critique', 'image.enhance']
 
 async function sentSchema(capability: string, input: Record<string, unknown>) {
   const transports = fakeTransports({ anthropic: [{ text: '{}' }], openai: [{ text: '{}' }] })

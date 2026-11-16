@@ -104,6 +104,30 @@ describe('factory-hygiene workflow', () => {
     expect([...host.sessions.values()][1]?.spec.prompt).toContain('RETRY')
   })
 
+  test('a 300-character two-line reason and title are accepted and clipped, with one session', async () => {
+    const { input } = checkout()
+    const long = `${'the deciding fact '.repeat(8)}\nsecond line ${'z '.repeat(80)}`
+    const host = new FakeAgentHost(async () => ({
+      output: { ...output, findings: output.findings.map((f) => ({ ...f, title: long })), reason: long },
+    }))
+    const { result } = await run(host, input)
+    const out = result.output as typeof output
+    expect(host.sessions.size).toBe(1)
+    for (const text of [out.reason, ...out.findings.map((f) => f.title)]) {
+      expect(text).toMatch(/^[^\r\n\u2028\u2029]{1,240}$/)
+      expect(text.endsWith('…')).toBe(true)
+    }
+  })
+
+  test('the retry text says the answer was rejected, not that no call was made', async () => {
+    const { input } = checkout()
+    const host = new FakeAgentHost(async () => ({ output: { findings: 'many' } }))
+    await run(host, input)
+    const retry = [...host.sessions.values()][1]?.spec.prompt ?? ''
+    expect(retry).toContain('did not match the shape')
+    expect(retry).not.toContain('ended without')
+  })
+
   test('a crashing agent fails closed with the class, never the message', async () => {
     const { input } = checkout()
     const host = new FakeAgentHost(async () => {
