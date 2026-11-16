@@ -5,7 +5,7 @@ export const DEFAULT_SAMPLE = 20
 
 const nullable = <T extends z.ZodType>(schema: T) => schema.nullable().default(null)
 
-/** A fixture run, as `sample.ts` reads one from the journal; what a case leaves out is null (steps: `toolCalls` 0). */
+/** A fixture run, as `sample.ts` reads one from the journal; what a case leaves out is null (steps: `toolCalls` 0, `tools` none). */
 const FIXTURE_RUN = z.object({
   runId: z.string().regex(/^[\w-]{8,64}$/),
   status: z.enum(['done', 'failed']),
@@ -23,6 +23,16 @@ const FIXTURE_RUN = z.object({
       status: z.string(),
       model: nullable(z.string()),
       toolCalls: z.number().default(0),
+      tools: z
+        .array(
+          z.object({
+            tool: z.string(),
+            calls: z.number(),
+            failed: z.number().default(0),
+            repeats: z.number().default(0),
+          }),
+        )
+        .default([]),
       cost: nullable(z.number()),
       errorKind: nullable(z.string()),
       error: nullable(z.string()),
@@ -36,14 +46,18 @@ export const RETRO_INPUT = z
     fixture: z
       .object({ runs: z.array(FIXTURE_RUN).min(1).max(100) })
       .optional()
-      .describe('Eval only: analyze these runs instead of sampling the journal; stores no learning and files no issue'),
+      .describe(
+        'Eval only: analyze these runs instead of sampling the journal; stores no learning and files no signal',
+      ),
     workflow: z.string().min(1).describe('The workflow to look back on (one that runs agents), e.g. review'),
     window: z.number().int().min(1).max(90).default(DEFAULT_WINDOW_DAYS).describe('Days back from now'),
     sample: z.number().int().min(1).max(100).default(DEFAULT_SAMPLE).describe('Finished runs read, failed ones first'),
-    fileIssues: z
+    fileSignals: z
       .boolean()
       .default(false)
-      .describe('File each proposal as a GitHub issue in this repo (deduped by title); default only reports'),
+      .describe(
+        'File the best-evidenced proposals (at most 3) as factory signals for this repo, triage dedupes them; default only reports',
+      ),
   })
   .strict()
 
@@ -62,7 +76,7 @@ export const RETRO_ANALYSIS = z.object({
           .string()
           .min(1)
           .describe(
-            'A path in this repository (agents/<name>/AGENTS.md, packages/…, docs/…) or an agent name. An issue is filed only for a path that exists',
+            'A path in this repository (agents/<name>/AGENTS.md, packages/…, docs/…) or an agent name. A signal is filed only for a path that exists',
           ),
         title: z.string().min(8).max(100).describe('One line naming the change, no paths or repo names'),
         change: z.string().min(1).max(1500).describe('The change proposed and why, in plain text'),
@@ -105,18 +119,26 @@ export const RETRO_OUTPUT = z.object({
       agent: z.string(),
       fact: z.string(),
       evidence: z.array(z.string()),
-      /** The stored (proposed) learning's id; null when an identical live fact already existed. */
+      /** The learning this fact is on file as (new or already there; see `outcome`); null for a fixture, which stores nothing. */
       learningId: z.number().int().nullable(),
+      /** new: stored; repeat: seen again, recorded; activated: seen in a second week, now read back; known: nothing changed. */
+      outcome: z.enum(['new', 'repeat', 'activated', 'known']),
     }),
   ),
-  /** One entry per proposal when `fileIssues` was on. */
-  issues: z.array(
+  /** What the learnings rule did after this run's facts were stored (all zero for a fixture). */
+  tidy: z.object({
+    merged: z.number().int(),
+    activated: z.array(z.number().int()),
+    retired: z.array(z.number().int()),
+  }),
+  /** One entry per proposal when `fileSignals` was on. */
+  signals: z.array(
     z.object({
-      /** The proposal hash (16 hex) the issue's marker carries. */
+      /** The proposal hash (16 hex) the signal's marker carries. */
       hash: z.string(),
       title: z.string().optional(),
-      status: z.enum(['filed', 'duplicate', 'refused']),
-      url: z.string().optional(),
+      /** capped: past the per-run limit, not filed; duplicate: the same proposal twice in this run; failed: the factory refused it. */
+      status: z.enum(['filed', 'duplicate', 'refused', 'capped', 'failed']),
       reason: z.string().optional(),
     }),
   ),

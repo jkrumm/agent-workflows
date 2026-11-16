@@ -1,5 +1,13 @@
 import type { Pool } from 'pg'
 
+/** One tool a step called, as the host's tool gate recorded it: how often, how often it failed, how many calls repeated an earlier one's exact arguments. */
+export interface SampledTool {
+  tool: string
+  calls: number
+  failed: number
+  repeats: number
+}
+
 /** One agent or code step of a sampled run, as small as it can be while still telling what happened. */
 export interface SampledStep {
   stepId: string
@@ -7,6 +15,11 @@ export interface SampledStep {
   status: string
   model: string | null
   toolCalls: number
+  /**
+   * The tools by name, most called first. Only a step whose tools run through the host's gate leaves a record (research:
+   * `research_tool_calls`); for every other step it is empty and only `toolCalls` says anything.
+   */
+  tools: SampledTool[]
   cost: number | null
   errorKind: string | null
   error: string | null
@@ -71,6 +84,8 @@ type StepRow = {
   output: string | null
 }
 
+type ToolRow = { run_id: string; step_id: string; tool: string; calls: number; failed: number; repeats: number }
+
 const FINISHED = `parent_id is null and status in ('done', 'failed') and purpose <> 'eval' and finished_at >= $2 and workflow = $1`
 
 /**
@@ -81,6 +96,7 @@ export function pgJournalReader(pool: Pick<Pool, 'query'>, schema: string): Jour
   if (!/^[a-z_][a-z0-9_]{0,62}$/.test(schema)) throw new Error(`invalid schema name "${schema}"`)
   const runs = `"${schema}".runs`
   const steps = `"${schema}".steps`
+  const toolCalls = `"${schema}".research_tool_calls`
   return {
     async sample({ workflow, since, limit }) {
       const { rows } = await pool.query<RunRow>(
@@ -97,6 +113,21 @@ export function pgJournalReader(pool: Pick<Pool, 'query'>, schema: string): Jour
            from ${steps} where run_id = any($1::text[]) order by started_at`,
         [ids],
       )
+      const calls = await pool.query<ToolRow>(
+        `select run_id, step_id, tool, count(*)::int as calls, (count(*) filter (where not ok))::int as failed,
+                (count(*) - count(distinct args_digest))::int as repeats
+           from ${toolCalls} where run_id = any($1::text[])
+          group by run_id, step_id, tool order by run_id, step_id, calls desc, tool`,
+        [ids],
+      )
+      const toolsOf = new Map<string, SampledTool[]>()
+      for (const t of calls.rows) {
+        const key = `${t.run_id}\n${t.step_id}`
+        toolsOf.set(key, [
+          ...(toolsOf.get(key) ?? []),
+          { tool: t.tool, calls: t.calls, failed: t.failed, repeats: t.repeats },
+        ])
+      }
       const byRun = new Map<string, SampledStep[]>()
       for (const s of found.rows) {
         const list = byRun.get(s.run_id) ?? []
@@ -106,6 +137,7 @@ export function pgJournalReader(pool: Pick<Pool, 'query'>, schema: string): Jour
           status: s.status,
           model: s.model,
           toolCalls: s.tool_calls,
+          tools: toolsOf.get(`${s.run_id}\n${s.step_id}`) ?? [],
           cost: s.cost === null ? null : Number(s.cost),
           errorKind: s.error_kind,
           error: s.error,

@@ -38,7 +38,7 @@ export interface RetroScheduleOptions {
   journal: JournalReader
   /** The workflows that run agents (the retrospective itself excluded). */
   workflows: readonly string[]
-  fileIssues: boolean
+  fileSignals: boolean
   logger: Pick<Logger, 'warn' | 'error'>
   now?: () => Date
   /** Checked before each workflow: a stopped schedule starts nothing more. */
@@ -63,14 +63,14 @@ export async function tickRetrospectives(
       if ((await options.journal.countFinished({ workflow, since })) === 0) continue
       const key = nextKey(retroKey(workflow, now), await options.journal.weekRuns(retroKey(workflow, now)))
       if (!key) continue
-      const input = { workflow, window: DEFAULT_WINDOW_DAYS, sample: DEFAULT_SAMPLE, fileIssues: options.fileIssues }
+      const input = { workflow, window: DEFAULT_WINDOW_DAYS, sample: DEFAULT_SAMPLE, fileSignals: options.fileSignals }
       const { runId } = await options.runtime.start(options.retrospective.workflow, input, {
         purpose: RETRO_PURPOSE,
         idempotencyKey: key,
       })
       started.push({ workflow, runId, key })
     } catch (error) {
-      // The key was used with other input (fileIssues flipped mid-week): that week's run stands.
+      // The key was used with other input (fileSignals flipped mid-week): that week's run stands.
       if (error instanceof IdempotencyConflict) continue
       options.logger.error('weekly retrospective failed to start', {
         workflow,

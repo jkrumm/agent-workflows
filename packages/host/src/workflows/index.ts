@@ -8,7 +8,7 @@ import type { ToolGate } from '../tool-gate/index.ts'
 import type { CostHistory } from './eval-mine/index.ts'
 import { buildWorkflows, type DiscoveredModule, discoverWorkflowModules } from './registry.ts'
 import type { ToolLedger } from './research/ledger.ts'
-import type { GhPort } from './retrospective/gh.ts'
+import type { SignalPort } from './retrospective/signals.ts'
 import type { JournalReader } from './retrospective/sample.ts'
 import type { TrackedPaths } from './retrospective/tracked.ts'
 
@@ -31,7 +31,12 @@ export type HostRegistry = Registry<ReturnType<typeof createCapabilities>>
 export interface WorkflowDeps {
   registry: HostRegistry
   /** The journal-backed pieces of the learnings store and the retrospective; a host without a database leaves it out. */
-  retro?: { journal: JournalReader; learnings: LearningsStore; gh?: GhPort; tracked?: () => Promise<TrackedPaths> }
+  retro?: {
+    journal: JournalReader
+    learnings: LearningsStore
+    signals?: SignalPort
+    tracked?: () => Promise<TrackedPaths>
+  }
   /** Where research's tool gate records every call (Postgres on the host); absent: in memory. */
   research?: { ledger: ToolLedger }
   /** The agents overview (collectors, quota); the host process builds one, a test host may leave it out. */

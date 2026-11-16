@@ -2,7 +2,13 @@ import { describe, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { issueFor, markerFor, proposalHash } from '../src/workflows/retrospective/issue.ts'
+import {
+  MAX_SIGNALS_PER_RUN,
+  markerFor,
+  proposalHash,
+  rankProposals,
+  signalFor,
+} from '../src/workflows/retrospective/signal.ts'
 import { targetProblem } from '../src/workflows/retrospective/normalize.ts'
 import { scrubForPrompt } from '../src/workflows/retrospective/scrub.ts'
 import { listTrackedFiles, TrackedPaths } from '../src/workflows/retrospective/tracked.ts'
@@ -14,7 +20,7 @@ const tracked = new TrackedPaths([
   'packages/host/src/boot.ts',
   'docs/concept.md',
 ])
-const proposal = (over: Partial<Parameters<typeof issueFor>[0]['proposal']> = {}) => ({
+const proposal = (over: Partial<Parameters<typeof signalFor>[0]['proposal']> = {}) => ({
   kind: 'agents-md' as const,
   target: 'agents/review-qa/AGENTS.md',
   title: 'Tell the QA angle to read the test file first',
@@ -24,10 +30,18 @@ const proposal = (over: Partial<Parameters<typeof issueFor>[0]['proposal']> = {}
   ...over,
 })
 const draft = (p = proposal()) =>
-  issueFor({ workflow: 'review', retroRunId: 'retro-run-1', proposal: p, agents: AGENTS, tracked })
+  signalFor({
+    workflow: 'review',
+    retroRunId: 'retro-run-1',
+    sampled: 20,
+    windowDays: 7,
+    proposal: p,
+    agents: AGENTS,
+    tracked,
+  })
 
-describe('issueFor', () => {
-  test('only structured fields: kind, tracked target, confidence, run ids, a pointer to the private run, a marker', () => {
+describe('signalFor', () => {
+  test('only structured fields: kind, tracked target, confidence, run ids (counted), a pointer to the private run, a marker', () => {
     const out = draft()
     expect(out.ok).toBe(true)
     if (!out.ok) return
@@ -35,23 +49,22 @@ describe('issueFor', () => {
     expect(hash).toMatch(/^[0-9a-f]{16}$/)
     expect(out.hash).toBe(hash)
     expect(out.title).toBe(`retro(review): agents-md change for agents/review-qa/AGENTS.md [${hash.slice(0, 8)}]`)
-    expect(out.body.split('\n')[0]).toBe(`<!-- agw-retro:${hash} -->`)
-    expect(out.body).toBe(
+    expect(out.text).toBe(
       [
-        markerFor(hash),
-        'Proposed by the weekly retrospective of `review`. Proposals are never applied automatically.',
+        'Proposed by the weekly retrospective of `review` (20 runs sampled over 7 days). Proposals are never applied automatically.',
         '',
-        '- **Kind:** agents-md',
-        '- **Target:** `agents/review-qa/AGENTS.md`',
-        '- **Confidence:** medium',
-        '- **Evidence (run ids):** `run-aaaa1111`, `run-bbbb2222`',
+        '- Kind: agents-md',
+        '- Target: `agents/review-qa/AGENTS.md`',
+        '- Confidence: medium',
+        '- Evidence: 2 of 20 sampled runs: `run-aaaa1111`, `run-bbbb2222`',
+        `- Marker: ${markerFor(hash)}`,
         '',
-        "Details are private: `agw run status retro-run-1` shows the proposal text in the retrospective run's output.",
+        "The proposal text is private: `agw run status retro-run-1` shows it in the retrospective run's output.",
       ].join('\n'),
     )
   })
 
-  test('nothing the model wrote reaches the issue, whatever it contains', () => {
+  test('nothing the model wrote reaches the signal, whatever it contains', () => {
     const hostile = [
       'push with ghp_abcdefghijklmnopqrstuvwxyz0123456789 to build-box.example.de and corp.cloud',
       'key sk-proj-abcdefghijklmnopqrstuvwx for acme-billing/ledger at 10.1.2.3, mail ops@acme.io',
@@ -60,7 +73,7 @@ describe('issueFor', () => {
     const out = draft(proposal({ change: hostile, title: `Title with ${hostile.slice(0, 60)}` }))
     expect(out.ok).toBe(true)
     if (!out.ok) return
-    const issue = `${out.title}\n${out.body}`
+    const issue = `${out.title}\n${out.text}`
     for (const leak of [
       'ghp_',
       'sk-proj',
@@ -100,7 +113,7 @@ describe('issueFor', () => {
       expect(draft(proposal({ target })).ok).toBe(true)
     }
     const byName = draft(proposal({ target: 'review-qa' }))
-    expect(byName.ok && byName.body).toContain('`agents/review-qa`')
+    expect(byName.ok && byName.text).toContain('`agents/review-qa`')
   })
 
   test('the hash is stable under case and whitespace in the change and moves with kind, target or meaning', () => {
@@ -114,6 +127,26 @@ describe('issueFor', () => {
     expect(proposalHash(proposal({ kind: 'skill' }), 'agents/review-qa/AGENTS.md')).not.toBe(base)
     expect(proposalHash(proposal(), 'agents/review-security/AGENTS.md')).not.toBe(base)
     expect(proposalHash(proposal({ change: 'something else' }), 'agents/review-qa/AGENTS.md')).not.toBe(base)
+  })
+})
+
+describe('rankProposals', () => {
+  const p = (id: string, runs: number, confidence: 'low' | 'medium' | 'high') => ({
+    id,
+    evidence: Array.from({ length: runs }, (_, i) => `run-${i}`),
+    confidence,
+  })
+
+  test('most runs first, then confidence, then the agent’s own order', () => {
+    const ranked = rankProposals([
+      p('a', 1, 'high'),
+      p('b', 3, 'low'),
+      p('c', 2, 'low'),
+      p('d', 2, 'high'),
+      p('e', 2, 'low'),
+    ])
+    expect(ranked.map((x) => x.id)).toEqual(['b', 'd', 'c', 'e', 'a'])
+    expect(MAX_SIGNALS_PER_RUN).toBe(3)
   })
 })
 

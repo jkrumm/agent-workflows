@@ -16,9 +16,9 @@ export default defineWorkflowModule({
   phase: 'last',
   create: (deps, { peers }) => {
     if (!deps.retro) return []
-    const { journal, learnings, gh, tracked } = deps.retro
+    const { journal, learnings, signals, tracked } = deps.retro
     const agents = agentNames([...peers])
-    return [createRetrospective({ journal, learnings, gh, tracked, agentsOf: (id) => agents.get(id) })]
+    return [createRetrospective({ journal, learnings, signals, tracked, agentsOf: (id) => agents.get(id) })]
   },
   suite: { read: () => plainSuite.read(CASES_PATH) },
 })

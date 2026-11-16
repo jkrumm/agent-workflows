@@ -211,13 +211,13 @@ describe('retrospective fixture', () => {
     const rt = testRuntime({ schema: db.schema, workflows: [workflow], host })
     await rt.open()
     try {
-      const input = { ...c.input('', {}), fileIssues: true }
+      const input = { ...c.input('', {}), fileSignals: true }
       const { runId } = await rt.start(workflow, input, { purpose: 'eval' })
       const result = await rt.wait(runId)
       expect(result.status).toBe('done')
       expect(result.output).toMatchObject({
         sampled: 8,
-        issues: [],
+        signals: [],
         dropped: [],
         learnings: [{ agent: 'check', learningId: null }],
       })

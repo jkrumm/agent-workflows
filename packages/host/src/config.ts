@@ -23,16 +23,13 @@ export interface HostConfig extends ProcessConfig {
   doorTokensFile: string
   /** The weekly retrospective schedule (`AGW_RETRO_WEEKLY`, on unless `0`, `off` or `false`). */
   retroWeekly: boolean
-  /** Scheduled retrospectives file their proposals as GitHub issues (`AGW_RETRO_FILE_ISSUES=1`); off by default. */
-  retroFileIssues: boolean
-  /** `owner/name` the issues go to (`AGW_RETRO_ISSUE_REPO`); required with `retroFileIssues`. `gh` auth is the host env. */
-  retroIssueRepo: string | undefined
+  /** Scheduled retrospectives file their best proposals as factory signals (`AGW_RETRO_SIGNALS`, on unless `0`, `off` or `false`). */
+  retroSignals: boolean
   /** The daily friction job (concept §7). Absent means off: only `loadConfig` turns it on, so literal test configs never start it. */
   friction?: FrictionSettings
 }
 
 const OFF = new Set(['0', 'off', 'false', 'no'])
-const ON = new Set(['1', 'on', 'true', 'yes'])
 
 /** Which variable a process takes its port from, and its default. */
 export interface PortSetting {
@@ -88,11 +85,6 @@ export function assertNoProblems(problems: string[]): void {
 export function loadConfig(env: Env): HostConfig {
   const problems: string[] = []
   const base = readProcessConfig(env, { name: 'AGW_PORT', fallback: 7791 }, problems)
-  const retroFileIssues = ON.has(env.AGW_RETRO_FILE_ISSUES?.trim().toLowerCase() ?? '')
-  const retroIssueRepo = env.AGW_RETRO_ISSUE_REPO?.trim() || undefined
-  if (retroIssueRepo && !/^[\w.-]+\/[\w.-]+$/.test(retroIssueRepo))
-    problems.push('AGW_RETRO_ISSUE_REPO must look like owner/name')
-  if (retroFileIssues && !retroIssueRepo) problems.push('AGW_RETRO_FILE_ISSUES needs AGW_RETRO_ISSUE_REPO')
   // Advisory: a bad optional setting disables the daily job and says so, it never stops the host from starting.
   const friction = frictionSettings(env)
   for (const problem of friction.problems) console.error(`[agw-host] friction job disabled: ${problem}`)
@@ -101,8 +93,7 @@ export function loadConfig(env: Env): HostConfig {
     ...base,
     doorTokensFile: readDoorTokensFile(env),
     retroWeekly: !OFF.has(env.AGW_RETRO_WEEKLY?.trim().toLowerCase() ?? ''),
-    retroFileIssues,
-    retroIssueRepo,
+    retroSignals: !OFF.has(env.AGW_RETRO_SIGNALS?.trim().toLowerCase() ?? ''),
     friction:
       friction.problems.length > 0
         ? {
