@@ -89,18 +89,52 @@ describe('one definition, two doors', () => {
     }
   })
 
-  test('an untyped throw is an opaque INTERNAL_SERVER_ERROR on both doors', async () => {
-    const b = build({ anthropic: [new Error('secret detail')] })
-    const s = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: b.registry.fetch })
+  test('an untyped throw is logged once and answered as a 500 that names its cause, the same on both doors', async () => {
+    const boom = defineCapability({
+      id: 'test.boom',
+      summary: 'throws what no handler types',
+      input: z.object({}),
+      output: z.object({}),
+      handler: () => {
+        throw new TypeError('db pool gone at https://h.example.com/p?token=abc123 password=hunter2')
+      },
+    })
+    const registry = createRegistry([boom])
+    const s = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: registry.fetch })
+    const logged: unknown[][] = []
+    const original = console.error
+    console.error = (...args: unknown[]) => void logged.push(args)
     try {
-      const viaImport = await b.registry.call('llm.title', { text: 'x' }).catch(errorJson)
-      const viaHttp = await post(`http://127.0.0.1:${s.port}`, '/llm/title', { text: 'x' })
+      const viaImport = await registry.call('test.boom', {}).catch(errorJson)
+      const viaHttp = await post(`http://127.0.0.1:${s.port}`, '/test/boom', {})
       expect(viaHttp.status).toBe(500)
       expect(viaHttp.body).toEqual(viaImport)
-      expect(JSON.stringify(viaImport)).not.toContain('secret detail')
+      expect(viaImport).toMatchObject({ code: 'INTERNAL_SERVER_ERROR', status: 500, defined: false })
+      const { message } = viaImport as { message: string }
+      expect(message).toStartWith('Internal Server Error: TypeError: db pool gone at https://h.example.com/p')
+      // No query string, no credential value.
+      expect(message).not.toContain('abc123')
+      expect(message).not.toContain('hunter2')
     } finally {
+      console.error = original
       void s.stop(true)
     }
+    // One line per call: the capability, the error's name and message, its stack.
+    expect(logged).toHaveLength(2)
+    const line = logged[0]![1] as { stack: string }
+    expect(line).toMatchObject({ capability: 'test.boom', name: 'TypeError' })
+    expect(line.stack).toContain('TypeError')
+  })
+
+  test('a client library throw inside a model call is an UPSTREAM_ERROR with the cause, not an opaque 500', async () => {
+    const b = build({ anthropic: [new Error('socket hang up')] })
+    const failure = (await b.registry.call('llm.title', { text: 'x' }).catch(errorJson)) as {
+      code: string
+      message: string
+      data: unknown
+    }
+    expect(failure).toMatchObject({ code: 'UPSTREAM_ERROR', data: { transport: true } })
+    expect(failure.message).toContain('Error: socket hang up')
   })
 
   test('the same model failure after the re-ask is INVALID_OUTPUT on both doors', async () => {

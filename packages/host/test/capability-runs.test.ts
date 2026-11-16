@@ -278,6 +278,22 @@ describe('the journaled error wire format', () => {
     expect(journaledError('step "call" failed (error): UPSTREAM_ERROR: down {"status":502}')).toBeNull()
   })
 
+  test('an untyped throw journals its cause and the run answers with it', () => {
+    const untyped = new CapabilityCallError(
+      'INTERNAL_SERVER_ERROR',
+      500,
+      'Internal Server Error: TypeError: db pool gone',
+      false,
+    )
+    const text = `step "call" failed (step_failed): ${journaled(untyped)}`
+    expect(text).toContain('TypeError: db pool gone')
+    expect(journaledError(text)?.toJSON()).toMatchObject({
+      code: 'INTERNAL_SERVER_ERROR',
+      status: 500,
+      message: 'Internal Server Error: TypeError: db pool gone',
+    })
+  })
+
   test("a failure that is not the capability's is an opaque 500; a refusal a 503 with its reason", () => {
     const errors: unknown[] = []
     const logger = { warn: () => {}, error: (_: string, meta?: unknown) => void errors.push(meta) }

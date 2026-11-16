@@ -521,6 +521,15 @@ describe('web.read', () => {
     expect(usages.filter((u) => u.tokens.input > 0)).toHaveLength(1)
   })
 
+  test('a gateway 429 on the model pass is an UPSTREAM_ERROR that carries its status, not an opaque 500', async () => {
+    iu.on('messages', () => new Response('{"error":{"message":"rate limited"}}', { status: 429 }))
+    const error = await reader()
+      .call('web.read', { url: 'https://shop.example.com/long' }, { addUsage: () => {} })
+      .catch((e: unknown) => e)
+    expect(error).toMatchObject({ code: 'UPSTREAM_ERROR', status: 502, data: { status: 429 } })
+    expect((error as Error).message).toContain('(429)')
+  })
+
   test('a short page is returned as read, with no model call', async () => {
     iu.requests.length = 0
     const out = (await reader().call(

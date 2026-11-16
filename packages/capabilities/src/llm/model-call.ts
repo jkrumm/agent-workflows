@@ -12,7 +12,7 @@ import {
 } from '@agent-workflows/routes'
 import type { z } from 'zod'
 import type { Ctx, Usage } from '../context.ts'
-import { CapabilityError, fail } from '../errors.ts'
+import { CapabilityError, causeOf, fail } from '../errors.ts'
 import type { Env } from '../transports/config.ts'
 import { isBalanceError, refusedRequestId } from '../transports/http.ts'
 import { type JsonSchema, toJsonSchema } from '../transports/json-schema.ts'
@@ -190,27 +190,38 @@ async function completeOn(
   let reported = 0
   // A caller's effort is meant for the primary: a fallback runs at its own route's.
   const effort = route.isFallback ? route.effort : (args.effort ?? route.effort)
-  const result = await port.complete(
-    {
-      model: route.model,
-      system: args.system,
-      prompt: args.prompt,
-      ...(args.images ? { images: args.images } : {}),
-      json: args.json,
-      ...(args.jsonSchema ? { jsonSchema: args.jsonSchema } : {}),
-      effort,
-      ...(args.ctx.attribution
-        ? { attribution: refused ? { ...args.ctx.attribution, routeFallback: refused } : args.ctx.attribution }
-        : {}),
-      maxOutputTokens:
-        route.maxOutputTokens ?? (effort && effort !== 'none' ? DEFAULT_MAX_OUTPUT_WITH_EFFORT : DEFAULT_MAX_OUTPUT),
-    },
-    args.ctx.signal,
-    (attempt) => {
-      reported++
-      args.ctx.addUsage(toUsage(route, route.model, attempt))
-    },
-  )
+  const result = await port
+    .complete(
+      {
+        model: route.model,
+        system: args.system,
+        prompt: args.prompt,
+        ...(args.images ? { images: args.images } : {}),
+        json: args.json,
+        ...(args.jsonSchema ? { jsonSchema: args.jsonSchema } : {}),
+        effort,
+        ...(args.ctx.attribution
+          ? { attribution: refused ? { ...args.ctx.attribution, routeFallback: refused } : args.ctx.attribution }
+          : {}),
+        maxOutputTokens:
+          route.maxOutputTokens ?? (effort && effort !== 'none' ? DEFAULT_MAX_OUTPUT_WITH_EFFORT : DEFAULT_MAX_OUTPUT),
+      },
+      args.ctx.signal,
+      (attempt) => {
+        reported++
+        args.ctx.addUsage(toUsage(route, route.model, attempt))
+      },
+    )
+    .catch((error: unknown) => {
+      // Every adapter failure is typed already; anything else (a client library's own throw) must not reach the caller as an opaque 500.
+      if (error instanceof CapabilityError || args.ctx.signal.aborted) throw error
+      throw new CapabilityError(
+        'UPSTREAM_ERROR',
+        `${route.id}: ${causeOf(error)}`,
+        { transport: true },
+        { cause: error },
+      )
+    })
   if (reported === 0) args.ctx.addUsage(toUsage(route, result.model, undefined))
   const completion: Completion = { ...result, route }
   if (args.raw) return completion

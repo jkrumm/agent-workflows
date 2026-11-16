@@ -10,7 +10,7 @@ import {
   type ResolvedCliSpec,
   resolveDefinition,
 } from './define.ts'
-import { CapabilityCallError, CapabilityError, ERRORS } from './errors.ts'
+import { CapabilityCallError, CapabilityError, causeOf, ERRORS } from './errors.ts'
 
 /** Per-request context: where billed calls are reported, tagged with the capability. */
 export interface RequestContext {
@@ -28,11 +28,24 @@ export interface RequestContext {
 
 const CODES = Object.keys(ERRORS)
 
-const base = os
-  .$context<RequestContext>()
-  .errors(ERRORS)
-  // Runs on every door: maps what handlers throw to typed errors, so HTTP and `call` fail identically.
-  .use(async ({ next, errors }) => {
+const base = os.$context<RequestContext>().errors(ERRORS)
+
+/** The one log line of a throw no handler typed: which capability, and what threw, with its stack. */
+function reportUntyped(capability: string, error: unknown): void {
+  console.error('capability failed with an untyped error', {
+    capability,
+    name: error instanceof Error ? error.name : typeof error,
+    message: error instanceof Error ? error.message : String(error),
+    ...(error instanceof Error && error.stack ? { stack: error.stack } : {}),
+  })
+}
+
+/**
+ * Maps what a handler throws to typed errors on every door, so HTTP and `call` fail identically. A throw that is not
+ * typed is logged once and answered as an `INTERNAL_SERVER_ERROR` whose message names its cause.
+ */
+const mapErrors = (capability: string) =>
+  base.middleware(async ({ next, errors }) => {
     try {
       return await next()
     } catch (error) {
@@ -41,7 +54,11 @@ const base = os
         const code = error.code as keyof typeof ERRORS
         throw errors[code]({ message: error.message, data: error.data as never, cause: error })
       }
-      throw new ORPCError('INTERNAL_SERVER_ERROR', { cause: error })
+      reportUntyped(capability, error)
+      throw new ORPCError('INTERNAL_SERVER_ERROR', {
+        message: `Internal Server Error: ${causeOf(error)}`,
+        cause: error,
+      })
     }
   })
 
@@ -63,6 +80,7 @@ export function buildProcedure<I extends z.ZodObject, O extends z.ZodType>(
   resolved: ReturnType<typeof resolveDefinition>,
 ) {
   return base
+    .use(mapErrors(def.id))
     .route({
       method: resolved.route.method,
       path: resolved.route.path,

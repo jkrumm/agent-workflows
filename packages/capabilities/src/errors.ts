@@ -43,6 +43,8 @@ export const ERRORS = {
   URL_REFUSED: { status: 422, message: 'URL refused' },
   /** An input the capability cannot use and the schema cannot express: a file that is missing, too large or not an image. Nothing was sent. */
   INVALID_INPUT: { status: 422, message: 'Input rejected' },
+  /** The thing asked for does not exist (a package a registry has never heard of, a crate with no stable version). The call worked; the answer is "no". */
+  NOT_FOUND: { status: 404, message: 'Not found' },
   /** The caller's signal aborted the call. */
   CANCELLED: { status: 499, message: 'Cancelled' },
 } as const
@@ -67,6 +69,25 @@ export class CapabilityError<C extends string = string> extends Error {
     super(message, options)
     this.name = 'CapabilityError'
   }
+}
+
+const CAUSE_MAX_CHARS = 300
+
+/**
+ * What an untyped throw says about itself, short enough for a journal row and safe to hand a caller: `Name: message`,
+ * with URL query strings and credential-looking values removed and the whole cut to `CAUSE_MAX_CHARS`. The stack
+ * stays in the log line, never in the answer.
+ */
+export function causeOf(error: unknown): string {
+  const name = error instanceof Error ? error.name : typeof error
+  const message = error instanceof Error ? error.message : String(error)
+  const text = `${name}: ${message}`
+    .replace(/(https?:\/\/[^\s?#"'<>)]+)[?#][^\s"'<>)]*/gi, '$1')
+    .replace(/\b(bearer|basic)\s+[\w.~+/=-]+/gi, '$1 [redacted]')
+    .replace(/\b([\w-]*(?:token|secret|password|api[_-]?key|authorization)[\w-]*)(\s*[=:]\s*)\S+/gi, '$1$2[redacted]')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return text.length > CAUSE_MAX_CHARS ? `${text.slice(0, CAUSE_MAX_CHARS)}…` : text
 }
 
 export function fail<C extends ErrorCode>(
