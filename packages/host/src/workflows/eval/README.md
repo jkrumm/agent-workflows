@@ -13,11 +13,16 @@ A module's suite reads its cases from `$AGW_EVAL_DIR/<workflow>/cases.jsonl` unl
 | `agw eval compare <check> --a <fp> --b <fp> [--a-args '{…}'] [--b-args '{…}'] [--a-workflow <id>] [--b-workflow <id>] [--seed N]` | Two arms paired by case id: per metric the means, the mean and median delta (B − A) with seeded bootstrap 95% CIs (`stats.ts` in the eval package), and which arm the CI favours. Scores are higher-is-better except `falseAlarms`, `noise`, `findings`, `important` and the spend metrics `costUsd`, `wallMs`, `tokens`, `toolCalls` (`LOWER_IS_BETTER`). Reads only |
 | drift (no command) | every `AGW_DRIFT_INTERVAL_S`, up to 20 sampled, unscored production runs of a workflow with a scorer are scored (`source: drift`); the sample is a hash of the run id, the write first-writer-wins, so several hosts never score a run twice. A tick counts verdicts and recorded scorer errors apart (and warns on errors) |
 
-**Suites by workflow** (each module's `eval/cases.jsonl` is committed and synthetic unless noted; the scorers are deterministic, none calls a judge):
+**Suites by workflow** (each module's `eval/cases.jsonl` is committed and synthetic unless noted; the scorers are deterministic, and a judged `judged` score is added where a judge is given: `digest`, `factory-digest`, `factory-spec-screen`, `judge-decide.ts`; `docs/evals/2026-11-16-judged-drift.md`). A suite names the workflow it replays when that is not its module's id (`factory-digest` replays `factory.digest`, `Suite.workflow`):
 
 | Workflow | Cases | Scorer measures |
 |-|-|-|
 | `digest`, `factory-classify` | committed | see their READMEs |
+| `factory-steward` | 14 stalls of the journal (placeholders), 6 wake, 2 requeue, 4 raise_decision, 2 none | `recall.<action>` and `precision.<action>` (present only where they mean something, so the run's means are the per-action figures), `correct`; arm param `stewardWording` (`docs/evals/2026-11-16-steward-wording.md`) |
+| `factory-queue` | 10 snapshots: 6 with a pair the factory later ordered, 4 quiet | `edgeRecall`, `quiet`; the order has no independent truth and is not scored |
+| `factory-fix-classes` | 9 cases, 30 commits (28 of this repo's fixes, 2 written) | `accuracy`, `mechanical` (the paths decide), `judged` (a reading) |
+| `factory-digest` | 9 project snapshots | `sections`, `grouped`, `riskRecall`, `quiet`, `nextEmpty`, `clean`, `judged` |
+| `factory-hygiene` | 3 cases over a committed fixture checkout (`factory-hygiene/eval/fixture`) with planted stale and filler documents and clean controls | `recall`, `anchored`, `precision`, `cleanKept` |
 | `factory-ask` | 34, committed in `packages/eval/factory-ask/` (real factory Decisions, scrubbed) | owner kept, no option nothing can apply, no fall back to the default when the facts decide; guards against escalating everything (`factory-ask/README.md` §Eval) |
 | `narrative` | 6, a `fixture` of commits, `polish: false` | `changed`, shape, must-mention terms, no removed mechanism as current, no hash or canary, length band, dated entries |
 | `prose-polish` | 8 drafts with planted lint issues | lint recomputed (honest, not worse, fixed), planted phrases gone, must-keep facts, length band |
