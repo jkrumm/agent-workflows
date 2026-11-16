@@ -2913,11 +2913,13 @@ describe('the challenged page kept open for the owner', () => {
 
     // The script itself, run against a stub of the parts of the page it touches.
     const listeners: Record<string, (event: unknown) => void> = {}
-    const attrs = new Map<string, string>()
-    const link = {
-      getAttribute: (name: string) => attrs.get(name) ?? null,
-      setAttribute: (name: string, value: string) => void attrs.set(name, value),
-    }
+    const element = (attrs: Record<string, string> = {}) => ({
+      attrs,
+      getAttribute: (name: string) => attrs[name] ?? null,
+      setAttribute: (name: string, value: string) => void (attrs[name] = value),
+    })
+    type El = ReturnType<typeof element>
+    let base: El | null = null
     const win: Record<string, unknown> = {
       HTMLFormElement: {
         prototype: {
@@ -2929,27 +2931,69 @@ describe('the challenged page kept open for the owner', () => {
     }
     const doc = {
       addEventListener: (type: string, handler: (event: unknown) => void) => void (listeners[type] = handler),
+      querySelector: () => base,
     }
-    Object.defineProperty(win, 'window', { value: win })
     new Function(
       'globalThis',
       `with (globalThis) { ${NO_POPUPS.replace('})(window, document)', '})(globalThis, document)')} }`,
-    )(Object.assign(win, { document: doc }))
+    )(Object.assign(win, { window: win, document: doc }))
     expect((win.open as () => unknown)()).toBeNull()
     expect(() => Object.defineProperty(win, 'open', { value: () => 1 })).toThrow()
-    attrs.set('target', '_blank')
-    listeners.click!({ target: { closest: () => link } })
-    expect(attrs.get('target')).toBe('_self')
-    attrs.set('target', 'popup')
-    listeners.submit!({ target: link })
-    expect(attrs.get('target')).toBe('_self')
-    attrs.set('target', '_top')
-    listeners.auxclick!({ target: { closest: () => link } })
-    expect(attrs.get('target')).toBe('_top')
-    attrs.set('target', '_blank')
-    const form = (win.HTMLFormElement as { prototype: { submit: (this: typeof link) => string } }).prototype
-    expect(form.submit.call(link)).toBe('submitted')
-    expect(attrs.get('target')).toBe('_self')
+
+    /** A click (or other event) on `node`, whose closest() answers per selector. */
+    const hit = (
+      type: string,
+      parts: { link?: El; submitter?: El; form?: El },
+      extra: object = {},
+    ): { prevented: boolean } => {
+      const result = { prevented: false }
+      const closest = (selector: string) =>
+        selector.startsWith('a[href]')
+          ? (parts.link ?? null)
+          : selector.startsWith('button[formtarget]')
+            ? (parts.submitter ?? null)
+            : selector === 'form'
+              ? (parts.form ?? null)
+              : null
+      listeners[type]!({
+        type,
+        button: 0,
+        target: { closest },
+        preventDefault: () => (result.prevented = true),
+        ...extra,
+      })
+      return result
+    }
+    const link = element({ target: '_blank' })
+    hit('click', { link })
+    expect(link.attrs.target).toBe('_self')
+    const named = element({ target: '_top' })
+    expect(hit('click', { link: named }).prevented).toBe(false)
+    expect(named.attrs.target).toBe('_top')
+    // A link with no target of its own follows the document's <base target>.
+    base = element({ target: '_blank' })
+    const inherited = element({ href: '/x' })
+    hit('click', { link: inherited })
+    expect(inherited.attrs.target).toBe('_self')
+    base = null
+    // A submit button's formtarget and its form's target.
+    const submitter = element({ formtarget: '_blank' })
+    const target = element({ target: 'popup' })
+    hit('click', { submitter, form: target })
+    expect([submitter.attrs.formtarget, target.attrs.target]).toEqual(['_self', '_self'])
+    const late = element({ target: '_blank' })
+    listeners.submit!({ target: late, submitter: element({ formtarget: '_blank' }) })
+    expect(late.attrs.target).toBe('_self')
+    // New-tab gestures on a link do nothing: modifier, middle button, auxclick.
+    for (const extra of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { button: 1 }]) {
+      expect(hit('click', { link: element({ href: '/y' }) }, extra).prevented).toBe(true)
+    }
+    expect(hit('auxclick', { link: element({ href: '/y' }) }).prevented).toBe(true)
+    // form.submit() from script.
+    const scripted = element({ target: '_blank' })
+    const proto = (win.HTMLFormElement as { prototype: { submit: (this: El) => string } }).prototype
+    expect(proto.submit.call(scripted)).toBe('submitted')
+    expect(scripted.attrs.target).toBe('_self')
   })
 
   test('at most one kept tab per host (a second keep replaces the first) and three overall (the oldest goes)', async () => {

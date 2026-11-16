@@ -245,26 +245,49 @@ const NO_WEBSOCKET =
 
 /**
  * Script for a tab kept open for a person to click in: it opens no second window. A popup is a tab of the same Chrome
- * with no guard of its own, so `window.open` is closed off for good, and a link or form aimed at a new window (`_blank`,
- * a window name) is turned to the page's own window just before it fires. Takes the page's `window` and `document`.
+ * with no guard of its own, so `window.open` is closed off for good; a link, area, form or submit button whose target is
+ * a new window (its own `target` or `formtarget`, or the document's `<base target>`) is turned to the page's own window
+ * before the click or submit acts; a link clicked with a modifier (new tab) or a button other than the first does
+ * nothing. What it cannot reach: the browser's own context menu and frames the browser runs in another process.
+ * Takes the page's `window` and `document`.
  */
 export const NO_POPUPS = `(function (window, document) {
   Object.defineProperty(window, "open", { value: function () { return null }, configurable: false, writable: false })
-  var own = function (el) {
-    var target = el && el.getAttribute ? el.getAttribute("target") : null
-    if (target && !/^_(self|top|parent)$/i.test(target)) el.setAttribute("target", "_self")
+  var SELF = /^_(self|top|parent)$/i
+  var own = function (el, attribute) {
+    var target = el.getAttribute(attribute)
+    if (target === null && attribute === "target") {
+      var base = document.querySelector ? document.querySelector("base[target]") : null
+      target = base ? base.getAttribute("target") : null
+    }
+    if (target && !SELF.test(target)) el.setAttribute(attribute, "_self")
   }
-  var onLink = function (event) {
-    var el = event.target && event.target.closest ? event.target.closest("a[target], area[target], form[target]") : null
-    if (el) own(el)
+  var act = function (event) {
+    var node = event.target && event.target.closest ? event.target : null
+    if (!node) return
+    var link = node.closest("a[href], area[href]")
+    if (link) {
+      if (event.type === "auxclick" || event.button > 0 || event.ctrlKey || event.metaKey || event.shiftKey) {
+        event.preventDefault()
+        return
+      }
+      own(link, "target")
+    }
+    var submitter = node.closest("button[formtarget], input[formtarget]")
+    if (submitter) own(submitter, "formtarget")
+    var form = node.closest("form")
+    if (form) own(form, "target")
   }
-  document.addEventListener("click", onLink, true)
-  document.addEventListener("auxclick", onLink, true)
-  document.addEventListener("submit", function (event) { own(event.target) }, true)
+  document.addEventListener("click", act, true)
+  document.addEventListener("auxclick", act, true)
+  document.addEventListener("submit", function (event) {
+    if (event.target && event.target.getAttribute) own(event.target, "target")
+    if (event.submitter && event.submitter.getAttribute) own(event.submitter, "formtarget")
+  }, true)
   if (window.HTMLFormElement) {
     var submit = window.HTMLFormElement.prototype.submit
     Object.defineProperty(window.HTMLFormElement.prototype, "submit", {
-      value: function () { own(this); return submit.call(this) },
+      value: function () { own(this, "target"); return submit.call(this) },
       configurable: false,
       writable: false,
     })
@@ -516,8 +539,8 @@ export const keptHosts = (): string[] => [...kept.keys()]
  * A kept tab has no read to ride along on, so the request guard stays attached to its session for as long as the tab is
  * kept: every request the page makes while the owner clicks through the wall (and the document it navigates to) is vetted
  * by the same `policy` as in a read, and a refused document closes the tab. The guard covers this tab only: a popup
- * would be a tab of the same Chrome with none, so the page gets `NO_POPUPS` (no `window.open`, links and forms aimed at
- * a new window turn to the page's own). Frames the browser runs in another process (cross-origin iframes, the captcha
+ * would be a tab of the same Chrome with none, so the page gets `NO_POPUPS` (no `window.open`; a link, form or submit button aimed
+ * at a new window, by its own target or `<base target>`, turns to the page's own; a new-tab click does nothing). Frames the browser runs in another process (cross-origin iframes, the captcha
  * widget) are outside this session and its scripts, as they are in a read. One tab per host (a second keep replaces
  * the first) and `MAX_KEPT` overall (the oldest goes). A tab that cannot be kept is closed and the failure thrown.
  */
