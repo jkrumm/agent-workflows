@@ -1,5 +1,5 @@
 import type { RouteEntry } from '../schema.ts'
-import { EASY, FAST, HARD } from './_shared.ts'
+import { EASY, FAST } from './_shared.ts'
 
 // Hermes' own model seats (owner, 2026-11-04: Hermes' model choices are central). Hermes calls the gateway itself and
 // reads these through `agw routes` (model id, effort, output ceiling, fallback) when it renders its config, so a tier
@@ -15,7 +15,7 @@ const routes = {
   // Tool-call approval: a yes/no classification.
   'hermes.approval': { wire: 'anthropic', ...FAST.call },
   // Image and screenshot reading.
-  'hermes.vision': { wire: 'anthropic', ...HARD.call },
+  'hermes.vision': { wire: 'anthropic', ...FAST.call },
 } satisfies Record<string, RouteEntry>
 
 export default routes
