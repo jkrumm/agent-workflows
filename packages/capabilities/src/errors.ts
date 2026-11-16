@@ -19,6 +19,18 @@ export const ERRORS = {
       exhausted: z.literal(true).optional(),
       /** The primary was refused for provider balance and the fallback failed too (`FallbackFailedError`); the cause is the fallback's error. */
       reason: z.literal('fallback_failed').optional(),
+      /** `web.fetch` only: the reads the chain tried before it gave up and the wall time they took, as a success reports them (`fetchOutput.legs`, `wallMs`). Hostnames and timings, never a URL. */
+      legs: z
+        .array(
+          z.object({
+            leg: z.string(),
+            ms: z.number().int(),
+            outcome: z.string(),
+            waitMs: z.number().int().optional(),
+          }),
+        )
+        .optional(),
+      wallMs: z.number().int().optional(),
       /** A vendor-wrapped 400 or an error frame of a stream: the vendor's own words, structured (a moderation block names its stage and categories). */
       userError: z
         .object({

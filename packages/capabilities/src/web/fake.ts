@@ -91,6 +91,8 @@ export function fakeWeb(script: Script = {}): FakeWeb {
           truncated: false,
           via: 'direct' as const,
           cached: false,
+          legs: [{ leg: 'direct' as const, ms: 1, outcome: 'ok' as const }],
+          wallMs: 1,
           fetchedAt: '2026-10-30T12:00:00.000Z',
         }),
       }),

@@ -35,6 +35,8 @@ agent's `tools` counts. `--depth` defaults to `standard`. A long run waits like 
   URL and reason on the call's ledger row (`research_tool_calls.blocked`, migration 0012), counted in code, never
   asserted by the agent. A page read on another try is not listed. The caller opens the list in a real browser and
   feeds the text back as `--context` ("Given background") on the next run. A 404 or 5xx is not a block.
+  Every call's row also carries `wall_ms`; a `web_fetch` row adds `host` (hostname only), `via`, `cached`, `legs` and
+  `blocked_reason` (migration 0021). The audit queries are in `packages/capabilities/README.md` §web.fetch telemetry.
 - **Empty pages** are not blocks. `web.fetch` reads an empty shell (no list items, a JavaScript-required or no-results
   notice) again by itself: the browser, other spellings of the URL, Tavily Extract (`packages/capabilities/README.md`
   §`web.fetch` chain). A page that stays a shell comes back with `incomplete` and `tried`; the agent (`agents/research`)

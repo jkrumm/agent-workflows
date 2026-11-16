@@ -8,10 +8,11 @@ import { fakeTransports } from '@agent-workflows/testing/transports'
 import { fakeWeb } from './fake.ts'
 import { askHumanHandoff, askOnce, fakeHandoff, resetHandoffLimit } from './handoff.ts'
 import type { WebDeps } from './deps.ts'
-import { BLOCK_REASONS, blockedReason, createWebCapabilities } from './index.ts'
+import { BLOCK_REASONS, blockedReason, createWebCapabilities, fetchFacts } from './index.ts'
 import {
   BrowserFailure,
   BrowserRefused,
+  type BrowserReadOptions,
   browserFromEnv,
   dropAllKept,
   keepViaCdp,
@@ -532,7 +533,7 @@ describe('web.fetch', () => {
     })
     const { call } = run({ ...n.deps, env: { TAVILY_API_KEY: 't' } })
     const gone = await failure(call('web.fetch', { url: 'https://example.com/gone' }))
-    expect(gone.data).toEqual({ status: 404 })
+    expect(gone.data).toMatchObject({ status: 404, legs: [{ leg: 'direct', outcome: 'missing' }] })
     expect(n.to('https://api.tavily.com')).toHaveLength(0)
 
     const keyless = run({ ...n.deps, env: {} })
@@ -540,7 +541,7 @@ describe('web.fetch', () => {
     expect(error.message).toContain('direct: HTTP 403')
     expect(error.message).toContain('TAVILY_API_KEY is not set')
     // The page's own client error travels in `data`: the judge reads a 403 as an answer, not an outage.
-    expect(error.data).toEqual({ status: 403 })
+    expect(error.data).toMatchObject({ status: 403 })
     expect(blockedReason(error.message)).toBe('forbidden')
   })
 
@@ -1663,7 +1664,7 @@ function fakeBrowser(
   const allowAll: RequestPolicy = { allowUrl: async () => true, allowAddress: () => true }
   const timed =
     (policy: RequestPolicy = allowAll) =>
-    (url: string, signal: AbortSignal, options?: { html?: boolean }) =>
+    (url: string, signal: AbortSignal, options?: BrowserReadOptions) =>
       readViaCdp(base, url, signal, policy, { settleMs: 400, pollMs: 40 }, options)
   return {
     base,
@@ -3189,5 +3190,142 @@ describe('the challenged page kept open for the owner', () => {
     } finally {
       hold.stop()
     }
+  })
+})
+
+describe('web.fetch: telemetry of the chain', () => {
+  const WALL = '<title>Just a moment...</title> challenge-platform'
+  const REAL = 'Die Jura E4 kostet 549 Euro. '.repeat(20)
+  const shop = 'https://shop.example.com/jura-e4?session=SECRET'
+  type Out = {
+    via: string
+    cached: boolean
+    wallMs: number
+    legs: { leg: string; ms: number; outcome: string; waitMs?: number }[]
+  }
+
+  test('a plain read has one direct leg; the repeat is cached with no legs', async () => {
+    const n = net({
+      'https://example.com/a': html(`<html><body><main>${'Body text. '.repeat(40)}</main></body></html>`),
+    })
+    const { call } = run(n.deps)
+    const first = (await call('web.fetch', { url: 'https://example.com/a' })) as Out
+    expect(first).toMatchObject({ via: 'direct', cached: false, legs: [{ leg: 'direct', outcome: 'ok' }] })
+    expect(Number.isInteger(first.wallMs)).toBe(true)
+    const again = (await call('web.fetch', { url: 'https://example.com/a' })) as Out
+    expect(again).toMatchObject({ via: 'direct', cached: true, legs: [] })
+  })
+
+  test('Tavily rescuing a blocked page shows as a blocked direct leg and an ok Extract leg', async () => {
+    const n = net({
+      'https://example.com/wall': status(403, WALL),
+      'https://api.tavily.com/extract': json({ results: [{ url: 'https://example.com/wall', raw_content: REAL }] }),
+    })
+    const out = (await run({ ...n.deps, env: { TAVILY_API_KEY: 't' } }).call('web.fetch', {
+      url: 'https://example.com/wall',
+    })) as Out
+    expect(out.via).toBe('tavily-extract')
+    expect(out.legs.map((l) => [l.leg, l.outcome])).toEqual([
+      ['direct', 'blocked'],
+      ['tavily-extract', 'ok'],
+    ])
+  })
+
+  test('a browser leg reports how long it waited for a tab; a failed call carries every leg in the error data', async () => {
+    const browser = fakeBrowser([{ title: 'Just a moment...', text: 'Checking your browser' }])
+    try {
+      const n = net({ [shop.split('?')[0]!]: status(403, WALL), 'https://api.tavily.com': json({ results: [] }) })
+      const { call } = run({ ...n.deps, env: { TAVILY_API_KEY: 't' }, browser: browser.read })
+      const error = await failure(call('web.fetch', { url: shop }))
+      const data = error.data as { status?: number; wallMs: number; legs: Out['legs'] }
+      expect(data.legs.map((l) => [l.leg, l.outcome])).toEqual([
+        ['direct', 'blocked'],
+        ['browser', 'challenge'],
+        ['tavily-extract', 'failed'],
+      ])
+      expect(data.legs[1]!.waitMs).toBeGreaterThanOrEqual(0)
+      expect(data.wallMs).toBeGreaterThanOrEqual(data.legs.reduce((sum, l) => sum + l.ms, 0))
+      expect(fetchFacts(shop, { ok: false, error: error.message, data })).toMatchObject({
+        host: 'shop.example.com',
+        blocked: 'needs-human',
+      })
+    } finally {
+      browser.stop()
+    }
+  })
+
+  test('another spelling of the URL is its own leg', async () => {
+    const page = 'https://boardgamegeek.com/geeklist/328691'
+    const shell =
+      '<html><head><title>BGG</title></head><body><div id="app"></div><script src="/app.js"></script></body></html>'
+    const header = 'Skip Navigation\n202 Items\nResults - Page 2\nof 9\n'.repeat(3)
+    const browser = async (url: string) => ({
+      finalUrl: url,
+      title: 'BGG',
+      text:
+        url === `${page}?page=2` ? `${header}8.0\n26. Viticulture Essential Edition\n#26  22\nWeight: Medium` : header,
+      challenge: false,
+    })
+    const n = net({
+      [page]: [
+        (url) =>
+          url.includes('/page/2')
+            ? new Response(null, { status: 302, headers: { location: `${page}/2023-top?page=2` } })
+            : new Response(shell, { headers: { 'content-type': 'text/html' } }),
+      ],
+    })
+    const out = (await run({ ...n.deps, browser }).call('web.fetch', { url: `${page}/page/2` })) as Out
+    expect(out.via).toBe('browser')
+    expect(out.legs.at(-1)).toMatchObject({ leg: 'alternate-browser', outcome: 'ok' })
+  })
+
+  test('the wait for a free tab is reported by the browser read', async () => {
+    const allowAll: RequestPolicy = { allowUrl: async () => true, allowAddress: () => true }
+    const hung = hungBrowser()
+    const working = fakeBrowser([{ title: 'Jura', text: REAL }])
+    try {
+      const signal = new AbortController().signal
+      const holders = [1, 2, 3].map(() =>
+        readViaCdp(hung.base, 'https://example.com/', signal, allowAll, { openMs: 300 }).catch(() => undefined),
+      )
+      let waited = -1
+      await working.read('https://example.com/', signal, { onTabWait: (ms) => (waited = ms) })
+      await Promise.all(holders)
+      expect(waited).toBeGreaterThanOrEqual(150)
+    } finally {
+      hung.stop()
+      working.stop()
+    }
+  })
+
+  test('the facts carry the host and nothing of the path, query or fragment', () => {
+    const facts = fetchFacts('https://User:pw@Shop.Example.com:8443/a/b?token=SECRET#frag', {
+      ok: true,
+      result: { via: 'browser', cached: false, wallMs: 5, legs: [{ leg: 'browser', ms: 5, outcome: 'ok' }] },
+    })
+    expect(facts).toEqual({
+      host: 'shop.example.com',
+      via: 'browser',
+      cached: false,
+      wallMs: 5,
+      legs: [{ leg: 'browser', ms: 5, outcome: 'ok' }],
+    })
+    expect(JSON.stringify(facts)).not.toMatch(/SECRET|frag|\/a\/b|pw/)
+    expect(fetchFacts('not a url', { ok: false, error: 'boom' })).toEqual({})
+  })
+})
+
+describe('web.fetch: parallel callers of a failing read', () => {
+  test('a caller that only waited on the leader reports no legs of its own', async () => {
+    const n = net({ 'https://example.com/wall': status(403, '<title>Just a moment...</title> challenge-platform') })
+    const { call } = run(n.deps)
+    const [a, b] = await Promise.all([
+      failure(call('web.fetch', { url: 'https://example.com/wall' })),
+      failure(call('web.fetch', { url: 'https://example.com/wall' })),
+    ])
+    const legsOf = (e: CapabilityCallError) => (e.data as { legs: unknown[] }).legs.length
+    const [joiner, leader] = [legsOf(a), legsOf(b)].sort((x, y) => x - y)
+    expect(joiner).toBe(0)
+    expect(leader).toBeGreaterThan(0)
   })
 })

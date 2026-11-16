@@ -322,7 +322,7 @@ export async function bootProcess(
     const workflows = await definition.workflows(base)
     // Direct capability calls over HTTP run as `cap.<id>` workflows (concept N6): registered, but not operations.
     const capabilityWorkflows = definition.serveCapabilities
-      ? createCapabilityWorkflows(registry)
+      ? createCapabilityWorkflows(registry, (runId, attributes) => platform.telemetry.annotateRun(runId, attributes))
       : new Map<string, never>()
     const agentsDir = config.agentsDir ?? 'agents'
     const agents = loadAgentDefinitions(agentsDir)

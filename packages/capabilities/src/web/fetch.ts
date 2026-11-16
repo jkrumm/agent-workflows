@@ -34,6 +34,20 @@ export const fetchInput = z.object({
     ),
 })
 
+/** The reads of the chain, in the order they ran. An alternate is the same page under another spelling of its URL. */
+export const LEG_NAMES = ['direct', 'browser', 'alternate-direct', 'alternate-browser', 'tavily-extract'] as const
+export const LEG_OUTCOMES = ['ok', 'incomplete', 'blocked', 'challenge', 'missing', 'timeout', 'failed'] as const
+
+export const legSchema = z.object({
+  leg: z.enum(LEG_NAMES),
+  /** Wall time of the read, the browser's wait for a tab slot included. */
+  ms: z.number().int().nonnegative(),
+  outcome: z.enum(LEG_OUTCOMES),
+  /** Browser legs: the part of `ms` spent waiting for a free tab. */
+  waitMs: z.number().int().nonnegative().optional(),
+})
+export type Leg = z.infer<typeof legSchema>
+
 export const fetchOutput = z.object({
   url: z.string().describe('The URL as asked'),
   finalUrl: z.string().describe('Where the text came from, after redirects'),
@@ -42,6 +56,12 @@ export const fetchOutput = z.object({
   truncated: z.boolean(),
   via: z.enum(['direct', 'browser', 'tavily-extract']),
   cached: z.boolean().describe('Served from the 6-hour read cache of this process, not read again'),
+  legs: z
+    .array(legSchema)
+    .describe(
+      'The reads this call made, in order (empty when the answer came from the cache or from a read under way)',
+    ),
+  wallMs: z.number().int().nonnegative().describe('Wall time of the whole call'),
   fetchedAt: z.string().describe('ISO time the page was read'),
   incomplete: z
     .string()
@@ -78,7 +98,8 @@ const CACHE_MAX_ENTRIES = 300
 /** Text held by the cache, in UTF-8 bytes of `read.text` (what a page of non-Latin text actually costs). */
 const CACHE_MAX_BYTES = 10_000_000
 
-type CachedRead = { read: Read; via: 'direct' | 'browser' | 'tavily-extract'; at: number; size: number }
+type Via = 'direct' | 'browser' | 'tavily-extract'
+type CachedRead = { read: Read; via: Via; at: number; size: number }
 
 /** The reads of one process by URL (fragment dropped), oldest evicted first. Only successful, complete reads go in. */
 class ReadCache {
@@ -216,6 +237,63 @@ interface Read {
   incomplete?: string
   /** The body was longer than the read cap, so the text is a prefix of the page. */
   capped?: boolean
+}
+
+/** The hostname of a URL, lowercased; never its path, query or credentials (a URL can carry secrets). Undefined for text that is no URL. */
+export function hostOf(url: unknown): string | undefined {
+  if (typeof url !== 'string') return undefined
+  try {
+    return new URL(url.trim()).hostname.toLowerCase() || undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** What one `web.fetch` call tells about the chain: kept as columns of the research ledger and as attributes of the call's run span. Nothing here is a URL but its host. */
+export type FetchFacts = {
+  host?: string
+  /** The leg that answered; absent for a call that failed. */
+  via?: Via
+  cached?: boolean
+  wallMs?: number
+  legs?: Leg[]
+  blocked?: BlockReason
+}
+
+/** The facts of a call to `web.fetch` for `url`: from its output when it worked, from the failure's data and message when it did not. */
+export function fetchFacts(
+  url: unknown,
+  outcome: { ok: true; result: unknown } | { ok: false; error: string; data?: unknown },
+): FetchFacts {
+  const host = hostOf(url)
+  const base = host ? { host } : {}
+  if (outcome.ok) {
+    const parsed = fetchOutput.pick({ via: true, cached: true, legs: true, wallMs: true }).safeParse(outcome.result)
+    return parsed.success ? { ...base, ...parsed.data } : base
+  }
+  const failure = z.object({ legs: z.array(legSchema), wallMs: z.number().int().nonnegative() }).safeParse(outcome.data)
+  const blocked = blockedReason(outcome.error)
+  return { ...base, ...(failure.success ? failure.data : {}), ...(blocked ? { blocked } : {}) }
+}
+
+/** A failure the leader's read ended in, as a caller that only waited on it reports it: no legs (it read nothing) and its own wall time. */
+function asJoiner(error: unknown, startedAt: number): unknown {
+  const data = error instanceof CapabilityError ? error.data : undefined
+  if (!(error instanceof CapabilityError) || typeof data !== 'object' || data === null || !('legs' in data))
+    return error
+  return new CapabilityError(
+    error.code,
+    error.message,
+    { ...data, legs: [], wallMs: Date.now() - startedAt },
+    { cause: error },
+  )
+}
+
+/** What a failed read of a plain or Extract leg is, for the timeline. */
+function directOutcome(error: DirectFailure): Leg['outcome'] {
+  if (error.missing) return 'missing'
+  if (error.blocked) return 'blocked'
+  return /timed out/i.test(error.message) ? 'timeout' : 'failed'
 }
 
 /** A direct read that did not produce text, with what to tell the caller. `missing` ends the chain: the page is gone. */
@@ -512,7 +590,7 @@ export const createFetch = (deps: ResolvedWebDeps) => {
       const hit = cached && render && cached.via === 'direct' ? undefined : cached
       if (hit) {
         ctx.addUsage(webUsage('cache', 0))
-        return shape(url, hit.read, hit.via, maxChars, { cached: true, at: hit.at })
+        return shape(url, hit.read, hit.via, maxChars, { cached: true, at: hit.at }, { legs: [], startedAt })
       }
       const flightKey = `${render ? 'render' : 'plain'} ${key}`
       // Parallel callers of one page share the read already under way: it paid, they did not read.
@@ -522,17 +600,35 @@ export const createFetch = (deps: ResolvedWebDeps) => {
         try {
           const found = await until(flight, ctx.signal)
           ctx.addUsage(webUsage('cache', 0))
-          return shape(url, found.read, found.via, maxChars, { cached: true, at: found.at }, found.tried)
+          return shape(
+            url,
+            found.read,
+            found.via,
+            maxChars,
+            { cached: true, at: found.at },
+            { legs: [], startedAt },
+            found.tried,
+          )
         } catch (error) {
           // The leader's cancel is its own: a joiner whose signal is live reads for itself (or joins whoever took over).
           if (ctx.signal.aborted) throw fail('CANCELLED', 'cancelled')
-          if (!(error instanceof CapabilityError && error.code === 'CANCELLED')) throw error
+          if (!(error instanceof CapabilityError && error.code === 'CANCELLED')) throw asJoiner(error, startedAt)
         }
       }
+      // Every read of this call, timed: what the audit of the chain (which leg answers, how slow, who rescues) reads.
+      const legs: Leg[] = []
+      const timeline = (leg: Leg['leg'], began: number, outcome: Leg['outcome'], waitMs?: number) =>
+        legs.push({ leg, ms: Date.now() - began, outcome, ...(waitMs === undefined ? {} : { waitMs }) })
+      /** A failure's data: the page's status, the legs it went through and the wall time, for the caller's telemetry. */
+      const failureData = (status?: number) => ({
+        ...(status === undefined ? {} : { status }),
+        legs,
+        wallMs: Date.now() - startedAt,
+      })
       /** A complete read: kept for the next caller. */
       const done = (read: Read, via: CachedRead['via']): Found => {
         const entry = cache.set(key, read, via, startedAt)
-        return { read, via, at: entry.at }
+        return { read, via, at: entry.at, legs }
       }
       /** The read chain; resolves to what every caller of this read is shaped from. */
       const lead = async (): Promise<Found> => {
@@ -559,28 +655,35 @@ export const createFetch = (deps: ResolvedWebDeps) => {
         const rendered = render && browser !== undefined && !isPdf
         const keep = (read: Read, via: CachedRead['via'], why: string) => {
           if (kept.found && kept.found.read.text.length >= read.text.length) return
-          kept.found = { read: { ...read, incomplete: why }, via, at: Date.now() }
+          kept.found = { read: { ...read, incomplete: why }, via, at: Date.now(), legs }
         }
         /** Names `target` in a failure line when it is not the URL as asked. */
         const where = (leg: string, target: string) => (target === url ? leg : `${leg} ${target}`)
         /** The plain read of `target`; a complete page is the answer, anything else is recorded for the legs behind it. */
         const plain = async (target = url) => {
           if (target !== url) tried.push(where('direct', target))
+          const leg = target === url ? 'direct' : 'alternate-direct'
+          const began = Date.now()
           try {
             const read = await direct(deps, target, ctx.signal)
             free()
-            if (!read.incomplete) return done(read, 'direct')
+            if (!read.incomplete) {
+              timeline(leg, began, 'ok')
+              return done(read, 'direct')
+            }
+            timeline(leg, began, 'incomplete')
             keep(read, 'direct', read.incomplete)
             failures.push(`${where('direct', target)}: ${read.incomplete}`)
           } catch (error) {
             if (!(error instanceof DirectFailure)) throw error
             free()
+            timeline(leg, began, directOutcome(error))
             // A page that is definitively gone is not worth a paid second opinion; another spelling of it may be missing alone.
             if (error.missing && target === url)
               throw fail(
                 'UPSTREAM_ERROR',
                 `web.fetch: ${error.message} · ${nextStep(undefined, error.status ?? 404, [])}`,
-                { status: error.status ?? 404 },
+                failureData(error.status ?? 404),
               )
             if (target === url && error.status !== undefined && error.status >= 400 && error.status < 500)
               pageStatus = error.status
@@ -594,18 +697,24 @@ export const createFetch = (deps: ResolvedWebDeps) => {
         const browsed = async (target = url) => {
           if (!browser) return undefined
           if (target !== url || kept.found || rendered) tried.push(where('browser', target))
+          const leg = target === url ? 'browser' : 'alternate-browser'
+          const began = Date.now()
+          let waitMs = 0
+          let outcome: Leg['outcome'] = 'failed'
           try {
-            const page = await browser(target, ctx.signal)
+            const page = await browser(target, ctx.signal, { onTabWait: (ms) => (waitMs = ms) })
             ctx.addUsage(webUsage('browser', 0))
             // A read that passes ends the handoff of its host: the tab kept for the owner is no longer needed.
             if (!page.challenge) void pageHold?.release(new URL(target).hostname).catch(() => undefined)
             if (page.challenge) {
               challenged = target
+              outcome = 'challenge'
               // Still a wall after the settle time: a person has to pass it once (the profile keeps the cookie). The page's
               // own title is not repeated: it is untrusted text.
               blocked = 'needs-human'
               failures.push(`${where('browser', target)}: challenge not cleared`)
             } else if (page.text === '') {
+              outcome = 'incomplete'
               failures.push(`${where('browser', target)}: no text on the page`)
             } else {
               // Every request was vetted as it went out; where the browser ended is checked once more.
@@ -618,7 +727,11 @@ export const createFetch = (deps: ResolvedWebDeps) => {
               }
               const read = { finalUrl: page.finalUrl, ...(page.title ? { title: page.title } : {}), text: page.text }
               const why = incompleteReason(page.finalUrl, page.text)
-              if (!why) return done(read, 'browser')
+              if (!why) {
+                outcome = 'ok'
+                return done(read, 'browser')
+              }
+              outcome = 'incomplete'
               keep(read, 'browser', why)
               failures.push(`${where('browser', target)}: ${why}`)
             }
@@ -626,9 +739,12 @@ export const createFetch = (deps: ResolvedWebDeps) => {
             if (ctx.signal.aborted) throw fail('CANCELLED', 'cancelled')
             if (error instanceof BrowserRefused) throw fail('URL_REFUSED', `web.fetch: ${error.message}`)
             if (!(error instanceof BrowserFailure)) throw error
+            outcome = /timed out/i.test(error.message) ? 'timeout' : 'failed'
             // The browser being down is worth a line in the log: the paid Tavily read below may quietly cover for it.
             deps.warn(`web.fetch: the browser fallback failed: ${error.message}`)
             failures.push(`${where('browser', target)}: ${error.message}`)
+          } finally {
+            timeline(leg, began, outcome, waitMs)
           }
           return undefined
         }
@@ -665,21 +781,27 @@ export const createFetch = (deps: ResolvedWebDeps) => {
           }
         }
 
+        const extractBegan = Date.now()
         try {
           tried.push('tavily-extract')
           const read = await extract(deps, url, ctx.signal, ctx.addUsage)
           const withTitle = { ...read, ...(kept.found?.read.title ? { title: kept.found.read.title } : {}) }
           const why = incompleteReason(read.finalUrl, read.text)
-          if (!why) return done(withTitle, 'tavily-extract')
+          if (!why) {
+            timeline('tavily-extract', extractBegan, 'ok')
+            return done(withTitle, 'tavily-extract')
+          }
+          timeline('tavily-extract', extractBegan, 'incomplete')
           keep(withTitle, 'tavily-extract', why)
           failures.push(`tavily-extract: ${why}`)
         } catch (error) {
           if (!(error instanceof DirectFailure)) throw error
+          timeline('tavily-extract', extractBegan, directOutcome(error))
           failures.push(error.message)
         }
 
         // A kept thin read is still a read: better than an error for a short page.
-        if (kept.found && kept.found.read.text.length > 0) return { ...kept.found, tried }
+        if (kept.found && kept.found.read.text.length > 0) return { ...kept.found, tried, legs }
         // Asked only once every leg has failed: a wall the Tavily read got past needs no person.
         const page = challenged ? ownerPage(pageHold, challenged, ctx.signal) : undefined
         const ownerAsked =
@@ -688,25 +810,41 @@ export const createFetch = (deps: ResolvedWebDeps) => {
         throw fail(
           'UPSTREAM_ERROR',
           `web.fetch: ${blocked ? `blocked (${blocked}) · ` : ''}${failures.join(' · ')} · ${nextStep(blocked, pageStatus, failures, ownerAsked)}`,
-          pageStatus ? { status: pageStatus } : {},
+          failureData(pageStatus),
         )
       }
       // A `fresh` read neither joins nor registers: it asked for a read of its own.
       if (fresh) {
         const found = await lead()
-        return shape(url, found.read, found.via, maxChars, { cached: false, at: found.at }, found.tried)
+        return shape(
+          url,
+          found.read,
+          found.via,
+          maxChars,
+          { cached: false, at: found.at },
+          { legs: found.legs, startedAt },
+          found.tried,
+        )
       }
       // Settled, success or failure, the entry goes: a failure is never kept for the next caller.
       const flight = lead().finally(() => inFlight.delete(flightKey))
       inFlight.set(flightKey, flight)
       const found = await flight
-      return shape(url, found.read, found.via, maxChars, { cached: false, at: found.at }, found.tried)
+      return shape(
+        url,
+        found.read,
+        found.via,
+        maxChars,
+        { cached: false, at: found.at },
+        { legs: found.legs, startedAt },
+        found.tried,
+      )
     },
   })
 }
 
 /** What a read chain resolved to: the complete read, how it was got, and when. Each caller shapes it for its own `maxChars`. */
-type Found = Pick<CachedRead, 'read' | 'via' | 'at'> & { tried?: string[] }
+type Found = Pick<CachedRead, 'read' | 'via' | 'at'> & { tried?: string[]; legs: Leg[] }
 
 /** `promise`, unless `signal` aborts first: a joiner waiting on another caller's read can still be cancelled. */
 function until<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -727,9 +865,10 @@ const wellFormed = (text: string) => text.replaceAll('\0', '').toWellFormed()
 function shape(
   url: string,
   read: Read,
-  via: 'direct' | 'browser' | 'tavily-extract',
+  via: Via,
   maxChars: number,
   when: { cached: boolean; at: number },
+  timing: { legs: Leg[]; startedAt: number },
   tried?: string[],
 ) {
   const { text, truncated } = cut(wellFormed(read.text), maxChars)
@@ -743,6 +882,9 @@ function shape(
     truncated: truncated || read.capped === true,
     via,
     cached: when.cached,
+    // The leader's legs go to every caller of one read: a joiner that waited shares them with its own wall time.
+    legs: when.cached ? [] : timing.legs,
+    wallMs: Date.now() - timing.startedAt,
     fetchedAt: new Date(when.at).toISOString(),
     ...(read.incomplete ? { incomplete: read.incomplete, tried: tried ?? [] } : {}),
   }

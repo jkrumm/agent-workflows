@@ -16,6 +16,8 @@ export type BrowserRead = (url: string, signal: AbortSignal, options?: BrowserRe
 export interface BrowserReadOptions {
   /** Also hand back the page's raw HTML (`BrowserPage.html`): for a caller that parses markup, not text. */
   html?: boolean
+  /** Told how long the read waited for one of the process's tab slots (0 when one was free): the queue is part of the browser leg's latency. */
+  onTabWait?: (ms: number) => void
 }
 
 /**
@@ -73,8 +75,9 @@ let openTabs = 0
 const waiters: { wake: () => void; live: boolean }[] = []
 
 /** Runs `body` once one of the process's tab slots is free; a waiter that aborts leaves the queue, so no wakeup is lost on it. */
-async function withTab<T>(signal: AbortSignal, body: () => Promise<T>): Promise<T> {
+async function withTab<T>(signal: AbortSignal, body: () => Promise<T>, onWait?: (ms: number) => void): Promise<T> {
   signal.throwIfAborted()
+  const queuedAt = Date.now()
   while (openTabs >= MAX_TABS) {
     const waiter = { wake: () => {}, live: true }
     await new Promise<void>((resolve, reject) => {
@@ -95,6 +98,7 @@ async function withTab<T>(signal: AbortSignal, body: () => Promise<T>): Promise<
     })
   }
   openTabs++
+  onWait?.(Date.now() - queuedAt)
   try {
     return await body()
   } finally {
@@ -431,7 +435,7 @@ export async function readViaCdp(
   timing: { settleMs?: number; pollMs?: number; openMs?: number } = {},
   options: BrowserReadOptions = {},
 ): Promise<BrowserPage> {
-  return withTab(signal, async () => {
+  const read = async () => {
     const tab = await openTab(base, signal)
     let session: Session | undefined
     const onAbort = () => session?.close()
@@ -503,7 +507,8 @@ export async function readViaCdp(
       session?.close()
       await closeTab(base, tab.id)
     }
-  })
+  }
+  return withTab(signal, read, options.onTabWait)
 }
 
 /** A tab kept on a challenged page: its guarding session stays attached until the tab is dropped. */

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { CapabilityCallError } from '@agent-workflows/capabilities'
 import type { Json, ScoreJudge } from '@agent-workflows/runtime'
 import { FakeAgentHost, type FakeSession } from '@agent-workflows/testing/agent-host'
 import type { HostRegistry } from '../src/workflows/index.ts'
@@ -57,10 +58,32 @@ async function fakeCapability(id: string, input: Json, scope: { addUsage: (u: ne
     const url = (input as { url: string }).url
     if (url.includes('broken')) throw new Error('fetch refused: private address')
     if (url.includes('walled'))
-      throw new Error(
+      throw new CapabilityCallError(
+        'UPSTREAM_ERROR',
+        502,
         'web.fetch: blocked (cloudflare-challenge) · direct: HTTP 403 (cloudflare-challenge) · tavily-extract: Failed to fetch url',
+        true,
+        {
+          status: 403,
+          wallMs: 1300,
+          legs: [
+            { leg: 'direct', ms: 300, outcome: 'blocked' },
+            { leg: 'browser', ms: 900, outcome: 'challenge', waitMs: 40 },
+            { leg: 'tavily-extract', ms: 100, outcome: 'failed' },
+          ],
+        },
       )
-    return { url, finalUrl: url, title: 'Connections', text: 'The default is 5432.', truncated: false, via: 'direct' }
+    return {
+      url,
+      finalUrl: url,
+      title: 'Connections',
+      text: 'The default is 5432.',
+      truncated: false,
+      via: 'direct',
+      cached: false,
+      legs: [{ leg: 'direct', ms: 12, outcome: 'ok' }],
+      wallMs: 12,
+    }
   }
   if (id === 'web.docs') return { source: 'https://context7.com/postgres', text: 'port 5432' }
   if (id === 'web.package') return { name: 'pg', latest: '8.13.0', url: 'https://www.npmjs.com/package/pg' }
@@ -191,6 +214,46 @@ describe('research workflow on a fake host', () => {
       [runId],
     )
     expect(rows).toEqual([{ blocked: { url: walled, reason: 'cloudflare-challenge' } }])
+  })
+
+  test('a fetch is recorded with its host, answering leg, legs and timing, and no column holds a path or query', async () => {
+    const walled = 'https://Shop.Example.com/walled/cart?session=SECRET-1'
+    const read = 'https://docs.example.com/private/page?token=SECRET-2#frag'
+    const host = new FakeAgentHost(async (s) => {
+      await callTool(s, 'web_fetch', { url: walled })
+      await callTool(s, 'web_fetch', { url: read })
+      await callTool(s, 'web_search', { query: 'postgres port' })
+      return { output: draft([{ claim: 'default 5432', url: PG_DOCS }]) }
+    })
+    const { runId } = await run({ query: 'Is the shop page readable?', depth: 'quick' }, host)
+    const { rows } = await sql.pool.query(
+      `select tool, ok, host, via, cached, wall_ms, legs, blocked_reason
+         from "${db.schema}".research_tool_calls where run_id = $1 order by id`,
+      [runId],
+    )
+    expect(rows).toMatchObject([
+      {
+        tool: 'web_fetch',
+        ok: false,
+        host: 'shop.example.com',
+        via: null,
+        cached: null,
+        blocked_reason: 'cloudflare-challenge',
+        legs: [
+          { leg: 'direct', ms: 300, outcome: 'blocked' },
+          { leg: 'browser', ms: 900, outcome: 'challenge', waitMs: 40 },
+          { leg: 'tavily-extract', ms: 100, outcome: 'failed' },
+        ],
+      },
+      { tool: 'web_fetch', ok: true, host: 'docs.example.com', via: 'direct', cached: false, blocked_reason: null },
+      { tool: 'web_search', ok: true, host: null, via: null, cached: null, legs: null, blocked_reason: null },
+    ])
+    for (const row of rows) expect(row.wall_ms).toBeGreaterThanOrEqual(0)
+    // The columns this telemetry adds carry the hostname and timings only: no path, query, fragment or secret.
+    const text = JSON.stringify(rows)
+    for (const leaked of ['/walled', '/private', 'cart', 'session=', 'token=', 'SECRET', '#frag']) {
+      expect(text).not.toContain(leaked)
+    }
   })
 
   test('every citation retrieved or seen: the report is ok with no warning', async () => {

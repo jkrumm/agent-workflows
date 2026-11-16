@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { blockedReason, cleanUrl } from '@agent-workflows/capabilities'
+import { blockedReason, cleanUrl, fetchFacts } from '@agent-workflows/capabilities'
 import type { Logger } from '@agent-workflows/runtime'
 import { canonicalJson } from '../../canonical.ts'
 import type { ToolCallRecord, ToolGrant } from '../../tool-gate/index.ts'
@@ -64,6 +64,19 @@ function urlsOf(call: ToolCallRecord): Partial<LedgerEntry> {
   return {}
 }
 
+/** What a `web_fetch` call says about the chain (host only, never the path or query), for the ledger's own columns. */
+export function fetchColumns(call: ToolCallRecord): Partial<LedgerEntry> {
+  if (call.tool !== 'web_fetch') return {}
+  const facts = fetchFacts(call.args.url, call.outcome)
+  return {
+    ...(facts.host ? { host: facts.host } : {}),
+    ...(facts.via ? { via: facts.via } : {}),
+    ...(facts.cached === undefined ? {} : { cached: facts.cached }),
+    ...(facts.legs ? { legs: facts.legs } : {}),
+    ...(facts.blocked ? { blockedReason: facts.blocked } : {}),
+  }
+}
+
 /**
  * A step's grant that records every call to the ledger as the evidence the step reads: its tools, and a hook that
  * appends a row per call (`extract` says what the call retrieved or saw). A ledger write that fails is retried and
@@ -107,6 +120,8 @@ export function ledgerGrant(options: {
         ok: call.outcome.ok,
         retrieved: [],
         seen: [],
+        ...(call.wallMs === undefined ? {} : { wallMs: call.wallMs }),
+        ...fetchColumns(call),
         ...extract(call),
         ...(call.outcome.ok ? {} : { error: call.outcome.error.slice(0, 300) }),
       }

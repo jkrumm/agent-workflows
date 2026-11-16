@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { AGENT_SAFE_HDX } from '@agent-workflows/capabilities'
+import { AGENT_SAFE_HDX, CapabilityCallError } from '@agent-workflows/capabilities'
 import { isStepSession } from '@agent-workflows/opencode-host'
 import type { Arm, Attribution, Json, Logger, Usage } from '@agent-workflows/runtime'
 import { z } from 'zod'
@@ -21,7 +21,10 @@ export type ToolCallRecord = {
   args: Record<string, Json>
   /** What `onStart` returned for this call: the label the agent was shown with the answer. */
   label?: string
-  outcome: { ok: true; result: Json } | { ok: false; error: string }
+  /** Wall time of the capability call, measured by the gate. */
+  wallMs?: number
+  /** `data` is the typed error's own (a failed `web.fetch` carries its legs there). */
+  outcome: { ok: true; result: Json } | { ok: false; error: string; data?: unknown }
 }
 
 /**
@@ -392,6 +395,7 @@ export class ToolGate {
     label: string | undefined,
   ): Promise<Record<string, unknown>> {
     let outcome: ToolCallRecord['outcome']
+    const began = Date.now()
     try {
       const result = await this.options.call(capability, args, {
         addUsage: (usage) => this.book(grant, usage),
@@ -401,8 +405,13 @@ export class ToolGate {
       })
       outcome = { ok: true, result }
     } catch (error) {
-      outcome = { ok: false, error: message(error) }
+      outcome = {
+        ok: false,
+        error: message(error),
+        ...(error instanceof CapabilityCallError && error.data !== undefined ? { data: error.data } : {}),
+      }
     }
+    const wallMs = Date.now() - began
     try {
       await grant.onCall?.({
         runId: grant.runId,
@@ -410,6 +419,7 @@ export class ToolGate {
         tool,
         args,
         ...(label ? { label } : {}),
+        wallMs,
         outcome,
       })
     } catch (error) {

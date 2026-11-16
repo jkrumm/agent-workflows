@@ -153,9 +153,17 @@ describe('grants', () => {
         stepId: 's',
         tool: 'find',
         args: { q: 'x' },
+        wallMs: expect.any(Number),
         outcome: { ok: true, result: { id: 'cap.find', input: { q: 'x' } } },
       },
-      { runId: 'a', stepId: 's', tool: 'find', args: { fail: true }, outcome: { ok: false, error: 'capability down' } },
+      {
+        runId: 'a',
+        stepId: 's',
+        tool: 'find',
+        args: { fail: true },
+        wallMs: expect.any(Number),
+        outcome: { ok: false, error: 'capability down' },
+      },
     ])
     await close()
   })

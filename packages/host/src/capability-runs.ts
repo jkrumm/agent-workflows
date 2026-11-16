@@ -2,7 +2,7 @@
 // fingerprint, telemetry, the usage outbox and the limits apply to it like to any workflow. In-process calls
 // (`registry.call` from a workflow step) stay plain calls; their usage belongs to the calling step.
 import { createHash } from 'node:crypto'
-import { type Capability, CapabilityCallError, ERRORS } from '@agent-workflows/capabilities'
+import { type Capability, CapabilityCallError, ERRORS, fetchFacts } from '@agent-workflows/capabilities'
 import { type AnyWorkflow, defineWorkflow, type Json, type Logger, type Runtime } from '@agent-workflows/runtime'
 import { ORPCError } from '@orpc/server'
 import { z } from 'zod'
@@ -77,7 +77,24 @@ export function journaledError(text: string): ORPCError<string, unknown> | null 
   })
 }
 
-export function createCapabilityWorkflows(registry: { served: readonly Capability[] }): CapabilityWorkflows {
+/** Puts attributes on a run's span (the platform's telemetry `annotateRun`). */
+export type AnnotateRun = (runId: string, attributes: Record<string, string | boolean | undefined>) => void
+
+/** The span attributes of a `web.fetch` call: its host (never the path or query), the leg that answered, whether the cache did, why a page refused. */
+function fetchAttributes(url: unknown, outcome: Parameters<typeof fetchFacts>[1]) {
+  const facts = fetchFacts(url, outcome)
+  return {
+    'agw.web.host': facts.host,
+    'agw.web.leg': facts.via,
+    'agw.web.cached': facts.cached,
+    'agw.web.blocked': facts.blocked,
+  }
+}
+
+export function createCapabilityWorkflows(
+  registry: { served: readonly Capability[] },
+  annotate?: AnnotateRun,
+): CapabilityWorkflows {
   const workflows = new Map<string, AnyWorkflow>()
   // An internal capability has no door (it is not in `served`), so no direct-call run either.
   for (const capability of registry.served) {
@@ -87,11 +104,20 @@ export function createCapabilityWorkflows(registry: { served: readonly Capabilit
       input: capability.input,
       output: capability.output,
       async run(ctx, input) {
+        const url = capability.id === 'web.fetch' ? (input as { url?: unknown }).url : undefined
         return ctx.step('call', async ({ callContext }) => {
           try {
-            return (await capability.call(input, callContext)) as Json
+            const result = (await capability.call(input, callContext)) as Json
+            if (capability.id === 'web.fetch') annotate?.(ctx.runId, fetchAttributes(url, { ok: true, result }))
+            return result
           } catch (error) {
             if (!(error instanceof CapabilityCallError)) throw error
+            if (capability.id === 'web.fetch') {
+              annotate?.(
+                ctx.runId,
+                fetchAttributes(url, { ok: false, error: error.message, ...(error.data ? { data: error.data } : {}) }),
+              )
+            }
             throw new Error(journaled(error), { cause: error })
           }
         })

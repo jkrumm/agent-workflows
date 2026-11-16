@@ -267,6 +267,10 @@ export {
   blockedReason,
   cleanUrl,
   createWebCapabilities,
+  type FetchFacts,
+  fetchFacts,
+  hostOf,
+  type Leg,
   TAVILY_USD_PER_CREDIT,
   type WebDeps,
 } from './web/index.ts'

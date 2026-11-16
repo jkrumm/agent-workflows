@@ -116,7 +116,7 @@ host could not answer in full.
 
 | Span | Parent | Attributes |
 |-|-|-|
-| `agw.run <workflow>` | the caller's `traceparent`; else a root in a trace derived from the root run id; a child run hangs under its parent's fan-out step span | `agw.workflow.id`, `.version`, `agw.run.id`, `.root_id`, `.parent_id`, `.resumed`, `.status`, `agw.purpose`, `agw.fingerprint`, record totals (`agw.tokens.*`, `agw.cost.usd`, `.unpriced_calls`, `agw.tool_calls`, `agw.run.wall_ms`), `agw.error.*` |
+| `agw.run <workflow>` | the caller's `traceparent`; else a root in a trace derived from the root run id; a child run hangs under its parent's fan-out step span | `agw.workflow.id`, `.version`, `agw.run.id`, `.root_id`, `.parent_id`, `.resumed`, `.status`, `agw.purpose`, `agw.fingerprint`, record totals (`agw.tokens.*`, `agw.cost.usd`, `.unpriced_calls`, `agw.tool_calls`, `agw.run.wall_ms`), `agw.error.*`; on `cap.web.fetch` runs `agw.web.host` (hostname only), `agw.web.leg` (the leg that answered), `agw.web.cached`, `agw.web.blocked` |
 | `agw.step <id>` | its run span | `agw.step.id`, `.kind`, `.attempt`, `.replay`, `.status`, `agw.tokens.*`, `agw.cost.*`, `agw.tool_calls`, `gen_ai.request.model` (one model), `opencode.session.id` (agent steps, from `StepPostArgs.handle.sessionId`) |
 | event `tool.pre` / `tool.post` | its step span | `agw.tool.name`, `.call_id`, `.error` |
 
