@@ -66,6 +66,10 @@ const html =
   (body: string, headers: Record<string, string> = {}): Handler =>
   () =>
     new Response(body, { headers: { 'content-type': 'text/html; charset=utf-8', ...headers } })
+/** The Wayback availability API answering that it holds no copy: the archive leg misses and the chain goes on. */
+const NO_SNAPSHOT: Record<string, Handler> = {
+  'https://archive.org/wayback/available': json({ archived_snapshots: {} }),
+}
 const redirect =
   (location: string, status = 302): Handler =>
   () =>
@@ -452,6 +456,7 @@ describe('web.fetch', () => {
 
   test('a blocked page (403) goes to Tavily Extract, priced at a fifth of a credit', async () => {
     const n = net({
+      ...NO_SNAPSHOT,
       'https://example.com/b': status(403),
       'https://api.tavily.com/extract': json({
         results: [{ url: 'https://example.com/b', raw_content: 'Extracted text.' }],
@@ -466,10 +471,11 @@ describe('web.fetch', () => {
       extract_depth: 'basic',
       format: 'text',
     })
-    expect(usage).toHaveLength(2)
+    expect(usage).toHaveLength(3)
     expect(usage[0]).toMatchObject({ model: 'direct', cost: 0, costSource: 'rate' })
-    expect(usage[1]).toMatchObject({ model: 'tavily-extract', costSource: 'rate' })
-    expect(usage[1]!.cost).toBeCloseTo(0.0016, 10)
+    expect(usage[1]).toMatchObject({ model: 'wayback', cost: 0, costSource: 'rate' })
+    expect(usage[2]).toMatchObject({ model: 'tavily-extract', costSource: 'rate' })
+    expect(usage[2]!.cost).toBeCloseTo(0.0016, 10)
   })
 
   test('a short real page, even with a script tag, is just short: no paid second read', async () => {
@@ -3237,6 +3243,7 @@ describe('web.fetch: telemetry of the chain', () => {
 
   test('Tavily rescuing a blocked page shows as a blocked direct leg and an ok Extract leg', async () => {
     const n = net({
+      ...NO_SNAPSHOT,
       'https://example.com/wall': status(403, WALL),
       'https://api.tavily.com/extract': json({ results: [{ url: 'https://example.com/wall', raw_content: REAL }] }),
     })
@@ -3246,6 +3253,7 @@ describe('web.fetch: telemetry of the chain', () => {
     expect(out.via).toBe('tavily-extract')
     expect(out.legs.map((l) => [l.leg, l.outcome])).toEqual([
       ['direct', 'blocked'],
+      ['wayback', 'missing'],
       ['tavily-extract', 'ok'],
     ])
   })
@@ -3253,13 +3261,18 @@ describe('web.fetch: telemetry of the chain', () => {
   test('a browser leg reports how long it waited for a tab; a failed call carries every leg in the error data', async () => {
     const browser = fakeBrowser([{ title: 'Just a moment...', text: 'Checking your browser' }])
     try {
-      const n = net({ [shop.split('?')[0]!]: status(403, WALL), 'https://api.tavily.com': json({ results: [] }) })
+      const n = net({
+        ...NO_SNAPSHOT,
+        [shop.split('?')[0]!]: status(403, WALL),
+        'https://api.tavily.com': json({ results: [] }),
+      })
       const { call } = run({ ...n.deps, env: { TAVILY_API_KEY: 't' }, browser: browser.read })
       const error = await failure(call('web.fetch', { url: shop }))
       const data = error.data as { status?: number; wallMs: number; legs: Out['legs'] }
       expect(data.legs.map((l) => [l.leg, l.outcome])).toEqual([
         ['direct', 'blocked'],
         ['browser', 'challenge'],
+        ['wayback', 'missing'],
         ['tavily-extract', 'failed'],
       ])
       expect(data.legs[1]!.waitMs).toBeGreaterThanOrEqual(0)
@@ -3782,6 +3795,447 @@ describe('web.fetch browser leg: slow challenges, one tab per walled host, the t
       const other = (await call('web.fetch', { url: 'https://other.example.org/x' })) as { via: string }
       expect(other.via).toBe('direct')
       expect(reads).toHaveLength(1)
+    })
+  })
+})
+
+describe('web.fetch: the Stack Exchange API and archive legs', () => {
+  const WALL = '<title>Just a moment...</title> challenge-platform'
+  const REAL = 'Die Jura E4 kostet 549 Euro. '.repeat(20)
+  const NOW = new Date('2026-11-16T12:00:00Z')
+  const QUESTION = 'https://superuser.com/questions/272265/getting-curl-to-output-http-status-code'
+  /** A recorded answer of api.stackexchange.com for the question above (filter of the leg, three of its 19 answers). */
+  const recorded = async () =>
+    (await Bun.file(new URL('./test-fixtures/stackexchange-question.json', import.meta.url)).json()) as {
+      quota_remaining: number
+      items: { link: string }[]
+    }
+  /** Recorded answer of the Wayback availability API (etsy.com, 2026-11-16), its snapshot moved `daysAgo` days back from NOW. */
+  const availability = async (daysAgo: number, status = '200') => {
+    const recordedBody = (await Bun.file(
+      new URL('./test-fixtures/wayback-available.json', import.meta.url),
+    ).json()) as {
+      archived_snapshots: { closest: { timestamp: string; url: string; status: string } }
+    }
+    const at = new Date(NOW.getTime() - daysAgo * 86_400_000)
+    const timestamp = at.toISOString().replace(/\D/g, '').slice(0, 14)
+    return { archived_snapshots: { closest: { ...recordedBody.archived_snapshots.closest, timestamp, status } } }
+  }
+  /** A browser that meets a challenge it cannot clear: what a bot check looks like to the browser leg. */
+  const challenged = async (url: string) => ({
+    finalUrl: url,
+    title: 'Just a moment...',
+    text: 'Checking your browser',
+    challenge: true,
+  })
+  const legsOf = (out: unknown) =>
+    (out as { legs: { leg: string; outcome: string }[] }).legs.map((l) => [l.leg, l.outcome])
+
+  beforeEach(() => {
+    resetHandoffLimit()
+    setSystemTime(NOW)
+  })
+  afterEach(() => setSystemTime())
+
+  describe('stackexchange-api', () => {
+    test('a question behind a bot check is read through the API: question, accepted answer first, canonical URL', async () => {
+      const body = await recorded()
+      const n = net({
+        'https://superuser.com/': status(403, WALL),
+        'https://api.stackexchange.com/2.3/questions/272265': json(body),
+      })
+      const handoff = fakeHandoff()
+      const { call, usage } = run({ ...n.deps, browser: challenged, handoff })
+      const out = (await call('web.fetch', { url: QUESTION })) as {
+        via: string
+        text: string
+        finalUrl: string
+        title: string
+        cached: boolean
+        legs: unknown
+      }
+      expect(out).toMatchObject({ via: 'stackexchange-api', finalUrl: body.items[0]!.link, cached: false })
+      expect(out.title).toBe('Getting curl to output HTTP status code?')
+      expect(out.text).toContain(`Source: Stack Exchange API, ${body.items[0]!.link}`)
+      expect(out.text).toContain('Question (score ')
+      // The recorded response lists the best-scored answer before the accepted one; the text puts the accepted one first.
+      expect(out.text.indexOf('Accepted answer (score 983)')).toBeGreaterThan(0)
+      expect(out.text.indexOf('Accepted answer (score 983)')).toBeLessThan(out.text.indexOf('Answer (score 1536)'))
+      expect(out.text).toContain('curl -s -o /dev/null -w "%{http_code}"')
+      expect(out.text).not.toContain('<p>')
+      expect(legsOf(out)).toEqual([
+        ['direct', 'blocked'],
+        ['browser', 'challenge'],
+        ['stackexchange-api', 'ok'],
+      ])
+      // One request, to the site named by the host, with the leg's filter; no key, no Tavily, nobody asked.
+      const sent = new URL(n.to('https://api.stackexchange.com')[0]!.url)
+      expect(sent.searchParams.get('site')).toBe('superuser')
+      expect(sent.searchParams.get('filter')).toStartWith('!')
+      expect(n.to('https://api.stackexchange.com')).toHaveLength(1)
+      expect(n.to('https://api.tavily.com')).toHaveLength(0)
+      expect(handoff.requests).toHaveLength(0)
+      expect(usage.map((u) => u.model)).toEqual(['direct', 'browser', 'stackexchange-api'])
+      expect(usage.every((u) => u.cost === 0)).toBe(true)
+    })
+
+    test('the answer is cached, and a read that passes later does not need the leg', async () => {
+      const n = net({
+        'https://superuser.com/': status(403, WALL),
+        'https://api.stackexchange.com/': json(await recorded()),
+      })
+      const { call } = run({ ...n.deps, browser: challenged })
+      await call('web.fetch', { url: QUESTION })
+      const again = (await call('web.fetch', { url: QUESTION })) as { cached: boolean; via: string }
+      expect(again).toMatchObject({ cached: true, via: 'stackexchange-api' })
+      expect(n.to('https://api.stackexchange.com')).toHaveLength(1)
+    })
+
+    test('the leg only reads a question URL of a Stack Exchange site', async () => {
+      const n = net({
+        'https://superuser.com/': status(403, WALL),
+        'https://example.com/': status(403, WALL),
+        'https://archive.org/': json({ archived_snapshots: {} }),
+        'https://api.stackexchange.com/': json(await recorded()),
+      })
+      const { call } = run({ ...n.deps, browser: challenged })
+      for (const url of [
+        'https://superuser.com/users/1/someone',
+        'https://example.com/questions/272265/x',
+        'https://superuser.com.evil.example/questions/272265/x',
+      ]) {
+        await failure(call('web.fetch', { url }))
+      }
+      expect(n.to('https://api.stackexchange.com')).toHaveLength(0)
+    })
+
+    test('every Stack Exchange host maps to its API site', async () => {
+      const { stackExchangeQuestion } = await import('./stackexchange.ts')
+      expect(
+        [
+          'https://stackoverflow.com/questions/11227809/x',
+          'https://www.stackoverflow.com/q/11227809',
+          'https://superuser.com/questions/1/x',
+          'https://serverfault.com/questions/1/x',
+          'https://askubuntu.com/questions/1/x?noredirect=1#a2',
+          'https://mathoverflow.net/questions/8846/x',
+          'https://math.stackexchange.com/questions/358423/x',
+          'https://meta.stackexchange.com/questions/5/x',
+          'https://meta.math.stackexchange.com/questions/5/x',
+        ].map((url) => stackExchangeQuestion(url)?.site),
+      ).toEqual([
+        'stackoverflow',
+        'stackoverflow',
+        'superuser',
+        'serverfault',
+        'askubuntu',
+        'mathoverflow.net',
+        'math',
+        'meta',
+        'meta.math',
+      ])
+      expect(stackExchangeQuestion('https://stackoverflow.com/questions/ask')).toBeUndefined()
+      expect(stackExchangeQuestion('https://stackoverflow.com/tags')).toBeUndefined()
+      expect(stackExchangeQuestion('ftp://stackoverflow.com/questions/1/x')).toBeUndefined()
+      expect(stackExchangeQuestion('not a url')).toBeUndefined()
+    })
+
+    test('quota_remaining 0 skips the leg for the rest of the UTC day and the next day opens it again', async () => {
+      const body = { ...(await recorded()), quota_remaining: 0 }
+      const n = net({
+        'https://superuser.com/': status(403, WALL),
+        'https://api.stackexchange.com/': json(body),
+        'https://archive.org/': json({ archived_snapshots: {} }),
+      })
+      const { call } = run({ ...n.deps, browser: challenged })
+      const first = (await call('web.fetch', { url: QUESTION })) as { via: string }
+      expect(first.via).toBe('stackexchange-api') // the answer that used the last request is still an answer
+      const error = await failure(call('web.fetch', { url: 'https://superuser.com/questions/999/other' }))
+      expect(error.message).toContain('stackexchange-api: skipped (the daily quota is used up)')
+      expect(n.to('https://api.stackexchange.com')).toHaveLength(1)
+
+      setSystemTime(new Date('2026-11-17T00:00:05Z'))
+      await call('web.fetch', { url: 'https://superuser.com/questions/1000/other', fresh: true })
+      expect(n.to('https://api.stackexchange.com')).toHaveLength(2)
+    })
+
+    test('a backoff in the answer holds the leg for that many seconds', async () => {
+      const body = { ...(await recorded()), backoff: 30 }
+      const n = net({
+        'https://superuser.com/': status(403, WALL),
+        'https://api.stackexchange.com/': json(body),
+        'https://archive.org/': json({ archived_snapshots: {} }),
+      })
+      const { call } = run({ ...n.deps, browser: challenged })
+      await call('web.fetch', { url: QUESTION })
+      setSystemTime(new Date(NOW.getTime() + 20_000))
+      const held = await failure(call('web.fetch', { url: 'https://superuser.com/questions/2/a' }))
+      expect(held.message).toMatch(/stackexchange-api: skipped \(asked to wait \d+ s \(backoff\)\)/)
+      expect(n.to('https://api.stackexchange.com')).toHaveLength(1)
+
+      setSystemTime(new Date(NOW.getTime() + 31_000))
+      await call('web.fetch', { url: 'https://superuser.com/questions/3/b', fresh: true })
+      expect(n.to('https://api.stackexchange.com')).toHaveLength(2)
+    })
+
+    test('a throttle violation without a backoff holds the leg for ten minutes', async () => {
+      const n = net({
+        'https://superuser.com/': status(403, WALL),
+        'https://api.stackexchange.com/': json(
+          { error_id: 502, error_name: 'throttle_violation', error_message: 'x' },
+          400,
+        ),
+        'https://archive.org/': json({ archived_snapshots: {} }),
+      })
+      const { call } = run({ ...n.deps, browser: challenged })
+      const first = await failure(call('web.fetch', { url: QUESTION }))
+      expect(first.message).toContain('stackexchange-api: HTTP 400 (throttle_violation)')
+      const second = await failure(call('web.fetch', { url: 'https://superuser.com/questions/2/a', fresh: true }))
+      expect(second.message).toContain('stackexchange-api: skipped')
+      setSystemTime(new Date(NOW.getTime() + 11 * 60_000))
+      await failure(call('web.fetch', { url: 'https://superuser.com/questions/3/b', fresh: true }))
+      expect(n.to('https://api.stackexchange.com')).toHaveLength(2)
+    })
+
+    test('a question the site does not have, or an API that fails, is a missed leg and the chain goes on', async () => {
+      const n = net({
+        'https://superuser.com/': status(403, WALL),
+        'https://api.stackexchange.com/2.3/questions/1': json({ items: [], has_more: false, quota_remaining: 200 }),
+        'https://api.stackexchange.com/2.3/questions/2': () => {
+          throw new Error('connection reset')
+        },
+        'https://archive.org/': json({ archived_snapshots: {} }),
+        'https://api.tavily.com/extract': json({ results: [{ url: QUESTION, raw_content: REAL }] }),
+      })
+      const { call } = run({ ...n.deps, env: { TAVILY_API_KEY: 't' }, browser: challenged })
+      const missing = (await call('web.fetch', { url: 'https://superuser.com/questions/1/x' })) as unknown
+      expect(legsOf(missing)).toContainEqual(['stackexchange-api', 'missing'])
+      expect((missing as { via: string }).via).toBe('tavily-extract')
+      const failed = (await call('web.fetch', { url: 'https://superuser.com/questions/2/x' })) as unknown
+      expect(legsOf(failed)).toContainEqual(['stackexchange-api', 'failed'])
+    })
+
+    test('a page that is not walled never reaches the leg', async () => {
+      const n = net({ 'https://superuser.com/': html(REAL), 'https://api.stackexchange.com/': json(await recorded()) })
+      const { call } = run({ ...n.deps })
+      const out = (await call('web.fetch', { url: QUESTION })) as { via: string }
+      expect(out.via).toBe('direct')
+      expect(n.to('https://api.stackexchange.com')).toHaveLength(0)
+    })
+
+    test('a login page or a legal block is no wall the archive legs answer', async () => {
+      const n = net({
+        'https://superuser.com/a': status(401),
+        'https://superuser.com/b': status(451),
+        'https://api.stackexchange.com/': json(await recorded()),
+        'https://archive.org/': json({ archived_snapshots: {} }),
+      })
+      const { call } = run({ ...n.deps })
+      for (const path of ['a', 'b'])
+        await failure(call('web.fetch', { url: `https://superuser.com/questions/1/${path}` }))
+      expect(n.to('https://api.stackexchange.com')).toHaveLength(0)
+      expect(n.to('https://archive.org')).toHaveLength(0)
+    })
+  })
+
+  describe('wayback', () => {
+    const snapshotOf = (daysAgo: number) => {
+      const at = new Date(NOW.getTime() - daysAgo * 86_400_000).toISOString().replace(/\D/g, '').slice(0, 14)
+      return `https://web.archive.org/web/${at}id_/https://example.com/wall`
+    }
+    const setup = async (
+      daysAgo: number,
+      snapshot: Handler,
+      options: { status?: string; env?: Record<string, string> } = {},
+    ) => {
+      const n = net({
+        'https://example.com/wall': status(403, WALL),
+        'https://archive.org/wayback/available': json(await availability(daysAgo, options.status)),
+        'https://web.archive.org/web/': snapshot,
+        'https://api.tavily.com/extract': json({
+          results: [{ url: 'https://example.com/wall', raw_content: 'Extracted text.' }],
+        }),
+      })
+      return { n, ...run({ ...n.deps, env: options.env ?? { TAVILY_API_KEY: 't' } }) }
+    }
+
+    test('a recent snapshot answers, says it is an archived copy and carries its date; the answer names the leg', async () => {
+      const { n, call, usage } = await setup(
+        3,
+        html(`<html><head><title>Wall page</title></head><body><p>${REAL}</p></body></html>`),
+      )
+      const out = (await call('web.fetch', { url: 'https://example.com/wall' })) as {
+        via: string
+        text: string
+        title: string
+        archivedAt: string
+        finalUrl: string
+        legs: unknown
+      }
+      expect(out.via).toBe('wayback')
+      expect(out.archivedAt).toBe(
+        new Date(NOW.getTime() - 3 * 86_400_000)
+          .toISOString()
+          .replace(/\.\d+Z$/, '.000Z')
+          .slice(0, 19) + '.000Z',
+      )
+      expect(out.text).toStartWith(
+        `[Archived copy: Internet Archive snapshot taken 2026-11-13, not the live page. ${snapshotOf(3)}]`,
+      )
+      expect(out.text).toContain('Die Jura E4 kostet 549 Euro.')
+      expect(out.title).toBe('Wall page')
+      expect(out.finalUrl).toBe(snapshotOf(3))
+      expect(legsOf(out)).toEqual([
+        ['direct', 'blocked'],
+        ['wayback', 'ok'],
+      ])
+      // The raw capture is read (no toolbar), by the address the availability answer's timestamp names.
+      expect(n.to('https://web.archive.org')[0]!.url).toBe(snapshotOf(3))
+      expect(new URL(n.to('https://archive.org')[0]!.url).searchParams.get('url')).toBe('https://example.com/wall')
+      expect(n.to('https://api.tavily.com')).toHaveLength(0)
+      expect(usage.map((u) => u.model)).toEqual(['direct', 'wayback'])
+    })
+
+    test('the limit is 180 days: a snapshot of exactly that age answers, one day older goes to Tavily Extract', async () => {
+      const { WAYBACK_MAX_AGE_DAYS } = await import('./wayback.ts')
+      expect(WAYBACK_MAX_AGE_DAYS).toBe(180)
+      const page = html(`<p>${REAL}</p>`)
+      const edge = await setup(180, page)
+      expect(((await edge.call('web.fetch', { url: 'https://example.com/wall' })) as { via: string }).via).toBe(
+        'wayback',
+      )
+
+      const old = await setup(181, page)
+      const out = (await old.call('web.fetch', { url: 'https://example.com/wall' })) as {
+        via: string
+        archivedAt?: string
+      }
+      expect(out.via).toBe('tavily-extract')
+      expect(out.archivedAt).toBeUndefined()
+      expect(legsOf(out)).toEqual([
+        ['direct', 'blocked'],
+        ['wayback', 'missing'],
+        ['tavily-extract', 'ok'],
+      ])
+      expect(old.n.to('https://web.archive.org')).toHaveLength(0) // an old snapshot is not even read
+    })
+
+    test('fresh skips the leg: the archive is never asked', async () => {
+      const { n, call } = await setup(1, html(`<p>${REAL}</p>`))
+      const out = (await call('web.fetch', { url: 'https://example.com/wall', fresh: true })) as { via: string }
+      expect(out.via).toBe('tavily-extract')
+      expect(n.to('https://archive.org')).toHaveLength(0)
+      expect(n.to('https://web.archive.org')).toHaveLength(0)
+    })
+
+    test('a snapshot that is the wall itself is a miss: a challenge page, a captcha text, a JavaScript notice', async () => {
+      const walls: [string, string][] = [
+        [
+          'a challenge title',
+          '<html><head><title>Just a moment...</title></head><body><p>Checking your browser</p></body></html>',
+        ],
+        [
+          'a captcha text',
+          '<html><head><title>indeed.com</title></head><body><p>Please complete the captcha to continue</p></body></html>',
+        ],
+        [
+          'a JavaScript notice',
+          '<html><head><title>Jobs</title></head><body><p>You need to enable JavaScript to run this app.</p></body></html>',
+        ],
+      ]
+      for (const [name, wall] of walls) {
+        const { n, call } = await setup(2, html(wall))
+        const out = (await call('web.fetch', { url: 'https://example.com/wall' })) as unknown
+        expect([name, (out as { via: string }).via]).toEqual([name, 'tavily-extract'])
+        expect([name, legsOf(out)]).toEqual([
+          name,
+          [
+            ['direct', 'blocked'],
+            ['wayback', 'incomplete'],
+            ['tavily-extract', 'ok'],
+          ],
+        ])
+        expect(n.to('https://web.archive.org')).toHaveLength(1)
+      }
+    })
+
+    test('no snapshot, a snapshot that is no success page, an archive that fails, a snapshot that cannot be read: each is a missed leg', async () => {
+      const page = html(`<p>${REAL}</p>`)
+      const cases: [string, Record<string, Handler>, string][] = [
+        ['no snapshot', { 'https://archive.org/wayback/available': json({ archived_snapshots: {} }) }, 'missing'],
+        ['an availability error', { 'https://archive.org/wayback/available': status(503) }, 'failed'],
+        [
+          'an unreadable answer',
+          { 'https://archive.org/wayback/available': json({ archived_snapshots: { closest: { timestamp: 'x' } } }) },
+          'failed',
+        ],
+        [
+          'a network failure',
+          {
+            'https://archive.org/wayback/available': () => {
+              throw new Error('reset')
+            },
+          },
+          'failed',
+        ],
+      ]
+      for (const [name, routes, outcome] of cases) {
+        const n = net({
+          'https://example.com/wall': status(403, WALL),
+          ...routes,
+          'https://web.archive.org/web/': page,
+          'https://api.tavily.com/extract': json({
+            results: [{ url: 'https://example.com/wall', raw_content: 'Extracted text.' }],
+          }),
+        })
+        const out = (await run({ ...n.deps, env: { TAVILY_API_KEY: 't' } }).call('web.fetch', {
+          url: 'https://example.com/wall',
+        })) as unknown
+        expect([name, legsOf(out)[1]]).toEqual([name, ['wayback', outcome]])
+        expect(n.to('https://web.archive.org')).toHaveLength(0)
+      }
+      const redirected = await setup(1, page, { status: '404' })
+      const out = (await redirected.call('web.fetch', { url: 'https://example.com/wall' })) as unknown
+      expect(legsOf(out)[1]).toEqual(['wayback', 'missing'])
+
+      const gone = await setup(1, status(404))
+      expect(legsOf(await gone.call('web.fetch', { url: 'https://example.com/wall' }))[1]).toEqual([
+        'wayback',
+        'missing',
+      ])
+    })
+
+    test('the leg runs before Tavily Extract and after the Stack Exchange API', async () => {
+      const n = net({
+        'https://superuser.com/': status(403, WALL),
+        'https://api.stackexchange.com/': status(400),
+        'https://archive.org/wayback/available': json(await availability(5)),
+        'https://web.archive.org/web/': html(`<p>${REAL}</p>`),
+        'https://api.tavily.com/extract': json({ results: [] }),
+      })
+      const { call } = run({ ...n.deps, env: { TAVILY_API_KEY: 't' }, browser: challenged })
+      const out = (await call('web.fetch', { url: QUESTION })) as unknown
+      expect((out as { via: string }).via).toBe('wayback')
+      expect(legsOf(out)).toEqual([
+        ['direct', 'blocked'],
+        ['browser', 'challenge'],
+        ['stackexchange-api', 'failed'],
+        ['wayback', 'ok'],
+      ])
+      expect(n.to('https://api.tavily.com')).toHaveLength(0)
+    })
+
+    test('an archived answer does not clear the memory of a wall, and the owner is not asked while it answers', async () => {
+      const n = net({
+        'https://shop.example.com/': status(403, WALL),
+        'https://archive.org/wayback/available': json(await availability(2)),
+        'https://web.archive.org/web/': html(`<p>${REAL}</p>`),
+      })
+      const handoff = fakeHandoff()
+      const { call } = run({ ...n.deps, browser: challenged, handoff })
+      const out = (await call('web.fetch', { url: 'https://shop.example.com/a' })) as { via: string }
+      expect(out.via).toBe('wayback')
+      expect(handoff.requests).toHaveLength(0)
     })
   })
 })

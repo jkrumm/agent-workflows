@@ -1,0 +1,45 @@
+{
+  "has_more": false,
+  "quota_max": 300,
+  "quota_remaining": 268,
+  "items": [
+    {
+      "tags": ["http", "curl", "status"],
+      "answers": [
+        {
+          "answer_id": 442395,
+          "body": "<p>A more specific way to print out <strong>just</strong> the HTTP status code is something along the lines of:</p>\n<pre><code>curl -s -o /dev/null -w &quot;%{http_code}&quot; http://www.example.org/\n</code></pre>\n<p>A lot easier to work with in scripts, as it doesn't require any parsing  :-)</p>\n<p>The parameter <code>-I</code> might be added to improve response load performance. This will change the call to a <code>HEAD</code> call which will fetch response overhead only, without the body.</p>\n<p><strong>Note:</strong> <code>%{http_code}</code> returns on first line of HTTP payload (<a href=\"https://curl.se/docs/manpage.html#-w\" rel=\"noreferrer\">available variables for the <code>-w</code> option on the <code>curl</code> documentation page</a>)</p>\n<p>i.e.:</p>\n<pre><code>curl -s -o /dev/null -I -w &quot;%{http_code}&quot; http://www.example.org/\n</code></pre>\n",
+          "is_accepted": false,
+          "score": 1536,
+          "link": "https://superuser.com/questions/272265/getting-curl-to-output-http-status-code/442395#442395"
+        },
+        {
+          "answer_id": 272273,
+          "body": "<p>This should work for you <em>if</em> the web server is able to respond to HEAD requests (this will not perform a <code>GET</code> request):</p>\n<pre class=\"lang-bsh prettyprint-override\"><code>curl -I http://www.example.org\n</code></pre>\n<p>As an addition, to let cURL follow redirects (3xx statuses) add <code>-L</code>.</p>\n",
+          "is_accepted": true,
+          "score": 983,
+          "link": "https://superuser.com/questions/272265/getting-curl-to-output-http-status-code/272273#272273"
+        },
+        {
+          "answer_id": 514798,
+          "body": "<p>You can print the status code, in addition to all the headers by doing the following:</p>\n\n<pre><code>curl -i http://example.org\n</code></pre>\n\n<p>The good thing about <code>-i</code> is that it works with <code>-X POST</code> as well.</p>\n",
+          "is_accepted": false,
+          "score": 573,
+          "link": "https://superuser.com/questions/272265/getting-curl-to-output-http-status-code/514798#514798"
+        }
+      ],
+      "is_answered": true,
+      "view_count": 2670565,
+      "protected_date": 1690480400,
+      "accepted_answer_id": 272273,
+      "answer_count": 3,
+      "score": 1520,
+      "last_activity_date": 1729010692,
+      "creation_date": 1303122537,
+      "question_id": 272265,
+      "link": "https://superuser.com/questions/272265/getting-curl-to-output-http-status-code",
+      "title": "Getting curl to output HTTP status code?",
+      "body": "<p>I'm using <code>curl</code> at the command line on Linux to issue HTTP requests.  The response bodies are printed  to standard out, which is fine, but I can't see from the man page how to get curl to print the HTTP status code from the response (404, 403 etc).  Is this possible?</p>\n"
+    }
+  ]
+}
