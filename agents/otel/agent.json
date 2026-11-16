@@ -2,21 +2,13 @@
   "route": "otel.agent",
   "permissions": {
     "rules": [
-      {
-        "action": "hdx_tools",
-        "resource": "*",
-        "effect": "allow"
-      },
-      {
-        "action": "hdx_guide",
-        "resource": "*",
-        "effect": "allow"
-      },
-      {
-        "action": "hdx_query",
-        "resource": "*",
-        "effect": "allow"
-      }
+      { "action": "hdx_tools", "resource": "*", "effect": "allow" },
+      { "action": "hdx_guide", "resource": "*", "effect": "allow" },
+      { "action": "hdx_query", "resource": "*", "effect": "allow" },
+      { "action": "read", "resource": "*", "effect": "deny" },
+      { "action": "glob", "resource": "*", "effect": "deny" },
+      { "action": "grep", "resource": "*", "effect": "deny" },
+      { "action": "skill", "resource": "*", "effect": "deny" }
     ]
   }
 }

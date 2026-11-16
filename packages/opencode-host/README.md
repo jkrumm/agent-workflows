@@ -40,7 +40,7 @@ order, the last match winning: `{ *, *, deny }`; `allow` for exactly `read`, `gl
 `external_directory` allow per entry of the step's `spec.options.allowDirectories`. Anything else is refused, an action
 that ships in a later OpenCode too. An opt-in is an `allow` rule in the agent's `agent.json`, which comes after the
 host's deny and wins: `{ "action": "webfetch" | "websearch" | "subagent" | "edit" | "execute", "resource": "*",
-"effect": "allow" }`. `spec.options` is strict: a key other than `route`, `output` and `allowDirectories` (a typo, a
+"effect": "allow" }`. The four read-only allows are the default, not a need: each granted tool puts its schema into every turn, so an agent whose prompt uses none of them (`diagram`, `retrospective`, `otel`) denies them in its `agent.json`, as `smoke` does. `spec.options` is strict: a key other than `route`, `output` and `allowDirectories` (a typo, a
 removed option such as `repoShell`) fails the step before a session exists, so a rule a caller counts on is never
 silently absent. Server-wide the same `basePolicy` (catch-all deny, then the four read-only allows) is the backstop,
 followed by `question` and `external_directory` denied, so an unattended session never blocks on an `ask` and a session

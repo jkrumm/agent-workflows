@@ -7,7 +7,7 @@ caller path**, the caller writes the file.
 
 | Step | What |
 |-|-|
-| `agent` | The skeleton envelope. No tools (OpenCode's deny-by-default), no web |
+| `agent` | The skeleton envelope. No tools (`agents/diagram/agent.json` denies `read`, `glob`, `grep` and `skill`, which the host grants by default), no web |
 | `hydrate` | Parse and check the skeleton (`skeleton.ts`: ids, unique, bound arrows point at existing ids, field types), split off the pseudo-elements, convert with `@excalidraw/excalidraw` in a short-lived child process (`hydrate.ts`) |
 | `diagram:reask`, `hydrate:reask` | One re-ask in the same session with the errors (a failed check, or a skeleton the library throws on); a second failure is `invalid_output` |
 

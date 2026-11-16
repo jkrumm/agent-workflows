@@ -1,3 +1,11 @@
 {
-  "route": "diagram.agent"
+  "route": "diagram.agent",
+  "permissions": {
+    "rules": [
+      { "action": "read", "resource": "*", "effect": "deny" },
+      { "action": "glob", "resource": "*", "effect": "deny" },
+      { "action": "grep", "resource": "*", "effect": "deny" },
+      { "action": "skill", "resource": "*", "effect": "deny" }
+    ]
+  }
 }

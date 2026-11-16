@@ -1,3 +1,11 @@
 {
-  "route": "retro.analyze"
+  "route": "retro.analyze",
+  "permissions": {
+    "rules": [
+      { "action": "read", "resource": "*", "effect": "deny" },
+      { "action": "glob", "resource": "*", "effect": "deny" },
+      { "action": "grep", "resource": "*", "effect": "deny" },
+      { "action": "skill", "resource": "*", "effect": "deny" }
+    ]
+  }
 }
