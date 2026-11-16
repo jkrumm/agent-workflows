@@ -68,6 +68,18 @@ beforeAll(async () => {
     workflows: [
       ...FIXTURE_WORKFLOWS,
       {
+        id: 'fixture.srv',
+        summary: 'Only a server calls this',
+        input: { type: 'object', properties: {} },
+        serverOnly: true,
+      },
+      {
+        id: 'hidden.job',
+        summary: 'A group of server-only commands',
+        input: { type: 'object', properties: {} },
+        serverOnly: true,
+      },
+      {
         id: 'fixture.accepted',
         summary: 'Answers 202 at once; the run itself is never stored',
         input: { type: 'object', properties: {} },
@@ -95,6 +107,13 @@ describe('a group asked for help', () => {
       })
     }
   }
+
+  test('server-only commands stay out of the listing, and a group of nothing else is no group', async () => {
+    const r = await agw(['fixture'])
+    expect(r.stdout).toContain('fixture echo')
+    expect(r.stdout).not.toContain('fixture srv')
+    expect((await agw(['hidden'])).code).toBe(EXIT.usage)
+  })
 
   test('a word that is no group stays a usage error', async () => {
     const r = await agw(['fixture', 'nope'])
@@ -159,6 +178,13 @@ describe('the wait budget', () => {
       .toString()
     expect(together).toContain(typicalRunId)
     expect(together).toContain('agw run wait')
+  })
+
+  test('an interrupted wait of a run that needs a background wait still fits the budget in the message head', async () => {
+    const advice = adviceFor({ typicalWallS: 1200, waitedS: 110, interrupted: 'SIGINT' })
+    const error = new AgwError('pending', `run ${typicalRunId} ${advice.message}`)
+    expect(error.message.length).toBeLessThanOrEqual(170)
+    expect(JSON.parse(error.toErrorLine()).error.message).toContain('--budget 1500')
   })
 
   test('adviceFor: no history waits 300 s, a short run at least 60 s', () => {

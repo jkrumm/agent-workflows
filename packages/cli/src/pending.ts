@@ -30,8 +30,12 @@ export function adviceFor(options: { typicalWallS?: number; waitedS: number; int
       ? Math.max(MIN_BUDGET_S, Math.ceil(typicalWallS * MARGIN))
       : UNKNOWN_BUDGET_S
   const budgetS = Math.min(want, FOREGROUND_CAP_S)
-  const why = interrupted ? `interrupted by ${interrupted}` : `after ${waitedS}s`
-  const typical = typicalWallS !== undefined && typicalWallS > 0 ? `; typically ~${minutes(typicalWallS)}` : ''
+  const why = interrupted ? `interrupted (${interrupted})` : `after ${waitedS}s`
+  // A run that needs a background wait names that need instead: the head of the error line has room for one of them.
+  const typical =
+    typicalWallS !== undefined && typicalWallS > 0 && want <= FOREGROUND_CAP_S
+      ? `; typically ~${minutes(typicalWallS)}`
+      : ''
   // Short on purpose: the whole message, run id included, must fit the head of the error line.
   const background = want > FOREGROUND_CAP_S ? ` Needs ${want}s: background it with --budget ${want}.` : ''
   return {
