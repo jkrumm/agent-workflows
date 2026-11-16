@@ -3,6 +3,7 @@ import type { HostWorkflow } from '../../operations.ts'
 import { guardHygiene } from './guard.ts'
 import { buildHygienePrompt, hygieneNonce, SUBMIT_RESULT_RETRY } from './prompt.ts'
 import { findEscapingLink } from './scan.ts'
+import { factoryHygieneScorer } from './scorer.ts'
 import {
   FactoryHygieneInput,
   FactoryHygieneOutput,
@@ -48,6 +49,7 @@ export function createFactoryHygiene(): HostWorkflow {
     version: FACTORY_HYGIENE_VERSION,
     input: FactoryHygieneInput,
     output: FactoryHygieneOutput,
+    scorer: factoryHygieneScorer,
     async run(ctx, { hygiene }) {
       try {
         const escape = await ctx.step('scan', async () => ({ link: await findEscapingLink(hygiene.cwd) }))
