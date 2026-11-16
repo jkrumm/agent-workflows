@@ -203,7 +203,7 @@ export type {
   ResolvedCliSpec,
   RouteSpec,
 } from './define.ts'
-export { CapabilityCallError, CapabilityError, ERRORS, type ErrorCode, fail } from './errors.ts'
+export { CapabilityCallError, CapabilityError, ERRORS, type ErrorCode, fail, redactSecrets } from './errors.ts'
 export type { LlmDeps } from './llm/model-call.ts'
 export { defineCapability, operationIdOf, withCli } from './procedure.ts'
 export {

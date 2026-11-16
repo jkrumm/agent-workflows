@@ -26,8 +26,8 @@ type Caller = { call(id: never, input: never, options: never): Promise<unknown> 
 
 /**
  * A capability failure that is an answer, not an outage: the source said no. A client error in `data.status`
- * (`UPSTREAM_ERROR` 4xx: a page gone, forbidden, paywalled or rate-limited, a `web.package` that does not exist) or a
- * refused URL (`URL_REFUSED`). It comes back as `{ error: { code, message } }`, and the scorer leaves that citation
+ * (`UPSTREAM_ERROR` 4xx: a page gone, forbidden, paywalled or rate-limited), a `web.package` that does not exist
+ * (`NOT_FOUND`) or a refused URL (`URL_REFUSED`). It comes back as `{ error: { code, message } }`, and the scorer leaves that citation
  * unjudged. Anything else (5xx, timeouts, network, `NOT_CONFIGURED`, `CANCELLED`, an internal error) is `null`: an
  * outage, which throws and is retried.
  */
@@ -35,7 +35,7 @@ export function answerOf(error: { code: string; message: string; data?: unknown 
   if (!error) return null
   const status = (error.data as { status?: unknown } | undefined)?.status
   const refusedBySource = error.code === 'UPSTREAM_ERROR' && typeof status === 'number' && status >= 400 && status < 500
-  return refusedBySource || error.code === 'URL_REFUSED'
+  return refusedBySource || error.code === 'URL_REFUSED' || error.code === 'NOT_FOUND'
     ? { error: { code: error.code, message: error.message } }
     : null
 }

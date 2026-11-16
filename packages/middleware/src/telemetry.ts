@@ -1,3 +1,4 @@
+import { redactSecrets } from '@agent-workflows/capabilities'
 import type { Logger, Middleware, RunPostArgs, RunPreArgs, StepPostArgs, StepPreArgs } from '@agent-workflows/runtime'
 import {
   type Attributes,
@@ -137,19 +138,9 @@ function routeDiag(logger: Logger) {
 const MAX_ERROR_ATTRIBUTE = 500
 /** Re-deliveries follow within the recovery backoff, long before this many later runs end. */
 const MAX_CLOSED_RUNS = 10_000
-const SECRETS: [RegExp, string][] = [
-  [/\bBearer\s+[\w.~+/=-]+/gi, 'Bearer [redacted]'],
-  [/\bsk-[\w-]{6,}/g, 'sk-[redacted]'],
-  // `api_key=`, `token=` in a URL and env-style `IU_API_KEY=`, `ARGO_API_SECRET=`, `GITHUB_TOKEN=`.
-  [/\b([\w-]*(?:key|token|secret|password)[\w-]*)=[^\s&"',;]+/gi, '$1=[redacted]'],
-  // JSON: `"token": "…"`, `"api_key":"…"`, `"authorization": "…"`.
-  [/("[\w-]*(?:key|token|secret|password|authorization)[\w-]*"\s*:\s*)"(?:[^"\\]|\\.)*"/gi, '$1"[redacted]"'],
-]
-
 /** Span text leaves the host: secrets-shaped substrings redacted, length capped. The journal keeps the original. */
 export function redactForSpan(text: string): string {
-  let out = text
-  for (const [pattern, replacement] of SECRETS) out = out.replace(pattern, replacement)
+  const out = redactSecrets(text)
   return out.length > MAX_ERROR_ATTRIBUTE ? `${out.slice(0, MAX_ERROR_ATTRIBUTE)}…` : out
 }
 

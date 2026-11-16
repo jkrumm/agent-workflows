@@ -73,6 +73,22 @@ export class CapabilityError<C extends string = string> extends Error {
 
 const CAUSE_MAX_CHARS = 300
 
+const SECRETS: [RegExp, string][] = [
+  [/\bBearer\s+[\w.~+/=-]+/gi, 'Bearer [redacted]'],
+  [/\bsk-[\w-]{6,}/g, 'sk-[redacted]'],
+  // `api_key=`, `token=` in a URL and env-style `IU_API_KEY=`, `ARGO_API_SECRET=`, `GITHUB_TOKEN=`.
+  [/\b([\w-]*(?:key|token|secret|password)[\w-]*)=[^\s&"',;]+/gi, '$1=[redacted]'],
+  // JSON: `"token": "…"`, `"api_key":"…"`, `"authorization": "…"`.
+  [/("[\w-]*(?:key|token|secret|password|authorization)[\w-]*"\s*:\s*)"(?:[^"\\]|\\.)*"/gi, '$1"[redacted]"'],
+]
+
+/** Secret-shaped substrings of `text` redacted: bearer tokens, `sk-` keys, `key=value` pairs and JSON credential fields. The one table every outbound error text and span passes. */
+export function redactSecrets(text: string): string {
+  let out = text
+  for (const [pattern, replacement] of SECRETS) out = out.replace(pattern, replacement)
+  return out
+}
+
 /**
  * What an untyped throw says about itself, short enough for a journal row and safe to hand a caller: `Name: message`,
  * with URL query strings and credential-looking values removed and the whole cut to `CAUSE_MAX_CHARS`. The stack
@@ -81,10 +97,7 @@ const CAUSE_MAX_CHARS = 300
 export function causeOf(error: unknown): string {
   const name = error instanceof Error ? error.name : typeof error
   const message = error instanceof Error ? error.message : String(error)
-  const text = `${name}: ${message}`
-    .replace(/(https?:\/\/[^\s?#"'<>)]+)[?#][^\s"'<>)]*/gi, '$1')
-    .replace(/\b(bearer|basic)\s+[\w.~+/=-]+/gi, '$1 [redacted]')
-    .replace(/\b([\w-]*(?:token|secret|password|api[_-]?key|authorization)[\w-]*)(\s*[=:]\s*)\S+/gi, '$1$2[redacted]')
+  const text = redactSecrets(`${name}: ${message}`.replace(/(https?:\/\/[^\s?#"'<>)]+)[?#][^\s"'<>)]*/gi, '$1'))
     .replace(/\s+/g, ' ')
     .trim()
   return text.length > CAUSE_MAX_CHARS ? `${text.slice(0, CAUSE_MAX_CHARS)}…` : text

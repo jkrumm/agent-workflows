@@ -1083,7 +1083,11 @@ describe('research scorer', () => {
   })
 
   test('a typed web.package error or an unusable latest leaves golden unscored (no pass), never an infra error', async () => {
-    const answers: Json[] = [{ error: { code: 'UPSTREAM_ERROR', message: 'not found' } }, { name: 'hono', latest: '' }]
+    const answers: Json[] = [
+      { error: { code: 'UPSTREAM_ERROR', message: 'not found' } },
+      { error: { code: 'NOT_FOUND', message: 'hono not found on npm' } },
+      { name: 'hono', latest: '' },
+    ]
     for (const answer of answers) {
       const v = await researchScorer.score({} as never, report(), {
         ...ctx,

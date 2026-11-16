@@ -125,6 +125,7 @@
       "name": "@agent-workflows/middleware",
       "version": "0.0.0",
       "dependencies": {
+        "@agent-workflows/capabilities": "workspace:*",
         "@agent-workflows/routes": "workspace:*",
         "@agent-workflows/runtime": "workspace:*",
         "@opentelemetry/api": "1.10.0",

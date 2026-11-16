@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { createCapabilities } from './capabilities/index.ts'
 import { createTitle } from './capabilities/title.ts'
 import type { Usage } from './context.ts'
-import { CapabilityCallError, fail } from './errors.ts'
+import { CapabilityCallError, causeOf, fail } from './errors.ts'
 import { defineCapability } from './procedure.ts'
 import { createRegistry } from './registry.ts'
 import { fakeTransports } from '@agent-workflows/testing/transports'
@@ -115,6 +115,7 @@ describe('one definition, two doors', () => {
       // No query string, no credential value.
       expect(message).not.toContain('abc123')
       expect(message).not.toContain('hunter2')
+      expect(causeOf(new Error('bad {"api_key":"sk-live-123456"} Bearer abc.def'))).not.toMatch(/live-123456|abc\.def/)
     } finally {
       console.error = original
       void s.stop(true)

@@ -10,6 +10,7 @@
     "test": "bun test --isolate"
   },
   "dependencies": {
+    "@agent-workflows/capabilities": "workspace:*",
     "@agent-workflows/routes": "workspace:*",
     "@agent-workflows/runtime": "workspace:*",
     "@opentelemetry/api": "1.10.0",
