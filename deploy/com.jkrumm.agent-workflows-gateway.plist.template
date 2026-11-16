@@ -54,9 +54,9 @@
   <!-- A fail-closed launch (exit 78) or a refused start retries at this pace, not in a tight loop. -->
   <key>ThrottleInterval</key>
   <integer>30</integer>
-  <!-- The gateway exits within 60 s of SIGTERM (open streams are drained); SIGKILL only after that. -->
+  <!-- SIGTERM closes the listener and lets open streams finish for up to 100 s; the gateway exits within 112 s, SIGKILL only after 120 s. -->
   <key>ExitTimeOut</key>
-  <integer>90</integer>
+  <integer>120</integer>
 
   <key>StandardOutPath</key>
   <string>__HOME__/Library/Logs/agent-workflows-gateway.out.log</string>

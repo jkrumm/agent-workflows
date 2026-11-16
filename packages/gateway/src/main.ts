@@ -17,8 +17,8 @@ const EX_CONFIG = 78
 const ANTHROPIC_BASE = 'https://api.anthropic.com'
 /** The first reconcile of all pools holds the start this long, then the gateway listens anyway. */
 const FIRST_RECONCILE_MS = 30_000
-/** Above everything `shutdown` waits for; the plist's ExitTimeOut is 90 s. */
-const HARD_EXIT_MS = 59_000
+/** Above everything `shutdown` waits for; the plist's ExitTimeOut is 120 s. */
+const HARD_EXIT_MS = 112_000
 
 function refuse(problems: string[]): never {
   for (const problem of problems) process.stderr.write(`agw-gateway: ${problem}\n`)

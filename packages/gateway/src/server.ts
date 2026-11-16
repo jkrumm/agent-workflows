@@ -12,8 +12,8 @@ const IDLE_TIMEOUT_S = 255
 /** Above `sttMaxUploadBytes`: the transcription door's uploads pass through here too. */
 const MAX_REQUEST_BODY_BYTES = 128 * 1024 * 1024
 
-// SIGTERM to exit stays under the 60 s the deploy contract gives: drain, flush, spans.
-const DRAIN_MS = 50_000
+// SIGTERM to exit stays under the plist's ExitTimeOut (120 s): drain 100 s, flush 5 s, spans 2 s. The listener closes at SIGTERM, streams in flight finish.
+const DRAIN_MS = 100_000
 const FLUSH_MS = 5000
 const SPANS_MS = 2000
 
@@ -36,7 +36,7 @@ export interface GatewayServerOptions {
 
 export interface GatewayServer {
   port: number
-  /** Stops accepting, lets streams finish, flushes, closes the ledger. Resolves within 60 s. */
+  /** Stops accepting, lets streams finish, flushes, closes the ledger. Resolves within 107 s. */
   shutdown(): Promise<void>
 }
 
