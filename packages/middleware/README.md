@@ -10,7 +10,7 @@ run record and telemetry as runtime `Middleware`, plus the usage outbox the host
 const platform = platformMiddleware({
   connectionString, // the runtime's
   schema: 'agw', // the runtime's
-  fingerprint: fsFingerprintSource({ agentsDir, workflows: { 'research.report': [{ agent: 'brain', route: 'cheap.classify' }] } }),
+  fingerprint: fsFingerprintSource({ agentsDir, workflows: { 'research.report': [{ agent: 'brain', route: 'cheap.title' }] } }),
 })
 const runtime = new Runtime({ connectionString, workflows, host, middleware: platform.middleware })
 await runtime.open()

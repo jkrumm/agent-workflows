@@ -517,7 +517,7 @@ describe('fingerprint map', () => {
   test('only workflows with agents appear, with their routes', () => {
     const wf = (id: string) =>
       defineWorkflow({ id, version: 'v1', input: z.object({}), output: z.object({}), run: async () => ({}) })
-    const agents = [{ agent: 'brain', route: 'cheap.classify' as const }]
+    const agents = [{ agent: 'brain', route: 'cheap.title' as const }]
     expect(
       fingerprintWorkflows([
         { workflow: wf('a.b') },

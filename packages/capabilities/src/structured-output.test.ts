@@ -21,7 +21,6 @@ const CASES: { capability: string; route: RouteId; input: Record<string, unknown
   },
   { capability: 'triage', route: 'triage', input: { destination: 'd', transcript: 't' } },
   { capability: 'overview.classify', route: 'overview.classify', input: { facts: 'f', agentIds: ['a1'] } },
-  { capability: 'llm.classify', route: 'cheap.classify', input: { text: 'x', labels: { bug: 'b', feature: 'f' } } },
   {
     capability: 'narrative.compose',
     route: 'narrative',

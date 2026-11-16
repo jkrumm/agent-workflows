@@ -236,7 +236,7 @@ describe('agw against the fake host', () => {
     expect(r.code).toBe(EXIT.usage)
     expect(r.error?.message).toBe("unknown command 'llm nope'")
     // llm.summarize stays skipped (its `format` input collides with --format) until capabilities rename it.
-    expect(r.error?.hint).toMatch(/^agw llm classify\|(summarize\|)?title$/)
+    expect(r.error?.hint).toMatch(/^agw llm (summarize\|)?title$/)
     expect(host.requests.filter((q) => q.path === '/openapi.json').length).toBe(before + 1)
   })
 

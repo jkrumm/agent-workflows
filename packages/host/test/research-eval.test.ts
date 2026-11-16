@@ -201,7 +201,7 @@ describe("the scorers' judge", () => {
       error: { code: 'UPSTREAM_ERROR', message: 'the page is gone' },
     })
     expect(rejection(judge()('eval.run', {}, scope('regression')))).resolves.toContain('is not a judge capability')
-    expect(judgeAllowed('llm.classify')).toBe(true)
+    expect(judgeAllowed('llm.title')).toBe(true)
     expect(judgeAllowed('prose.write')).toBe(false)
   })
 

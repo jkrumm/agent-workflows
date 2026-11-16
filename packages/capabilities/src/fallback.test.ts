@@ -40,7 +40,7 @@ beforeEach(() => {
 afterEach(() => iu.stop())
 
 async function call(
-  id: 'llm.classify' | 'llm.summarize' | 'triage',
+  id: 'llm.title' | 'llm.summarize' | 'triage',
   input: unknown,
   routes?: PatchInput,
   attribution?: Attribution,
@@ -70,8 +70,8 @@ function answer(request: RecordedRequest, text: string, usage: Record<string, un
   ])
 }
 
-const classify = { text: 'The app crashes on start.', labels: { bug: 'something is broken', feature: 'new behaviour' } }
-const primary = resolveRoute('cheap.classify', {})
+const titled = { text: 'The app crashes on start.' }
+const primary = resolveRoute('cheap.title', {})
 const fallback = primary.fallback as NonNullable<typeof primary.fallback>
 
 /** The error and everything its `cause` chain reaches. */
@@ -108,8 +108,8 @@ describe('provider-balance fallback', () => {
   ] as const) {
     test(`${name} on the primary: one fallback call, no retry of the primary, priced, model recorded`, async () => {
       iu.on('messages', failure)
-      iu.on('chat', (request) => answer(request, '{"label":"bug","reason":"crash"}'))
-      expect(await call('llm.classify', classify)).toEqual({ label: 'bug', reason: 'crash' })
+      iu.on('chat', (request) => answer(request, 'App crashes on start'))
+      expect(await call('llm.title', titled)).toEqual({ title: 'App crashes on start' })
 
       expect(iu.requests.map((r) => [r.path, r.body.model])).toEqual([
         ['/anthropic/v1/messages', primary.model],
@@ -133,7 +133,7 @@ describe('provider-balance fallback', () => {
       expect(warnings).toEqual([
         {
           message: 'provider balance exhausted; falling back',
-          meta: { route: 'cheap.classify', from: primary.model, to: fallback.model },
+          meta: { route: 'cheap.title', from: primary.model, to: fallback.model },
         },
       ])
     })
@@ -144,23 +144,23 @@ describe('provider-balance fallback', () => {
       'messages',
       () => new Response('{"error":{"type":"invalid_request_error","message":"max_tokens: bad"}}', { status: 400 }),
     )
-    const error = await caught(call('llm.classify', classify))
+    const error = await caught(call('llm.title', titled))
     expect(error).toMatchObject({ code: 'UPSTREAM_ERROR', data: { status: 400 } })
     expect(iu.requests.map((r) => r.body.model)).toEqual([primary.model])
   })
 
   test('a cost IU reports on the fallback wins over the rate', async () => {
     iu.on('messages', () => new Response(BALANCE_503, { status: 503 }))
-    iu.on('chat', (request) => answer(request, '{"label":"bug","reason":"r"}', { ...USAGE, cost: 0.0042 }))
-    await call('llm.classify', classify)
+    iu.on('chat', (request) => answer(request, 'App crashes', { ...USAGE, cost: 0.0042 }))
+    await call('llm.title', titled)
     expect(usages).toEqual([expect.objectContaining({ model: fallback.model, cost: 0.0042, costSource: 'provider' })])
   })
 
   for (const status of [502, 503, 504]) {
     test(`${status} until the retries are exhausted: one successful fallback call, the primary tried three times, usage of the fallback`, async () => {
       iu.on('messages', () => new Response('Service Unavailable', { status }))
-      iu.on('chat', (request) => answer(request, '{"label":"bug","reason":"crash"}'))
-      expect(await call('llm.classify', classify)).toEqual({ label: 'bug', reason: 'crash' })
+      iu.on('chat', (request) => answer(request, 'App crashes on start'))
+      expect(await call('llm.title', titled)).toEqual({ title: 'App crashes on start' })
 
       expect(iu.requests.map((r) => [r.path, r.body.model])).toEqual([
         ['/anthropic/v1/messages', primary.model],
@@ -175,7 +175,7 @@ describe('provider-balance fallback', () => {
       expect(warnings).toEqual([
         {
           message: 'provider unavailable; falling back',
-          meta: { route: 'cheap.classify', from: primary.model, to: fallback.model },
+          meta: { route: 'cheap.title', from: primary.model, to: fallback.model },
         },
       ])
     })
@@ -189,17 +189,17 @@ describe('provider-balance fallback', () => {
         : Response.json({
             model: primary.model,
             stop_reason: 'end_turn',
-            content: [{ type: 'text', text: '{"label":"bug","reason":"r"}' }],
+            content: [{ type: 'text', text: 'App crashes' }],
             usage: { input_tokens: 10, output_tokens: 5 },
           }),
     )
-    await call('llm.classify', classify)
+    await call('llm.title', titled)
     expect(iu.requests.map((r) => r.body.model)).toEqual([primary.model, primary.model, primary.model])
     expect(warnings).toEqual([])
   })
 
   test('a dead connection until the retries are exhausted: one fallback call', async () => {
-    iu.on('chat', (request) => answer(request, '{"label":"bug","reason":"crash"}'))
+    iu.on('chat', (request) => answer(request, 'App crashes on start'))
     let refused = 0
     const flaky = (url: string, init: RequestInit) => {
       if (url.includes('/anthropic/')) {
@@ -208,7 +208,7 @@ describe('provider-balance fallback', () => {
       }
       return fetch(url, init)
     }
-    expect(await call('llm.classify', classify, undefined, undefined, flaky)).toEqual({ label: 'bug', reason: 'crash' })
+    expect(await call('llm.title', titled, undefined, undefined, flaky)).toEqual({ title: 'App crashes on start' })
     expect(refused).toBe(3)
     expect(iu.requests.map((r) => r.path)).toEqual(['/openai/v1/chat/completions'])
     expect(warnings.map((w) => w.message)).toEqual(['provider unavailable; falling back'])
@@ -220,7 +220,7 @@ describe('provider-balance fallback', () => {
       () =>
         new Response('{"error":{"type":"invalid_request_error","message":"response_format: bad"}}', { status: 503 }),
     )
-    const error = await caught(call('llm.classify', classify))
+    const error = await caught(call('llm.title', titled))
     expect(error).toMatchObject({ code: 'UPSTREAM_ERROR', data: { status: 503 } })
     expect(isOutageError(error)).toBe(false)
     expect(iu.requests.map((r) => r.body.model)).toEqual([primary.model])
@@ -229,14 +229,14 @@ describe('provider-balance fallback', () => {
 
   test('a hang guard is spent wait: no retry and no fallback', async () => {
     const hung = () => Promise.reject(new DOMException('timed out', 'TimeoutError'))
-    const error = await caught(call('llm.classify', classify, undefined, undefined, hung))
+    const error = await caught(call('llm.title', titled, undefined, undefined, hung))
     expect(isOutageError(error)).toBe(false)
     expect(iu.requests).toEqual([])
   })
 
   test('a 500 is retried on the primary; no fallback', async () => {
     iu.on('messages', () => new Response('boom', { status: 500 }))
-    const error = await caught(call('llm.classify', classify))
+    const error = await caught(call('llm.title', titled))
     expect(error).toMatchObject({ code: 'UPSTREAM_ERROR', data: { status: 500 } })
     expect(iu.requests.map((r) => r.body.model)).toEqual([primary.model, primary.model, primary.model])
     expect(warnings).toEqual([])
@@ -245,7 +245,7 @@ describe('provider-balance fallback', () => {
   test('the fallback failing on a 502 too: fallback_failed after an unavailable primary, no third call, not an outage again', async () => {
     iu.on('messages', () => new Response('bad gateway', { status: 502 }))
     iu.on('chat', () => new Response('bad gateway', { status: 502 }))
-    const error = await caught(call('llm.classify', classify))
+    const error = await caught(call('llm.title', titled))
     expect(error).toMatchObject({ code: 'UPSTREAM_ERROR', data: { reason: 'fallback_failed' } })
     expect(error.message).toContain('was unavailable')
     expect(isOutageError(error)).toBe(false)
@@ -262,7 +262,7 @@ describe('provider-balance fallback', () => {
 
   test('an arm with fallback: null leaves an outage failing', async () => {
     iu.on('messages', () => new Response('bad gateway', { status: 502 }))
-    const error = await caught(call('llm.classify', classify, { 'cheap.classify': { fallback: null } }))
+    const error = await caught(call('llm.title', titled, { 'cheap.title': { fallback: null } }))
     expect(error).toMatchObject({ data: { status: 502 } })
     expect(iu.requests.map((r) => r.path)).toEqual(Array(3).fill('/anthropic/v1/messages'))
   })
@@ -272,7 +272,7 @@ describe('provider-balance fallback', () => {
       'messages',
       () => new Response('{"error":{"type":"rate_limit_error","message":"Too many requests"}}', { status: 429 }),
     )
-    const error = await caught(call('llm.classify', classify))
+    const error = await caught(call('llm.title', titled))
     expect(error).toMatchObject({ code: 'UPSTREAM_ERROR', data: { status: 429 } })
     expect(iu.requests.map((r) => r.body.model)).toEqual([primary.model, primary.model, primary.model])
     expect(warnings).toEqual([])
@@ -285,7 +285,7 @@ describe('provider-balance fallback', () => {
     test(`the fallback failing with ${name}: fallback_failed, cause is the fallback's error, never balance`, async () => {
       iu.on('messages', () => new Response(BALANCE_503, { status: 503 }))
       iu.on('chat', fallbackFailure)
-      const error = await caught(call('llm.classify', classify))
+      const error = await caught(call('llm.title', titled))
       expect(error).toMatchObject({ code: 'UPSTREAM_ERROR', data: { reason: 'fallback_failed' } })
       expect(error.data).not.toHaveProperty('status')
       expect(isBalanceError(error)).toBe(false)
@@ -305,15 +305,18 @@ describe('provider-balance fallback', () => {
   test('a re-ask after a rejected answer stays on the fallback', async () => {
     let answers = 0
     iu.on('messages', () => new Response('', { status: 402 }))
-    iu.on('chat', (request) => answer(request, answers++ === 0 ? 'not json' : '{"label":"bug","reason":"r"}'))
-    await call('llm.classify', classify)
-    expect(iu.requests.map((r) => r.body.model)).toEqual([primary.model, fallback.model, fallback.model])
-    expect(usages.map((u) => u.model)).toEqual([fallback.model, fallback.model])
+    const triage = resolveRoute('triage', {})
+    const reply = JSON.stringify({ headline: 'h', detail: 'd', spoken: 's' })
+    iu.on('chat', (request) => answer(request, answers++ === 0 ? 'not json' : reply))
+    await call('triage', { destination: 'brain', transcript: 'note to self' })
+    const triageFallback = triage.fallback?.model as string
+    expect(iu.requests.map((r) => r.body.model)).toEqual([triage.model, triageFallback, triageFallback])
+    expect(usages.map((u) => u.model)).toEqual([triageFallback, triageFallback])
   })
 
   test('a second single-call route (llm.summarize) falls back to its own seat’s GPT model over the chat wire', async () => {
     const summarize = resolveRoute('cheap.summarize', {})
-    // EASY routes fall back to Terra low; the FAST classify above falls back to Luna.
+    // EASY routes fall back to Terra low; the FAST title above falls back to Luna.
     expect(summarize.wire).toBe('anthropic')
     expect(summarize.fallback).toMatchObject({ wire: 'iu-openai', effort: 'low' })
     expect(summarize.fallback?.model).not.toBe(fallback.model)
@@ -331,17 +334,17 @@ describe('provider-balance fallback', () => {
 
   test('an arm patches the fallback: its model and effort are what runs, priced at the table rate of that model', async () => {
     const terra = resolveRoute('research.agent').fallback?.model as string
-    const routes = { 'cheap.classify': { fallback: { model: terra, effort: 'xhigh' } } }
+    const routes = { 'cheap.title': { fallback: { model: terra, effort: 'xhigh' } } }
     iu.on('messages', () => new Response('', { status: 402 }))
-    iu.on('chat', (request) => answer(request, '{"label":"bug","reason":"r"}'))
-    await call('llm.classify', classify, routes)
+    iu.on('chat', (request) => answer(request, 'App crashes'))
+    await call('llm.title', titled, routes)
     expect(iu.requests[1]?.body).toMatchObject({ model: terra, reasoning_effort: 'xhigh' })
     expect(usages).toEqual([expect.objectContaining({ model: terra, costSource: 'rate' })])
   })
 
   test('an arm with fallback: null turns the fallback off', async () => {
     iu.on('messages', () => new Response('', { status: 402 }))
-    await caught(call('llm.classify', classify, { 'cheap.classify': { fallback: null } }))
+    await caught(call('llm.title', titled, { 'cheap.title': { fallback: null } }))
     expect(iu.requests).toHaveLength(1)
   })
 })
@@ -355,10 +358,10 @@ describe('provider-balance fallback: the gateway refuses the Claude credit', () 
 
   test('a 402 moves the call to the route fallback on GPT, never IU Claude; only the anthropic call opts out', async () => {
     iu.on('messages', () => Response.json(GATEWAY_402, { status: 402, headers: { 'x-agw-pool': 'refused' } }))
-    iu.on('chat', (request) => answer(request, '{"label":"bug","reason":"fine"}'))
-    const done = await call('llm.classify', classify)
+    iu.on('chat', (request) => answer(request, 'App crashes on start'))
+    const done = await call('llm.title', titled)
 
-    expect(done).toEqual({ label: 'bug', reason: 'fine' })
+    expect(done).toEqual({ title: 'App crashes on start' })
     expect(iu.requests.map((r) => [r.path, r.body.model])).toEqual([
       ['/anthropic/v1/messages', primary.model],
       ['/openai/v1/chat/completions', fallback.model],
@@ -375,7 +378,7 @@ describe('provider-balance fallback: the gateway refuses the Claude credit', () 
     runId: 'run-1',
     rootId: 'run-1',
     workflow: 'fallback.test',
-    step: 'classify',
+    step: 'title',
     purpose: 'prod',
     origin: 'claude-code',
   }
@@ -384,8 +387,8 @@ describe('provider-balance fallback: the gateway refuses the Claude credit', () 
 
   test('the GPT fallback call carries x-agw-route-fallback = the refused response’s request id; the primary does not', async () => {
     iu.on('messages', () => refusal({ 'x-agw-request-id': REFUSED_ID }))
-    iu.on('chat', (request) => answer(request, '{"label":"bug","reason":"fine"}'))
-    await call('llm.classify', classify, undefined, ATTRIBUTION)
+    iu.on('chat', (request) => answer(request, 'App crashes on start'))
+    await call('llm.title', titled, undefined, ATTRIBUTION)
 
     expect(iu.requests).toHaveLength(2)
     expect(iu.requests[0]?.headers.get('x-agw-route-fallback')).toBeNull()
@@ -396,13 +399,13 @@ describe('provider-balance fallback: the gateway refuses the Claude credit', () 
 
   test('no attribution (outside a run) or a refusal with no request id sends no marker', async () => {
     iu.on('messages', () => refusal({ 'x-agw-request-id': REFUSED_ID }))
-    iu.on('chat', (request) => answer(request, '{"label":"bug","reason":"fine"}'))
-    await call('llm.classify', classify)
+    iu.on('chat', (request) => answer(request, 'App crashes on start'))
+    await call('llm.title', titled)
     expect(iu.requests[1]?.headers.get('x-agw-route-fallback')).toBeNull()
 
     iu.requests.length = 0
     iu.on('messages', () => refusal())
-    await call('llm.classify', classify, undefined, ATTRIBUTION)
+    await call('llm.title', titled, undefined, ATTRIBUTION)
     expect(iu.requests[1]?.headers.get('x-agw-route-fallback')).toBeNull()
   })
 })

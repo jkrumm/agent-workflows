@@ -42,24 +42,6 @@ describe('live smoke', () => {
     expect(out.title).not.toContain('\n')
   })
 
-  test.skipIf(!live)(skipped('llm.classify'), async () => {
-    const out = await registry.call(
-      'llm.classify',
-      {
-        text: TEXT,
-        labels: {
-          incident: 'an outage or failure and how it was handled',
-          feature: 'a request for new product behaviour',
-          marketing: 'promotional copy',
-        },
-      },
-      tracked('llm.classify'),
-    )
-    show('llm.classify', out)
-    expect(out.label).toBe('incident')
-    expect(out.reason.length).toBeGreaterThan(0)
-  })
-
   test.skipIf(!live)(skipped('decide'), async () => {
     const out = await registry.call(
       'decide',

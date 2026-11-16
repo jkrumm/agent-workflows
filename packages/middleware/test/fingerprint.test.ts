@@ -77,7 +77,7 @@ describe('fsFingerprintSource', () => {
   const source = () =>
     fsFingerprintSource({
       agentsDir: agents,
-      workflows: { 'research.report': [{ agent: 'brain', route: 'cheap.classify' }] },
+      workflows: { 'research.report': [{ agent: 'brain', route: 'cheap.title' }] },
       opencodeBin: bin,
     })
 
@@ -102,13 +102,13 @@ describe('fsFingerprintSource', () => {
     const patched = await source().inputs({
       id: 'research.report',
       version: 'v1',
-      arm: { routes: { 'cheap.classify': { effort: 'high' } } },
+      arm: { routes: { 'cheap.title': { effort: 'high' } } },
     })
     // The agent's route fingerprint is the patched route's, and the arm itself is an input.
     expect(patched.agents[0]?.route).not.toBe(
       (await source().inputs({ id: 'research.report', version: 'v1' })).agents[0]?.route,
     )
-    expect(await fp({ routes: { 'cheap.classify': { effort: 'high' } } })).not.toBe(before)
+    expect(await fp({ routes: { 'cheap.title': { effort: 'high' } } })).not.toBe(before)
     expect(await fp({ params: { finders: 3 } })).not.toBe(before)
     writeFileSync(join(agents, 'brain', 'AGENTS.md'), '# brain v2')
     expect(await fp()).not.toBe(before)
@@ -121,7 +121,7 @@ describe('fsFingerprintSource', () => {
     const policy = (hostPolicy?: string) =>
       fsFingerprintSource({
         agentsDir: agents,
-        workflows: { 'research.report': [{ agent: 'brain', route: 'cheap.classify' }] },
+        workflows: { 'research.report': [{ agent: 'brain', route: 'cheap.title' }] },
         opencodeBin: bin,
         ...(hostPolicy ? { hostPolicy } : {}),
       })
@@ -169,7 +169,7 @@ describe('fsFingerprintSource', () => {
   test('a missing agent fails, and is read again next time', async () => {
     const s = fsFingerprintSource({
       agentsDir: agents,
-      workflows: { w: [{ agent: 'ghost', route: 'cheap.classify' }] },
+      workflows: { w: [{ agent: 'ghost', route: 'cheap.title' }] },
       opencodeBin: bin,
     })
     const missing = await s.inputs({ id: 'w', version: 'v1' }).then(
@@ -201,7 +201,7 @@ describe('fsFingerprintSource', () => {
     chmodSync(flaky, 0o755)
     const s = fsFingerprintSource({
       agentsDir: agents,
-      workflows: { w: [{ agent: 'brain', route: 'cheap.classify' }] },
+      workflows: { w: [{ agent: 'brain', route: 'cheap.title' }] },
       opencodeBin: flaky,
     })
     const failed = await Promise.allSettled([

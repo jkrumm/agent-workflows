@@ -674,7 +674,7 @@ describe('buildServerConfig: the provider follows the model family, whatever oth
   })
 
   test('the agent routes run Claude on the native Anthropic provider and fall back to Terra on Responses', () => {
-    expect(resolveRoute('cheap.classify', {})).toMatchObject({
+    expect(resolveRoute('cheap.title', {})).toMatchObject({
       wire: 'anthropic',
       model: 'claude-haiku-5-5',
     })
