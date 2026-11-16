@@ -14,6 +14,7 @@ import {
   browserFromEnv,
   dropAllKept,
   keepViaCdp,
+  NO_POPUPS,
   keptHosts,
   pageHoldFromEnv,
   readViaCdp,
@@ -2882,13 +2883,73 @@ describe('the challenged page kept open for the owner', () => {
       expect(browser.fronted).toEqual(['https://shop.example.com/a'])
       expect(browser.closed).toEqual([])
       expect(keptHosts()).toEqual(['shop.example.com'])
-      expect(browser.scripts).toHaveLength(1) // no page script can open a WebSocket in a kept tab either
+      expect(browser.scripts).toHaveLength(2) // no WebSocket, no popups
       await dropAllKept()
       expect(browser.closed).toEqual(['tab-1'])
       expect(keptHosts()).toEqual([])
     } finally {
       browser.stop()
     }
+  })
+
+  test('a kept page gets the no-popups script; it closes window.open and turns a new-window link or form to its own', async () => {
+    const browser = fakeBrowser(WALL_PAGE)
+    try {
+      await keepViaCdp(browser.base, 'https://shop.example.com/', new AbortController().signal, allowAll)
+      expect(browser.scripts).toContain(NO_POPUPS)
+      const readOnly = fakeBrowser([{ title: 'Jura', text: REAL }])
+      try {
+        await readViaCdp(readOnly.base, 'https://shop.example.com/', new AbortController().signal, allowAll, {
+          settleMs: 200,
+          pollMs: 20,
+        })
+        expect(readOnly.scripts).not.toContain(NO_POPUPS)
+      } finally {
+        readOnly.stop()
+      }
+    } finally {
+      browser.stop()
+    }
+
+    // The script itself, run against a stub of the parts of the page it touches.
+    const listeners: Record<string, (event: unknown) => void> = {}
+    const attrs = new Map<string, string>()
+    const link = {
+      getAttribute: (name: string) => attrs.get(name) ?? null,
+      setAttribute: (name: string, value: string) => void attrs.set(name, value),
+    }
+    const win: Record<string, unknown> = {
+      HTMLFormElement: {
+        prototype: {
+          submit: function () {
+            return 'submitted'
+          },
+        },
+      },
+    }
+    const doc = {
+      addEventListener: (type: string, handler: (event: unknown) => void) => void (listeners[type] = handler),
+    }
+    Object.defineProperty(win, 'window', { value: win })
+    new Function(
+      'globalThis',
+      `with (globalThis) { ${NO_POPUPS.replace('})(window, document)', '})(globalThis, document)')} }`,
+    )(Object.assign(win, { document: doc }))
+    expect((win.open as () => unknown)()).toBeNull()
+    expect(() => Object.defineProperty(win, 'open', { value: () => 1 })).toThrow()
+    attrs.set('target', '_blank')
+    listeners.click!({ target: { closest: () => link } })
+    expect(attrs.get('target')).toBe('_self')
+    attrs.set('target', 'popup')
+    listeners.submit!({ target: link })
+    expect(attrs.get('target')).toBe('_self')
+    attrs.set('target', '_top')
+    listeners.auxclick!({ target: { closest: () => link } })
+    expect(attrs.get('target')).toBe('_top')
+    attrs.set('target', '_blank')
+    const form = (win.HTMLFormElement as { prototype: { submit: (this: typeof link) => string } }).prototype
+    expect(form.submit.call(link)).toBe('submitted')
+    expect(attrs.get('target')).toBe('_self')
   })
 
   test('at most one kept tab per host (a second keep replaces the first) and three overall (the oldest goes)', async () => {

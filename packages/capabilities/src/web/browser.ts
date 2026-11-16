@@ -243,6 +243,34 @@ type Received = { type?: string; frameId?: string; response: { status: number; r
 const NO_WEBSOCKET =
   'Object.defineProperty(window, "WebSocket", { value: function () { throw new Error("WebSocket is disabled") }, configurable: false })'
 
+/**
+ * Script for a tab kept open for a person to click in: it opens no second window. A popup is a tab of the same Chrome
+ * with no guard of its own, so `window.open` is closed off for good, and a link or form aimed at a new window (`_blank`,
+ * a window name) is turned to the page's own window just before it fires. Takes the page's `window` and `document`.
+ */
+export const NO_POPUPS = `(function (window, document) {
+  Object.defineProperty(window, "open", { value: function () { return null }, configurable: false, writable: false })
+  var own = function (el) {
+    var target = el && el.getAttribute ? el.getAttribute("target") : null
+    if (target && !/^_(self|top|parent)$/i.test(target)) el.setAttribute("target", "_self")
+  }
+  var onLink = function (event) {
+    var el = event.target && event.target.closest ? event.target.closest("a[target], area[target], form[target]") : null
+    if (el) own(el)
+  }
+  document.addEventListener("click", onLink, true)
+  document.addEventListener("auxclick", onLink, true)
+  document.addEventListener("submit", function (event) { own(event.target) }, true)
+  if (window.HTMLFormElement) {
+    var submit = window.HTMLFormElement.prototype.submit
+    Object.defineProperty(window.HTMLFormElement.prototype, "submit", {
+      value: function () { own(this); return submit.call(this) },
+      configurable: false,
+      writable: false,
+    })
+  }
+})(window, document)`
+
 /** A new blank tab of the browser: its id and the DevTools address of its page. */
 async function openTab(base: string, signal: AbortSignal): Promise<{ id: string; webSocketDebuggerUrl: string }> {
   try {
@@ -286,14 +314,18 @@ interface Guard {
  * open a WebSocket. It rides on the session, so it holds for as long as the session is attached. `onRefused` runs once,
  * when the main document is refused.
  */
-async function guardPage(session: Session, policy: RequestPolicy, onRefused: () => void = () => {}): Promise<Guard> {
+async function guardPage(
+  session: Session,
+  policy: RequestPolicy,
+  options: { onRefused?: () => void; noPopups?: boolean } = {},
+): Promise<Guard> {
   let refused = false
   let mainFrame = ''
   let status = 0
   const refuse = () => {
     if (refused) return
     refused = true
-    onRefused()
+    options.onRefused?.()
   }
   const verdicts = new Map<string, Promise<boolean>>() // per URL: a page asks for the same host many times
   session.on('Fetch.requestPaused', (params) => {
@@ -340,6 +372,7 @@ async function guardPage(session: Session, policy: RequestPolicy, onRefused: () 
   await session.send('Page.enable')
   await session.send('Network.enable')
   await session.send('Page.addScriptToEvaluateOnNewDocument', { source: NO_WEBSOCKET })
+  if (options.noPopups) await session.send('Page.addScriptToEvaluateOnNewDocument', { source: NO_POPUPS })
   const tree = await session.send<{ frameTree?: { frame?: { id?: string } } }>('Page.getFrameTree')
   mainFrame = tree.frameTree?.frame?.id ?? ''
   await session.send('Fetch.enable', { patterns: [{ urlPattern: '*' }] })
@@ -482,7 +515,10 @@ export const keptHosts = (): string[] => [...kept.keys()]
  * open until `dropKept` (a later read of the host passed, `keepMs` ran out, the page was refused, the owner closed it).
  * A kept tab has no read to ride along on, so the request guard stays attached to its session for as long as the tab is
  * kept: every request the page makes while the owner clicks through the wall (and the document it navigates to) is vetted
- * by the same `policy` as in a read, and a refused document closes the tab. One tab per host (a second keep replaces
+ * by the same `policy` as in a read, and a refused document closes the tab. The guard covers this tab only: a popup
+ * would be a tab of the same Chrome with none, so the page gets `NO_POPUPS` (no `window.open`, links and forms aimed at
+ * a new window turn to the page's own). Frames the browser runs in another process (cross-origin iframes, the captcha
+ * widget) are outside this session and its scripts, as they are in a read. One tab per host (a second keep replaces
  * the first) and `MAX_KEPT` overall (the oldest goes). A tab that cannot be kept is closed and the failure thrown.
  */
 export async function keepViaCdp(
@@ -499,8 +535,11 @@ export async function keepViaCdp(
     const opening = within(signal, timing.openMs ?? TAB_REQUEST_MS)
     session = await Session.open(tab.webSocketDebuggerUrl, opening)
     const opened = session
-    const guard = await guardPage(opened, policy, () => {
-      if (kept.get(host)?.session === opened) void dropKept(host)
+    const guard = await guardPage(opened, policy, {
+      noPopups: true,
+      onRefused: () => {
+        if (kept.get(host)?.session === opened) void dropKept(host)
+      },
     })
     await guard.navigate(url)
     if (guard.refused) throw new BrowserRefused('the page leads to a non-public address')
