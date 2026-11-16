@@ -198,26 +198,18 @@ describe('wallet gate', () => {
 
   test('env defaults', () => {
     const logger = captureLogger()
-    expect(walletEnv({}, logger)).toMatchObject({
-      thresholdUsd: 400,
-      pausedUntil: new Date('2026-11-02T00:00:00Z'),
+    expect(walletEnv({}, logger).thresholdUsd).toBe(400)
+    expect(walletEnv({ AGW_WALLET_THRESHOLD_USD: '250', AGW_WALLET_SNAPSHOT: '/tmp/s.json' }, logger)).toEqual({
+      thresholdUsd: 250,
+      snapshotPath: '/tmp/s.json',
     })
-    expect(
-      walletEnv(
-        { AGW_WALLET_THRESHOLD_USD: '250', AGW_WALLET_PAUSED_UNTIL: '', AGW_WALLET_SNAPSHOT: '/tmp/s.json' },
-        logger,
-      ),
-    ).toEqual({ thresholdUsd: 250, pausedUntil: null, snapshotPath: '/tmp/s.json' })
     expect(walletEnv({ AGW_WALLET_THRESHOLD_USD: ' ' }, logger).thresholdUsd).toBe(400)
     expect(walletEnv({ AGW_WALLET_THRESHOLD_USD: '0' }, logger).thresholdUsd).toBe(0)
-    // Fail closed: an invalid pause date keeps the default pause, never no pause.
-    expect(walletEnv({ AGW_WALLET_THRESHOLD_USD: '-1', AGW_WALLET_PAUSED_UNTIL: 'soon' }, logger)).toMatchObject({
-      thresholdUsd: 400,
-      pausedUntil: new Date('2026-11-02T00:00:00Z'),
-    })
+    expect(walletEnv({ AGW_WALLET_THRESHOLD_USD: '-1' }, logger).thresholdUsd).toBe(400)
+    // No env switch for a pause: the variable is not read.
+    expect(walletEnv({ AGW_WALLET_PAUSED_UNTIL: '2099-01-01T00:00:00Z' }, logger)).not.toHaveProperty('pausedUntil')
     expect(logger.lines.map((l) => l.message)).toEqual([
       'AGW_WALLET_THRESHOLD_USD is not a number >= 0; the default applies',
-      'AGW_WALLET_PAUSED_UNTIL is not a valid date; the default pause applies',
     ])
   })
 })
@@ -233,14 +225,11 @@ describe('wallet gate, options and sinks', () => {
     },
   )
 
-  test('an invalid pausedUntil option falls back to the default pause (fail closed)', async () => {
-    const g = gate(await snapshot('opt-under', fresh(10)), {
-      pausedUntil: new Date('nope'),
-      now: () => new Date('2026-10-30T00:00:00Z'),
-    })
+  test('an invalid pausedUntil option is a warning and no pause', async () => {
+    const g = gate(await snapshot('opt-under', fresh(10)), { pausedUntil: new Date('nope') })
     const result = await runOnce(g)
-    expect(result.error?.message).toContain('paused until 2026-11-02T00:00:00.000Z')
-    expect(g.logger.lines[0]?.message).toBe('wallet gate: pausedUntil is an invalid date; the default pause applies')
+    expect(result.error).toBeNull()
+    expect(g.logger.lines[0]?.message).toBe('wallet gate: pausedUntil is an invalid date; no pause applies')
   })
 
   test('a throwing or rejecting onDecision sink never refuses nor admits on its own', async () => {

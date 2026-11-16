@@ -120,12 +120,11 @@ OCR in review was the first, no workflow declares one now); every other workflow
 | Env | Default | Notes |
 |-|-|-|
 | `AGW_WALLET_THRESHOLD_USD` | `400` | a number ≥ 0; anything else = a warning and 400; `0` disables the spend check |
-| `AGW_WALLET_PAUSED_UNTIL` | `2026-11-02T00:00:00Z` | ISO date; empty = no pause; invalid = a warning and the default pause date (fail closed) |
 | `AGW_WALLET_SNAPSHOT` | `~/.local/share/iu-portal/latest.json` | usage-tracker's IU snapshot |
 
 Options (`thresholdUsd`, `pausedUntil`, `spend`) win over the env. An invalid `thresholdUsd` (NaN, negative,
-infinite) falls back to the env or default value with a warning; an invalid `pausedUntil` date falls back to the env
-or default pause (fail closed).
+infinite) falls back to the env or default value with a warning. There is no default pause and no env switch for one:
+`pausedUntil` is an option only (null by default); an invalid date is a warning and no pause.
 
 ## Known gaps
 

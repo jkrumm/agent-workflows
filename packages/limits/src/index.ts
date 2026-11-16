@@ -25,7 +25,6 @@ export {
   snapshotSpendSource,
 } from './spend.ts'
 export {
-  WALLET_PAUSED_UNTIL_DEFAULT,
   WALLET_THRESHOLD_USD_DEFAULT,
   type WalletEnv,
   type WalletGateOptions,
