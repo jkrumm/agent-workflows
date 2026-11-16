@@ -8,8 +8,11 @@ import type { Rate, Wire } from './schema.ts'
  * `prompt_tokens_details.cached_tokens` (OpenAI reports no cache writes).
  */
 export interface ProviderUsage extends Pick<PriceUsage, 'input_tokens_details' | 'units'> {
-  /** USD, reported by the provider (IU puts it in `usage.cost`). */
-  cost?: number | null
+  /**
+   * USD, reported by the provider (IU puts it in `usage.cost`): a number, or Perplexity Sonar's breakdown, whose
+   * `total_cost` includes the per-request fee the token counts do not carry (`reportedCost`).
+   */
+  cost?: number | { request_cost?: number | null; total_cost?: number | null } | null
   prompt_tokens?: number
   completion_tokens?: number
   input_tokens?: number
@@ -27,6 +30,16 @@ export interface ProviderUsage extends Pick<PriceUsage, 'input_tokens_details' |
 }
 
 export type Cost = { usd: number; source: 'provider' | 'rate' } | { usd: null; source: 'unknown' }
+
+/**
+ * The provider's own USD figure of a usage block, or `null`: `usage.cost` as a number, or `usage.cost.total_cost` where
+ * it is a breakdown object (Sonar bills a request fee beside its tokens, so tokens at a rate undercount it).
+ */
+export function reportedCost(usage: { cost?: unknown } | null | undefined): number | null {
+  const cost: unknown = usage?.cost
+  const total = typeof cost === 'object' && cost !== null ? (cost as { total_cost?: unknown }).total_cost : cost
+  return typeof total === 'number' && Number.isFinite(total) && total >= 0 ? total : null
+}
 
 function count(...values: (number | undefined)[]): number | null {
   for (const v of values) if (typeof v === 'number' && Number.isFinite(v) && v >= 0) return v
@@ -71,10 +84,9 @@ function cacheWrites(usage: ProviderUsage): { write5m: number; write1h: number }
  * `wire` is reserved for wire-specific cost rules; no wire needs one yet, so it is not read.
  */
 export function costFromUsage(_wire: Wire, usage: ProviderUsage | null | undefined, rate?: Rate, price?: Price): Cost {
-  if (price) return priceCall(price, usage)
-  if (typeof usage?.cost === 'number' && Number.isFinite(usage.cost) && usage.cost >= 0) {
-    return { usd: usage.cost, source: 'provider' }
-  }
+  const provider = reportedCost(usage)
+  if (price) return priceCall(price, usage && { ...usage, cost: provider })
+  if (provider !== null) return { usd: provider, source: 'provider' }
   if (!usage || !rate) return { usd: null, source: 'unknown' }
   const output = count(usage.completion_tokens, usage.output_tokens, usage.outputTokens)
   const cacheRead =

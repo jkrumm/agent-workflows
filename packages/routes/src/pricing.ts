@@ -4,7 +4,7 @@
 import { CLAUDE_ALIASES, CLAUDE_RATES, CLAUDE_SNAPSHOT_ID, type ClaudeRate } from './table/claude.ts'
 
 export { BALANCE_MARKER, isBalanceFailure } from './balance.ts'
-export { costFromUsage, type ProviderUsage } from './cost.ts'
+export { costFromUsage, type ProviderUsage, reportedCost } from './cost.ts'
 export type { ClaudeRate }
 
 /** Every Claude model id the table prices (read-only). */
