@@ -59,7 +59,7 @@
         "displayType": "number",
         "connection": "Local ClickHouse",
         "source": "Traces",
-        "sqlTemplate": "SELECT round(sum(toFloat64OrZero(SpanAttributes['agw.cost.usd'])), 2) AS cost_usd FROM $__sourceTable WHERE Timestamp > fromUnixTimestamp64Milli({endDateMilliseconds:Int64}) - INTERVAL 24 HOUR AND Timestamp <= fromUnixTimestamp64Milli({endDateMilliseconds:Int64}) AND ServiceName IN ('agw', 'agw-audio') AND SpanName LIKE 'agw.run %' AND SpanAttributes['agw.run.id'] = SpanAttributes['agw.run.root_id']",
+        "sqlTemplate": "SELECT round(sum(toFloat64OrZero(SpanAttributes['agw.cost.usd'])), 2) AS cost_usd FROM $__sourceTable WHERE Timestamp > fromUnixTimestamp64Milli({endDateMilliseconds:Int64}) - INTERVAL 24 HOUR AND Timestamp <= fromUnixTimestamp64Milli({endDateMilliseconds:Int64}) AND ServiceName IN ('agw', 'agw-audio') AND SpanName LIKE 'agw.run %' AND SpanName != 'agw.run eval.run' AND SpanAttributes['agw.run.id'] = SpanAttributes['agw.run.root_id']",
         "numberFormat": { "output": "currency", "currencySymbol": "$", "mantissa": 2 },
         "color": "chart-green",
         "colorRules": [{ "operator": "gte", "value": 30, "color": "chart-error", "label": "over budget" }]
@@ -223,7 +223,7 @@
         "displayType": "stacked_bar",
         "connection": "Local ClickHouse",
         "source": "Traces",
-        "sqlTemplate": "SELECT toStartOfDay(Timestamp) AS ts, multiIf(SpanAttributes['agw.purpose'] = 'eval', 'eval', SpanAttributes['agw.purpose'] LIKE 'software-factory.%', 'factory', 'other') AS Kind, round(sum(toFloat64OrZero(SpanAttributes['agw.cost.usd'])), 2) AS cost_usd FROM $__sourceTable WHERE $__timeFilter(Timestamp) AND ServiceName IN ('agw', 'agw-audio') AND SpanName LIKE 'agw.run %' AND SpanAttributes['agw.run.id'] = SpanAttributes['agw.run.root_id'] GROUP BY ts, Kind ORDER BY ts LIMIT 2000"
+        "sqlTemplate": "SELECT toStartOfDay(Timestamp) AS ts, multiIf(SpanAttributes['agw.purpose'] = 'eval', 'eval', SpanAttributes['agw.purpose'] LIKE 'software-factory.%', 'factory', 'other') AS Kind, round(sum(toFloat64OrZero(SpanAttributes['agw.cost.usd'])), 2) AS cost_usd FROM $__sourceTable WHERE $__timeFilter(Timestamp) AND ServiceName IN ('agw', 'agw-audio') AND SpanName LIKE 'agw.run %' AND SpanName != 'agw.run eval.run' AND SpanAttributes['agw.run.id'] = SpanAttributes['agw.run.root_id'] GROUP BY ts, Kind ORDER BY ts LIMIT 2000"
       }
     },
     {
