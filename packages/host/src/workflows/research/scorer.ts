@@ -82,67 +82,65 @@ export const researchScorer: Scorer<ResearchInputValue, ResearchReference> = {
 }
 
 async function scoreReport(output: Json | null, ctx: ScorerContext<ResearchReference>): Promise<Verdict> {
-  {
-    const parsed = ResearchOutput.safeParse(output)
-    if (!parsed.success) {
-      const scores: Record<string, number> = { valid: 0, complete: 0 }
-      if (ctx.reference) scores.golden = 0
-      if (ctx.judge) scores.supported = 0
-      return {
-        scores,
-        pass: false,
-        feedback: output === null ? 'the run failed' : 'the output is not a research report',
-      }
+  const parsed = ResearchOutput.safeParse(output)
+  if (!parsed.success) {
+    const scores: Record<string, number> = { valid: 0, complete: 0 }
+    if (ctx.reference) scores.golden = 0
+    if (ctx.judge) scores.supported = 0
+    return {
+      scores,
+      pass: false,
+      feedback: output === null ? 'the run failed' : 'the output is not a research report',
     }
-    const result = parsed.data
-    const scores: Record<string, number> = { valid: 1, complete: result.status === 'ok' ? 1 : 0 }
-    const problems: string[] = []
-    const { grounding } = result
-    if (grounding.citations > 0) scores.grounded = grounding.grounded / grounding.citations
-    if (result.status !== 'ok') problems.push('partial report')
-
-    let goldenPass: boolean | null = null
-    if (ctx.reference) {
-      const { expect, maxChars } = ctx.reference
-      let live: string | null = null
-      if ('live' in expect && ctx.judge) {
-        const target = liveTarget(expect.live)
-        const answer = record(await ctx.judge('web.package', target))
-        const latest = answer.error === undefined ? answer.latest : undefined
-        live = typeof latest === 'string' && latest ? liveValue(target.registry, latest) : null
-      }
-      // The package is not found, or the answer holds no usable `latest`: golden is unscored, which never passes. A
-      // registry outage never gets here: the judge throws, and the runtime retries the scoring.
-      const liveUnscored = 'live' in expect && ctx.judge !== undefined && live === null
-      if (liveUnscored) problems.push(`golden unscored: ${expect.live} gave no usable live value`)
-      if ((!('live' in expect) || ctx.judge) && !liveUnscored) {
-        goldenPass = matchExpect(result.report, expect, live).pass && withinMaxChars(result.report, maxChars)
-        scores.golden = goldenPass ? 1 : 0
-        if (!goldenPass) problems.push('golden expectation missed')
-      }
-    }
-
-    if (ctx.judge) {
-      const sample = sampleCitations(result.citations)
-      const judge = ctx.judge
-      const verdicts = await Promise.all(sample.map((c) => supports(judge, c.claim, c.url)))
-      const scored = verdicts.filter((v) => v !== null)
-      const unscored = verdicts.length - scored.length
-      // A report without a citation supports nothing: 0, the same for every report.
-      if (!sample.length) {
-        scores.supported = 0
-        problems.push('no citations')
-      } else {
-        scores.judgedShare = scored.length / sample.length
-        if (scored.length) scores.supported = scored.filter((v) => v).length / scored.length
-      }
-      if (unscored) problems.push(`${unscored} sampled citation(s) unscored: the judge could not say`)
-    }
-
-    // With a reference only a golden pass passes: an unscored golden (a live value without a judge) never does.
-    const pass = ctx.reference ? goldenPass === true : result.status === 'ok'
-    return { scores, pass, ...(problems.length ? { feedback: problems.join('; ') } : {}) }
   }
+  const result = parsed.data
+  const scores: Record<string, number> = { valid: 1, complete: result.status === 'ok' ? 1 : 0 }
+  const problems: string[] = []
+  const { grounding } = result
+  if (grounding.citations > 0) scores.grounded = grounding.grounded / grounding.citations
+  if (result.status !== 'ok') problems.push('partial report')
+
+  let goldenPass: boolean | null = null
+  if (ctx.reference) {
+    const { expect, maxChars } = ctx.reference
+    let live: string | null = null
+    if ('live' in expect && ctx.judge) {
+      const target = liveTarget(expect.live)
+      const answer = record(await ctx.judge('web.package', target))
+      const latest = answer.error === undefined ? answer.latest : undefined
+      live = typeof latest === 'string' && latest ? liveValue(target.registry, latest) : null
+    }
+    // The package is not found, or the answer holds no usable `latest`: golden is unscored, which never passes. A
+    // registry outage never gets here: the judge throws, and the runtime retries the scoring.
+    const liveUnscored = 'live' in expect && ctx.judge !== undefined && live === null
+    if (liveUnscored) problems.push(`golden unscored: ${expect.live} gave no usable live value`)
+    if ((!('live' in expect) || ctx.judge) && !liveUnscored) {
+      goldenPass = matchExpect(result.report, expect, live).pass && withinMaxChars(result.report, maxChars)
+      scores.golden = goldenPass ? 1 : 0
+      if (!goldenPass) problems.push('golden expectation missed')
+    }
+  }
+
+  if (ctx.judge) {
+    const sample = sampleCitations(result.citations)
+    const judge = ctx.judge
+    const verdicts = await Promise.all(sample.map((c) => supports(judge, c.claim, c.url)))
+    const scored = verdicts.filter((v) => v !== null)
+    const unscored = verdicts.length - scored.length
+    // A report without a citation supports nothing: 0, the same for every report.
+    if (!sample.length) {
+      scores.supported = 0
+      problems.push('no citations')
+    } else {
+      scores.judgedShare = scored.length / sample.length
+      if (scored.length) scores.supported = scored.filter((v) => v).length / scored.length
+    }
+    if (unscored) problems.push(`${unscored} sampled citation(s) unscored: the judge could not say`)
+  }
+
+  // With a reference only a golden pass passes: an unscored golden (a live value without a judge) never does.
+  const pass = ctx.reference ? goldenPass === true : result.status === 'ok'
+  return { scores, pass, ...(problems.length ? { feedback: problems.join('; ') } : {}) }
 }
 
 /** A golden case's reference, from a `cases.jsonl` line. */
