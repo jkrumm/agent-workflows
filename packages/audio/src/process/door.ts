@@ -198,6 +198,12 @@ const DoorOutput = z.object({
   complete: z.boolean(),
   /** Why the record ended: `done` (the handler finished), `client-gone` (the client went away), `bound` (one hour). */
   ended: z.enum(['done', 'client-gone', 'bound']),
+  /**
+   * A deliberate negative probe: a `verify` request the door refused as the caller's fault (4xx), which is the answer the
+   * probe expects. The run stays `done` with this flag, so a failure rate counts real failures only; a 5xx on a probe
+   * still fails the run.
+   */
+  probe: z.boolean().optional(),
 })
 
 /**
@@ -274,7 +280,7 @@ export function createDoor(options: DoorOptions): Door {
       input: DoorInput,
       output: DoorOutput,
       async run(ctx) {
-        const request = await ctx.step('request', async ({ addUsage, signal }) => {
+        const request = await ctx.step('request', async ({ addUsage, signal, attribution }) => {
           const sink = sinks.get(ctx.runId)
           // Resumed in a process that never served the request (a restart mid-request): its events died with it.
           if (!sink) throw new Error('the request was served by a process that has stopped; its usage is lost')
@@ -297,9 +303,11 @@ export function createDoor(options: DoorOptions): Door {
             status !== null && status >= 400 && sink.ended !== 'client-gone'
               ? await withTimeout(sink.answered?.errorText ?? Promise.resolve(null), ERROR_TEXT_WAIT_MS)
               : null
+          const probe = attribution.purpose === 'verify' && status !== null && status >= 400 && status < 500
           return {
             status,
             errorText,
+            ...(probe ? { probe: true } : {}),
             route: summary?.routeId ?? sink.calls.at(-1)?.routeId ?? null,
             model: summary?.model ?? sink.calls.at(-1)?.model ?? null,
             requestedModel: summary?.requestedModel ?? null,
@@ -310,9 +318,9 @@ export function createDoor(options: DoorOptions): Door {
           }
         })
         // Failed after the step is journaled, so its usage and status stay in the step row. A client that went away
-        // never saw the answer: that run stays `done` with `ended: 'client-gone'`.
+        // never saw the answer: that run stays `done` with `ended: 'client-gone'`; a deliberate negative probe stays `done` with `probe`.
         const { errorText, ...output } = request
-        if (output.status !== null && output.status >= 400 && output.ended !== 'client-gone') {
+        if (output.status !== null && output.status >= 400 && output.ended !== 'client-gone' && !output.probe) {
           throw new WorkflowError(
             errorKindOfStatus(output.status),
             `door answered ${output.status}${errorText ? `: ${errorText}` : ''}`,

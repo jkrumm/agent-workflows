@@ -596,6 +596,35 @@ describe('the audio process', () => {
     }
   })
 
+  test("a verify request the door refuses as the caller's fault is a done probe; a verify 5xx still fails", async () => {
+    const handlers = stubHandlers()
+    handlers.speech = () => async (req) =>
+      new Response('{"error":{"message":"bad","type":"invalid_request_error"}}', {
+        status: new URL(req.url).searchParams.has('boom') ? 503 : 400,
+      })
+    const audio = await start(handlers)
+    try {
+      const headers = { ...bearer(HERMES), 'x-agw-purpose': 'verify' }
+      const probe = await fetch(`${audio.url}/v1/audio/speech`, { method: 'POST', body: '{}', headers })
+      expect(probe.status).toBe(400)
+      const probeRun = probe.headers.get('agw-run-id') as string
+      const done = await until(async () => {
+        const row = await sql.run(probeRun)
+        return row?.status === 'done' ? row : undefined
+      }, `run ${probeRun} done`)
+      expect(done.output).toMatchObject({ status: 400, probe: true })
+      const real = await fetch(`${audio.url}/v1/audio/speech?boom`, { method: 'POST', body: '{}', headers })
+      expect(real.status).toBe(503)
+      const { row } = await failedRun(real.headers.get('agw-run-id') as string)
+      expect(row.status).toBe('failed')
+      const prod = await fetch(`${audio.url}/v1/audio/speech`, { method: 'POST', body: '{}', headers: bearer(HERMES) })
+      expect(prod.status).toBe(400)
+      await failedRun(prod.headers.get('agw-run-id') as string)
+    } finally {
+      await audio.shutdown()
+    }
+  })
+
   test("an event under another request's id is dropped, never put on this run", async () => {
     const handlers = stubHandlers()
     handlers.speech = (deps) => async (req) => {

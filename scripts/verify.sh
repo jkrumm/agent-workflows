@@ -161,13 +161,26 @@ secret=$(secrets-run read "$API_SECRET_REF" 2>/dev/null)
 [[ -n "$secret" ]] || fail "cannot read $API_SECRET_REF through secrets-run"
 # The bearer goes through curl's config on stdin, never the command line (ps would show it).
 door_body=$(mktemp "${TMPDIR:-/tmp}/agw-verify.XXXXXX") || fail "cannot create a temp file"
+door_headers=$(mktemp "${TMPDIR:-/tmp}/agw-verify-headers.XXXXXX") || fail "cannot create a temp file"
 door_status=$(print -r -- "header = \"authorization: Bearer $secret\"" | curl -sS --max-time 30 -K - -o "$door_body" \
-  -w '%{http_code}' -X POST -H 'content-type: application/json' -H 'x-agw-purpose: verify' --data '{}' \
+  -D "$door_headers" -w '%{http_code}' -X POST -H 'content-type: application/json' -H 'x-agw-purpose: verify' --data '{}' \
   "$AUDIO_URL/v1/audio/speech") || fail "no answer from the door"
 [[ "$door_status" == "400" ]] || fail "an authenticated door request with a bad body got $door_status, not 400: $(<"$door_body")"
 [[ "$(jq -r '.error.type // empty' "$door_body" 2>/dev/null)" == "invalid_request_error" ]] \
   || fail "the door's 400 is not the legacy envelope: $(<"$door_body")"
-ok "door: 401 without a caller token, legacy 400 on a bad body"
+# The 400 is the answer this probe expects: its run is journaled `done` with `output.probe`, never `failed`, so the
+# door.speech failure rate counts real failures only (packages/audio/README.md, "Probe runs").
+probe_run=$(awk 'tolower($1) == "agw-run-id:" { gsub("\r", "", $2); print $2 }' "$door_headers")
+rm -f "$door_headers"
+[[ -n "$probe_run" ]] || fail "the door's 400 carries no agw-run-id header"
+probe_state=""
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  probe_state=$(journal "select status || ' ' || coalesce(output->>'probe', 'no') from \"$SCHEMA\".runs where id = :'id' and status in ('done', 'failed')" -v "id=$probe_run") || exit 1
+  [[ -n "$probe_state" ]] && break
+  sleep 1
+done
+[[ "$probe_state" == "done true" ]] || fail "the door's 400 probe run $probe_run is '${probe_state:-unfinished}', not 'done true'"
+ok "door: 401 without a caller token, legacy 400 on a bad body (probe run $probe_run done)"
 
 # 6b. usage steps the outbox set aside (argo_error): informational, never a failure (a quarantine from before this
 # deploy must not break every later one), but never silent either.
