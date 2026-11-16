@@ -1,5 +1,5 @@
 import { brotliDecompressSync, constants, gunzipSync, inflateSync, zstdDecompressSync } from 'node:zlib'
-import type { ProviderUsage } from '@agent-workflows/routes/pricing'
+import { type ProviderUsage, reportedCost } from '@agent-workflows/routes/pricing'
 import { isRecord } from './json.ts'
 
 /** A held copy, and what it decodes to, stops here and the usage is given up: no JSON or SSE response comes close. */
@@ -206,7 +206,7 @@ export class UsageTee {
     if (this.abandoned) return false
     if (this.gemini !== null) return geminiColumns(this.gemini) !== null
     if (this.usage === null || this.awaitingFinal) return false
-    if (count(this.usage.cost) !== null) return true
+    if (reportedCost(this.usage) !== null) return true
     const input = count(this.usage.input_tokens) ?? count(this.usage.prompt_tokens)
     const output = count(this.usage.output_tokens) ?? count(this.usage.completion_tokens)
     return input !== null && output !== null

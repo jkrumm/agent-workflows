@@ -267,6 +267,15 @@ describe('costFromUsage', () => {
     })
   })
 
+  test("provider cost as Sonar's breakdown: total_cost wins, with its request fee the tokens do not carry", () => {
+    const usage = { prompt_tokens: 17, completion_tokens: 13, cost: { request_cost: 0.005, total_cost: 0.00503 } }
+    expect(costFromUsage('iu-openai', usage, rate)).toEqual({ usd: 0.00503, source: 'provider' })
+    expect(costFromUsage('iu-openai', { cost: { total_cost: 0 } })).toEqual({ usd: 0, source: 'provider' })
+    // A breakdown without a usable total is no cost: the rate prices it.
+    expect(costFromUsage('iu-openai', { ...usage, cost: { request_cost: 0.005 } }, rate).source).toBe('rate')
+    expect(costFromUsage('iu-openai', { cost: { total_cost: -1 } }).source).toBe('unknown')
+  })
+
   test('falls back to the rate across usage key conventions', () => {
     const expected = {
       usd: (1000 * 0.04 + 500 * 0.04) / 1e6,

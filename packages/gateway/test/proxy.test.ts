@@ -953,6 +953,16 @@ describe('usage row', () => {
     expect(gw.rows().records[0]?.row.lane_detail.costEstimated).toBeUndefined()
   })
 
+  test("Sonar's usage.cost breakdown is the row's reported cost: its request fee is billed beside the tokens", async () => {
+    const usage = { prompt_tokens: 17, completion_tokens: 13, cost: { request_cost: 0.005, total_cost: 0.00503 } }
+    iu.reply(() => Response.json({ model: 'sonar', usage }))
+    const gw = start()
+    await (await gw.call('/openai/v1/chat/completions', jsonBody({ model: 'sonar' }))).text()
+    iu.reply(() => sseResponse(sse([{ model: 'sonar', usage }])))
+    await (await gw.call('/openai/v1/chat/completions', jsonBody({ model: 'sonar', stream: true }))).text()
+    expect(gw.rows().records.map(({ row }) => row.cost_reported_usd)).toEqual([0.00503, 0.00503])
+  })
+
   test('without a stated cost a non-Claude row stays null', async () => {
     iu.reply(() => Response.json({ model: 'gpt-x', usage: { prompt_tokens: 10, completion_tokens: 5 } }))
     const gw = start()

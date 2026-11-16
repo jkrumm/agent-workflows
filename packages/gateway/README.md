@@ -103,7 +103,7 @@ after an upstream 2xx.
   model catalog read (any path's) and an honoured `x-agw-usage: caller` write no record; picks go in beside the records.
 - **Attribution.** `repo`, `project_raw` and `workspace` live in `row_json` like the rest of the row. A row an older build
   wrote lacks them and flushes as null.
-- **Cost.** `cost_reported_usd` is the provider's own `usage.cost` if it states one, else a complete usage block at the
+- **Cost.** `cost_reported_usd` is the provider's own `usage.cost` if it states one (a number, or Sonar's breakdown object, whose `total_cost` carries the per-request fee the tokens do not; read by `reportedCost` in `@agent-workflows/routes`), else a complete usage block at the
   Claude rates, or off `/anthropic` at the rate of the route naming the requested model (`routeRate`), else null
   (Postgres then prices the token columns). On a credit pool an estimate stands in for the meter only (`lane_detail.costEstimatedUsd`,
   `costEstimated: true`): the rules are in `docs/gateway.md` §Meter, the code in `src/charge.ts`.
