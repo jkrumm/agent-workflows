@@ -1,6 +1,6 @@
 import { realpathSync, statSync } from 'node:fs'
 import { isAbsolute, join, relative } from 'node:path'
-import { clipLine, clipReason } from '@agent-workflows/capabilities'
+import { clipReason } from '@agent-workflows/capabilities'
 import type { FactoryHygieneOutputValue, HygieneInput } from './schema.ts'
 
 /** True when `path` (relative to `root`) is an existing regular file whose real path stays below the real `root`. */
@@ -37,7 +37,7 @@ export function guardHygiene(answer: FactoryHygieneOutputValue, input: HygieneIn
     if (seen.has(key)) continue
     if (!isFileUnder(input.cwd, finding.path)) continue
     seen.add(key)
-    findings.push({ ...finding, title: clipLine(finding.title) })
+    findings.push({ ...finding, title: clipReason(finding.title) })
   }
   return { ...answer, findings: findings.slice(0, input.max), reason: clipReason(answer.reason) }
 }
