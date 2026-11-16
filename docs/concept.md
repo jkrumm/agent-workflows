@@ -4,6 +4,7 @@
 
 **Where to look:** workflow shape §3, middleware §4, porting a skill or a Hermes path §10, phase order §11.
 
+> **v3.17, 2026-11-16:** docs brought to the code, no design change. N8: the wallet gate's launch pause (`AGW_WALLET_PAUSED_UNTIL`, default 2026-11-02) is removed; the spend check is the only gate.
 > **v3.17, 2026-11-03:** review v1 deleted (§Retro log). Review is the v4 host operations (`agw review prepare|request|submit|dispose|status|route|covered`, no LLM in agw): the `review` workflow, its angle agents, router, adversary and synthesis, OCR, react-doctor, the `review.*` routes, the legacy eval harness and `agw eval import` are gone. The v3.16 command rule stays: it is the CLI contract, argv-safe and tested, and a future parent command without positionals needs it; reverting it would be churn for no gain. No decision reversed.
 > **v3.17, 2026-11-09:** docs brought to the code, no design change. §4: the host's `installLifecycle` owns signals and flush, not a middleware `installFlush` (deleted, unused). Usage outbox: a step that fails alone with a row-specific database answer is quarantined; `raw.scoredAt` versions the `usage.records` upsert; a 429 `insufficient_quota` is a provider-balance failure; a failed fallback no longer rethrows the primary's balance error.
 > **v3.16, 2026-11-03:** command rule relaxed (§Retro log): a command may sit below a shorter one when the shorter declares no positional arguments. Wave 9 (review v4) needs `agw review prepare|submit|…` under the `review` workflow. No decision reversed.
@@ -67,7 +68,7 @@ New on 2026-10-27:
 | N5 | **Middleware wraps every workflow and every step** (§4) |
 | N6 | **The platform is the system of record for its own runs.** The usage projection lands in the shared `usage` schema in Postgres (v3.11; Argo no longer receives usage); usage-tracker keeps only runtimes outside the platform |
 | N7 | **otel needs no MCP.** HyperDX has an HTTP API; `/otel` already uses it |
-| N8 | **IU budget is tight.** OCR stays gated (paused to 2026-11-02, then off while IU 30-day spend ≥ $400). The rebuild spends what it needs, tagged `purpose=build` for visibility, without a cap of its own |
+| N8 | **IU budget is tight.** OCR stays gated (off while IU 30-day spend ≥ $400; the launch pause to 2026-11-02 is gone). The rebuild spends what it needs, tagged `purpose=build` for visibility, without a cap of its own |
 | N9 | **Postgres on the mini is a maintained instance**, not a dev mirror: the vps repo's local Postgres grows prod-like roles, schemas, backups and upgrades (P0b). agent-workflows first; the factory and Argo later |
 
 ## 2. Vocabulary

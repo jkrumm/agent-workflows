@@ -25,9 +25,10 @@ describe('test schema names', () => {
 describe('every file that makes a schema drops it', () => {
   test('freshSchema callers call drop()', async () => {
     const offenders: string[] = []
-    for await (const file of new Glob('*/test/**/*.test.ts').scan({ cwd: packages })) {
+    const count = (text: string, pattern: RegExp) => text.match(pattern)?.length ?? 0
+    for await (const file of new Glob('*/{test,src}/**/*.test.ts').scan({ cwd: packages })) {
       const text = await Bun.file(`${packages}${file}`).text()
-      if (/\bfreshSchema\(/.test(text) && !/\.drop\(\)/.test(text)) offenders.push(file)
+      if (count(text, /\bfreshSchema\(/g) > count(text, /\.drop\(\)/g)) offenders.push(file)
     }
     expect(offenders).toEqual([])
   })
