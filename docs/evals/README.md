@@ -42,6 +42,22 @@ Learned on 2026-10-29 to 10-31 (`2026-10-31-review-claude-direct.md`):
   case in OpenCode sessions (adaptive thinking decides), while Haiku `high` spent hundreds: two Sonnet effort arms are
   close to one arm. Check reasoning tokens per arm, as above, before reading an effort difference into a score.
 
+## Reference freshness (2026-11-16)
+
+A reference is a recording, and a recording ages with the route, the tool or the retention behind it. State of each as of
+`2026-11-16-factory-decision-suites.md`:
+
+| Suite | Reference | State |
+|-|-|-|
+| `prose` | `review.scores` of one review per case | re-recorded 2026-11-16 on `prose.review` as the table has it (`gpt-6.1-terra`, medium); the DeepSeek-flash recording (2026-11-02, the route left on 2026-11-04) is kept beside it. Agreement against a re-recorded reference tops out near 0.96, the route's own noise |
+| `check` | `passed` and each step's outcome | re-recorded 2026-11-16 from the current workflow; the legacy run (a `fallow` step the workflow no longer runs, ceiling 0.86 for every arm) is kept beside it. Two dotfiles cases read the host's live launchd state: re-record them when it changes |
+| `otel` | 8 prod windows of 2026-10-25 to 28 | still hold the referenced data (checked against ClickStack, `agw eval run otel` returns data for all 8); they age out with the retention, so re-pick windows from a live incident when one does |
+| `diagram` | structure only (bound arrows, overlaps, element count) | stale in kind, not in age: it does not check that the diagram matches its brief |
+
+Re-record by running the suite once and writing each case's output into its reference (the case file under `$AGW_EVAL_DIR`),
+after keeping the old file beside it; say in the report that the reference is now the route's own output and what that
+cannot show.
+
 ## The research suite and its refresh
 
 `$AGW_EVAL_DIR/research/cases.jsonl` is built from real production questions and keeps production's depth mix: the case

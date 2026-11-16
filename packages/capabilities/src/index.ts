@@ -44,6 +44,7 @@ export {
 // The `factory-steward`, `factory-queue`, `factory-triage`, `factory-screen`, `factory-errand`, `factory-errand-needed` and `factory-spec-screen` workflows share their seats' vocabulary, input limits and guards.
 export {
   buildFactoryStewardPrompt,
+  DEFAULT_STEWARD_WORDING,
   factoryStewardInput,
   factoryStewardOutput,
   guardSteward,

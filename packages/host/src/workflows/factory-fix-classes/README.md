@@ -36,11 +36,13 @@ echo '{"repo":"example-app","classes":[{"key":"logic","meaning":"…"},{"key":"o
 
 ## Eval
 
-`agw eval run factory-fix-classes [--yes]` replays `eval/cases.jsonl` (9 cases of 3 or 4 commits, committed): 31 fix commits
+`agw eval run factory-fix-classes [--yes]` replays `eval/cases.jsonl` (9 cases of 3 or 4 commits, committed): 28 fix commits
 of this public repo (real shas, subjects, bodies and changed paths, read from `git`) and 2 written ones for the class the
 repo's own history lacks (a fix in documentation only), under the factory's real class list. The reference is one reader's
 class per commit; `basis` says how it was settled: `files` (the changed paths decide it: tests only, scripts only), `reading`
 (subject and body) or `written`. Scores: `accuracy` over all commits, `mechanical` over the `files` ones (a model that misses
 those is wrong beyond argument) and `judged` over the rest; `valid` fails an answer that does not cover the case's shas. The
 `judged` labels are one reader's: a class two readers would split is a limit of the set (`logic` against `contract` against
-`concurrency`), not of the model.
+`concurrency`), not of the model. The `files` labels are held to what the paths settle with no second reading: three fixes of
+`scripts/deploy.sh` and a probe script, first labelled `tooling` from their paths, were dropped after the first run, because a
+fix of a deploy script is as much `environment` (the class's own words: deploy, host) as `tooling` (scripts).

@@ -48,6 +48,8 @@ The scorer (`scorer.ts`, deterministic, 0 or 1 per case) writes a score only whe
 as the per-action figures: `recall.<action>` exists on the cases labelled `<action>`, `precision.<action>` on the cases the
 steward answered `<action>`, plus `correct` over all. `valid` and a run without a reference (drift) score `valid` only.
 
-An arm can swap the prompt's wording of the lines that push toward a Decision: `{"params": {"stewardWording":
-"neutral"}}` (or `neutral-wake`) in an `--arm` file, read by the workflow with `ctx.param`; production runs carry no arm and
-send the stall unchanged. The measured comparison and the decision on the wording are `docs/evals/2026-11-16-steward-wording.md`.
+The prompt's lines that push toward a Decision are an arm: `{"params": {"stewardWording": "pushing"}}` (the wording production
+had until 2026-11-16), `neutral` or `neutral-wake` in an `--arm` file, read by the workflow with `ctx.param`. Production runs
+carry no arm and get `neutral-wake` (`DEFAULT_STEWARD_WORDING`), which scored best: 76 % of the 14 stalls right against 62 %
+for `pushing`, with `raise_decision` precision 0.92 against 0.44. The measurement, its limits and the rollback are
+`docs/evals/2026-11-16-steward-wording.md`.

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
-import { buildFactoryStewardPrompt, STEWARD_ACTIONS } from '@agent-workflows/capabilities'
+import { buildFactoryStewardPrompt, DEFAULT_STEWARD_WORDING, STEWARD_ACTIONS } from '@agent-workflows/capabilities'
 import type { Json, ScoreJudge, Verdict } from '@agent-workflows/runtime'
 import { digestScorer } from '../src/workflows/digest/scorer.ts'
 import { suiteWorkflow } from '../src/workflows/eval/suites.ts'
@@ -182,22 +182,31 @@ describe('steward prompt wording', () => {
     notes: [],
     history: [],
   })
-  const prompt = (wording?: 'current' | 'neutral' | 'neutral-wake') =>
+  const prompt = (wording?: 'pushing' | 'neutral' | 'neutral-wake') =>
     buildFactoryStewardPrompt(stall, 'nonce', wording)
 
-  test('the default is the production wording, with both pushing lines', () => {
-    expect(prompt()).toBe(prompt('current'))
-    expect(prompt()).toContain('do not shy away from it')
-    expect(prompt()).toContain('a Decision is better than a guess')
-    expect(prompt()).toContain('is not a fix: choose raise_decision')
+  test('the default is the neutral-wake wording, which keeps none of the three pushing lines', () => {
+    expect(DEFAULT_STEWARD_WORDING).toBe('neutral-wake')
+    expect(prompt()).toBe(prompt('neutral-wake'))
+    for (const line of [
+      'do not shy away from it',
+      'a Decision is better than a guess',
+      'is not a fix: choose raise_decision',
+    ])
+      expect(prompt()).not.toContain(line)
+    expect(prompt()).toContain('read the facts again')
   })
 
-  test('neutral drops the two named lines and keeps the repeated-wake rule; neutral-wake drops that too', () => {
+  test('pushing is the wording production had, with all three lines; neutral drops the first two only', () => {
+    for (const line of [
+      'do not shy away from it',
+      'a Decision is better than a guess',
+      'is not a fix: choose raise_decision',
+    ])
+      expect(prompt('pushing')).toContain(line)
     expect(prompt('neutral')).not.toContain('do not shy away from it')
     expect(prompt('neutral')).not.toContain('a Decision is better than a guess')
     expect(prompt('neutral')).toContain('is not a fix: choose raise_decision')
-    expect(prompt('neutral-wake')).not.toContain('is not a fix: choose raise_decision')
-    expect(prompt('neutral-wake')).toContain('read the facts again')
   })
 })
 
