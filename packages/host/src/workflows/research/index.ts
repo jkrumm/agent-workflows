@@ -4,12 +4,12 @@ import { z } from 'zod'
 import type { HostWorkflow } from '../../operations.ts'
 import type { HostDeps } from '../index.ts'
 import { memoryToolLedger, type ToolLedger } from './ledger.ts'
-import { type EarlierResearch, JSON_ONLY_REASK, researchTask } from './prompts.ts'
+import { type EarlierResearch, JSON_ONLY_REASK, researchTask, TOOL_BUDGET } from './prompts.ts'
 import { Blocked, Citation, Draft, ResearchInput, ResearchOutput, type ResearchResult } from './schema.ts'
 import { researchScorer } from './scorer.ts'
 import { evidence, normalizeUrl, researchGrant } from './tools.ts'
 
-export const RESEARCH_VERSION = '2026-11-13.1'
+export const RESEARCH_VERSION = '2026-11-16.1'
 
 /** The agent's definition (`agents/research`) allows exactly the gate's tools. */
 const AGENT = 'research'
@@ -164,9 +164,38 @@ export function isPlaceholderReport(report: string): boolean {
   return words === '' || PLACEHOLDER_REPORT.test(words)
 }
 
+/**
+ * A citation the agent wrote without a URL (`null`, missing, empty) cannot be grounded: it moves to `unverified` instead
+ * of failing the whole report, which is what the agent's rules say to do with a claim it could not source. Production's
+ * re-asks were mostly this (a replay of the whole session to fix one entry).
+ */
+export function moveUnsourcedCitations(raw: unknown): unknown {
+  if (typeof raw !== 'object' || raw === null || !Array.isArray((raw as { citations?: unknown }).citations)) return raw
+  const draft = raw as { citations: unknown[]; unverified?: unknown }
+  const hasUrl = (c: unknown) =>
+    typeof c === 'object' &&
+    c !== null &&
+    typeof (c as { url?: unknown }).url === 'string' &&
+    (c as { url: string }).url.trim() !== ''
+  const unsourced = draft.citations.filter((c) => !hasUrl(c))
+  if (unsourced.length === 0) return raw
+  const topic = (c: unknown) => {
+    const claim = typeof c === 'object' && c !== null ? (c as { claim?: unknown }).claim : undefined
+    return typeof claim === 'string' && claim !== '' ? claim : '(a claim cited without a URL)'
+  }
+  return {
+    ...draft,
+    citations: draft.citations.filter(hasUrl),
+    unverified: [
+      ...(Array.isArray(draft.unverified) ? draft.unverified : []),
+      ...unsourced.map((c) => ({ topic: topic(c), url: null, reason: 'cited without a URL' })),
+    ],
+  }
+}
+
 /** The draft from an agent's text answer, or null when it is not the JSON object or its report is a placeholder. */
 function parseDraft(text: string): Draft | null {
-  const parsed = Draft.safeParse(parseJsonLoose(text))
+  const parsed = Draft.safeParse(moveUnsourcedCitations(parseJsonLoose(text)))
   return parsed.success && !isPlaceholderReport(parsed.data.report) ? parsed.data : null
 }
 
@@ -240,7 +269,7 @@ export function createResearchWorkflows(deps: HostDeps, options: ResearchOptions
     const siblings: EarlierResearch[] = []
     for (const [i, id] of [...new Set(input.contextRuns ?? [])].entries())
       siblings.push(await loadEarlier((body) => (CONTEXT_STEP[i] as ContextStep)(ctx, body), id, 'use as context'))
-    const close = toolGate.open({ runId, stepId: 'research', ...grant })
+    const close = toolGate.open({ runId, stepId: 'research', ...grant, budget: TOOL_BUDGET[input.depth] })
     let agentEnded!: () => void
     const ended = new Promise<void>((resolve) => {
       agentEnded = resolve

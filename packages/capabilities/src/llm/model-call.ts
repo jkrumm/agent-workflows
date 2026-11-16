@@ -239,19 +239,35 @@ async function completeOn(
   return completion
 }
 
-/** Best-effort JSON from a model answer: strips a code fence, slices first `{` to last `}`. `null` on failure. */
+/**
+ * Best-effort JSON from a model answer, in code, before any re-ask. Candidates in order, the first that parses wins: the
+ * text as is; what sits between the first code fence's opening and the last fence's closing (prose before or after it,
+ * braces included, and fences inside a JSON string stay whole); each fenced block on its own that starts with `{` (an
+ * unrelated snippet fence before the answer's); the slice from the first `{` to the last `}`. `null` when none parses.
+ */
 export function parseJsonLoose(raw: string): unknown {
-  let s = raw.trim()
-  const fence = s.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/)
-  if (fence?.[1] !== undefined) s = fence[1].trim()
-  const first = s.indexOf('{')
-  const last = s.lastIndexOf('}')
-  if (first >= 0 && last > first) s = s.slice(first, last + 1)
-  try {
-    return JSON.parse(s)
-  } catch {
-    return null
+  const text = raw.trim()
+  const opening = /```(?:json)?[ \t]*\r?\n?/.exec(text)
+  const closing = text.lastIndexOf('```')
+  const fenced =
+    opening && closing >= opening.index + opening[0].length
+      ? text.slice(opening.index + opening[0].length, closing)
+      : null
+  const blocks = [...text.matchAll(/```(?:json)?[ \t]*\r?\n?([\s\S]*?)```/g)]
+    .map((m) => (m[1] ?? '').trim())
+    .filter((b) => b.startsWith('{'))
+  const first = text.indexOf('{')
+  const last = text.lastIndexOf('}')
+  const sliced = first >= 0 && last > first ? text.slice(first, last + 1) : null
+  for (const candidate of [text, fenced?.trim(), ...blocks, sliced]) {
+    if (!candidate) continue
+    try {
+      return JSON.parse(candidate)
+    } catch {
+      // the next candidate
+    }
   }
+  return null
 }
 
 function retryPrompt(prompt: string, rejected: string, reason: string): string {

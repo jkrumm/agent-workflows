@@ -3,7 +3,14 @@ import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Json, Usage } from '@agent-workflows/runtime'
-import { type CapabilityCall, MAX_BODY_BYTES, type ToolCallRecord, ToolGate } from '../src/tool-gate/index.ts'
+import {
+  BUDGET_NOTE,
+  BUDGET_NOTE_OVER,
+  type CapabilityCall,
+  MAX_BODY_BYTES,
+  type ToolCallRecord,
+  ToolGate,
+} from '../src/tool-gate/index.ts'
 
 const usage = (cost: number): Usage => ({
   model: 'm',
@@ -12,7 +19,7 @@ const usage = (cost: number): Usage => ({
   costSource: 'rate',
 })
 
-type Answer = { ok: boolean; result?: Json; error?: string; code?: string; label?: string }
+type Answer = { ok: boolean; result?: Json; error?: string; code?: string; label?: string; note?: string }
 
 let dir: string
 let gate: ToolGate
@@ -589,6 +596,52 @@ describe('agent safety is structural', () => {
     const answered = await post('find', 'a:s', { q: 1 })
     expect(answered.body).toEqual({ ok: true, result: { id: 'cap.find', input: { q: 1 } } })
     expect(errors).toEqual(['tool gate: the start hook failed; the call runs unlabeled'])
+    await close()
+  })
+})
+
+describe('call budget', () => {
+  test('the call that reaches the budget and the one at 1.5x carry a note; no call is refused', async () => {
+    const close = gate.open({ runId: 'a', stepId: 's', tools: { find: 'cap.find' }, budget: 4 })
+    const notes: (string | undefined)[] = []
+    for (let i = 1; i <= 9; i++) {
+      const answered = await post('find', 'a:s', { q: i })
+      expect(answered.status).toBe(200)
+      expect(answered.body.ok).toBe(true)
+      notes.push(answered.body.note)
+    }
+    // Call 4 reaches the budget, call 6 is 1.5x; every other answer is untouched.
+    expect(notes).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      BUDGET_NOTE,
+      undefined,
+      BUDGET_NOTE_OVER(6),
+      undefined,
+      undefined,
+      undefined,
+    ])
+    expect(capabilityCalls).toHaveLength(9)
+    await close()
+  })
+
+  test('a failed call counts and carries the note too; a refused one does not count', async () => {
+    const close = gate.open({ runId: 'a', stepId: 's', tools: { find: 'cap.find' }, budget: 2 })
+    expect((await post('other', 'a:s')).status).toBe(403)
+    capability = async () => {
+      throw new Error('boom')
+    }
+    const first = await post('find', 'a:s')
+    const second = await post('find', 'a:s')
+    expect(first.body.note).toBeUndefined()
+    expect(second.body).toEqual({ ok: false, error: 'boom', note: BUDGET_NOTE })
+    await close()
+  })
+
+  test('a grant with no budget never carries a note', async () => {
+    const close = gate.open({ runId: 'a', stepId: 's', tools: { find: 'cap.find' } })
+    for (let i = 0; i < 5; i++) expect((await post('find', 'a:s')).body.note).toBeUndefined()
     await close()
   })
 })

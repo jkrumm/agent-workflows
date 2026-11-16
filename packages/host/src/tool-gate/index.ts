@@ -48,6 +48,23 @@ export type ToolGrant = {
    */
   onStart?: (call: { runId: string; stepId: string; tool: string; args: Record<string, Json> }) => string | undefined
   onCall?: (call: ToolCallRecord) => void | Promise<void>
+  /**
+   * A call budget the agent was told: the answer to call number `budget`, and again to the one at 1.5x (rounded up),
+   * carries a `note` the agent's tool shows after the result. A nudge, never a refusal: every call is still served.
+   */
+  budget?: number
+}
+
+/** The nudge on the call that reaches the budget, and the one at 1.5x. */
+export const BUDGET_NOTE = 'budget reached: write the report now, list open points'
+export const BUDGET_NOTE_OVER = (calls: number) =>
+  `budget exceeded (${calls} calls): stop researching, write the report now, list open points`
+
+/** The note the `nth` call of a grant carries, if any. */
+function budgetNote(budget: number | undefined, nth: number): string | undefined {
+  if (!budget || budget < 1) return undefined
+  if (nth === budget) return BUDGET_NOTE
+  return nth === Math.ceil(budget * 1.5) ? BUDGET_NOTE_OVER(nth) : undefined
 }
 
 /** Why the gate refused a call, as the plugin's JSON answer carries it in `code`. */
@@ -61,6 +78,9 @@ type Grant = {
   fixed: Readonly<Record<string, Json>>
   onStart: ToolGrant['onStart']
   onCall: ToolGrant['onCall']
+  budget: number | undefined
+  /** Calls the agent has made on this grant (served or failed, never the refused ones). */
+  calls: number
   controller: AbortController
   /** Calls still being served: a drop waits for them, so every row is written before a step reads its evidence. */
   inflight: Set<Promise<unknown>>
@@ -224,6 +244,8 @@ export class ToolGate {
       fixed: { ...input.fixed },
       onStart: input.onStart,
       onCall: input.onCall,
+      budget: input.budget,
+      calls: 0,
       controller: new AbortController(),
       inflight: new Set(),
       sink: null,
@@ -364,7 +386,8 @@ export class ToolGate {
     if (capability === undefined) return refuse(403, 'not_granted', `${tool} is not granted to this agent`)
     const args = { ...call.args, ...grant.fixed }
     const label = this.label(grant, tool, args)
-    const work = this.serve(grant, tool, capability, args, label)
+    const note = budgetNote(grant.budget, ++grant.calls)
+    const work = this.serve(grant, tool, capability, args, label, note)
     grant.inflight.add(work)
     try {
       return answer(200, await work)
@@ -393,6 +416,7 @@ export class ToolGate {
     capability: string,
     args: Record<string, Json>,
     label: string | undefined,
+    note: string | undefined,
   ): Promise<Record<string, unknown>> {
     let outcome: ToolCallRecord['outcome']
     const began = Date.now()
@@ -429,7 +453,7 @@ export class ToolGate {
         error: message(error),
       })
     }
-    const tag = label ? { label } : {}
+    const tag = { ...(label ? { label } : {}), ...(note ? { note } : {}) }
     return outcome.ok
       ? { ok: true, result: outcome.result, ...tag }
       : { ok: false, error: outcome.error.slice(0, 1_000), ...tag }

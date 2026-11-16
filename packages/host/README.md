@@ -187,10 +187,13 @@ appears as `POST /workflows/…` and `agw <id words>` with no other code.
   same 0600 and atomic rename; removed on close under the same ownership rule), because a run resumed across a deploy
   re-attaches to a session in its old content-hashed location, whose plugin reads that path. The old path is dropped in
   a later release, once no live location reads it.
-- **A grant** (`gate.open({ runId, stepId, tools, fixed?, onStart?, onCall? })`, returns the close) carries its own tool set: a map of
+- **A grant** (`gate.open({ runId, stepId, tools, fixed?, onStart?, onCall?, budget? })`, returns the close) carries its own tool set: a map of
   tool name to capability id, `fixed` arguments the gate sets on every call over the agent's own (a run's environment is
   not the agent's to pick), an optional `onStart` hook (told of each granted call before it runs; the string it returns is the call's `label`, sent
   back with the answer for the agent's tool to show, and handed to `onCall`), and an optional `onCall` hook the workflow supplies.
+  An optional `budget` is a call figure the agent was told: the answer to call number `budget`, and again to the one at 1.5x
+  (rounded up), carries a `note` that the agent's plugin shows after the result (`budget reached: write the report now,
+  list open points`). A nudge: every call is still served (limits teach, they do not interrupt); research sets it per depth.
   **An agent holds read tools only, structurally:**
   `open` throws `tool grant refused: <tool> -> …` for an `hdx.*` capability outside `AGENT_SAFE_HDX`, and (once
   `createWorkflows` has told the gate what the registry holds, `setCapabilities`) for a capability whose CLI spec is

@@ -2,7 +2,43 @@ import { describe, expect, test } from 'bun:test'
 import { canonicalModel, DEFAULT_ROUTES, resolveRoute } from '@agent-workflows/routes'
 import type { Usage } from '../context.ts'
 import type { AttemptUsage, ChatPort, ChatResult, GatewayTransports } from '../transports/port.ts'
-import { complete, toUsage } from './model-call.ts'
+import { complete, parseJsonLoose, toUsage } from './model-call.ts'
+
+describe('parseJsonLoose', () => {
+  const object = { report: 'a {brace} inside', n: 1 }
+  const json = JSON.stringify(object)
+  const fenced = { report: '## A\n```ts\ncode {x}\n```\n', n: 2 }
+
+  test.each([
+    ['bare', json, object],
+    ['a json fence', `\`\`\`json\n${json}\n\`\`\``, object],
+    ['a bare fence', `\`\`\`\n${json}\n\`\`\``, object],
+    [
+      'a fence with prose before and after, braces included',
+      `Done {as asked}:\n\`\`\`json\n${json}\n\`\`\`\nNote {x} follows.`,
+      object,
+    ],
+    ['a code fence inside a JSON string', `\`\`\`json\n${JSON.stringify(fenced)}\n\`\`\``, fenced],
+    [
+      'a fence in the string, prose with braces around',
+      `{ok}\n\`\`\`json\n${JSON.stringify(fenced)}\n\`\`\`\n{done}`,
+      fenced,
+    ],
+    [
+      'an unrelated snippet fence before the answer fence',
+      `\`\`\`ts\nconst a = {}\n\`\`\`\n\`\`\`json\n${json}\n\`\`\``,
+      object,
+    ],
+    ['prose around unfenced JSON', `Here you go: ${json} Anything else?`, object],
+  ])('%s', (_name, text, expected) => {
+    expect(parseJsonLoose(text)).toEqual(expected)
+  })
+
+  test('prose with no object and broken JSON are null', () => {
+    expect(parseJsonLoose('The port is 5432.')).toBeNull()
+    expect(parseJsonLoose('{"a": 1，"b": 2}')).toBeNull()
+  })
+})
 
 const tokens = { input: 10, output: 2, cacheRead: 0, reasoning: 0 }
 

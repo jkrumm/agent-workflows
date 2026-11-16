@@ -5,8 +5,9 @@
 // own read tool cannot reach it (external_directory is denied).
 //
 // This file is the template for every agent's tools: copy it to agents/<name>/plugins/agw-tools.ts and change only
-// `id` and `TOOLS` (name, description, input schema). The compiler copies a plugins/ directory per agent and nothing
-// from outside it, so the forwarding stays a few lines repeated per agent (packages/host/README.md §Tool gate).
+// `id` and `TOOLS` (name, description, input schema); the `note` line in `forward` (the gate's budget nudge) is only for an
+// agent whose grant sets a `budget`. The compiler copies a plugins/ directory per agent and nothing from outside it, so
+// the forwarding stays a few lines repeated per agent (packages/host/README.md §Tool gate).
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -27,8 +28,10 @@ async function forward(tool: string, args: Record<string, unknown>, ctx: Ctx) {
       body: JSON.stringify({ sessionID: ctx.sessionID, args }),
       ...(ctx.signal ? { signal: ctx.signal } : {}),
     })
-    const body = (await response.json()) as { ok: boolean; result?: unknown; error?: string }
+    const body = (await response.json()) as { ok: boolean; result?: unknown; error?: string; note?: string }
     content = body.ok ? JSON.stringify(body.result) : `ERROR: ${body.error ?? `HTTP ${response.status}`}`
+    // The gate's budget nudge follows the answer: a line the agent reads, never a refusal.
+    if (body.note) content += `\n\n[${body.note}]`
   } catch (error) {
     content = `ERROR: the tool gate is unreachable (${error instanceof Error ? error.message : String(error)})`
   }
