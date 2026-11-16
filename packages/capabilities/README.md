@@ -53,7 +53,7 @@ The runtime package defines its own step `addUsage`. This one is structurally id
 
 ### Typed errors
 
-Declared on every operation (they land in the OpenAPI document), keyed by `code` so the CLI generator can map them to exit codes. Input validation failures are oRPC's `BAD_REQUEST` (400, `defined: false`); anything else a handler throws is an opaque `INTERNAL_SERVER_ERROR`.
+Declared on every operation (they land in the OpenAPI document), keyed by `code` so the CLI generator can map them to exit codes. Input validation failures are oRPC's `BAD_REQUEST` (400, `defined: false`); anything else a handler throws is an `INTERNAL_SERVER_ERROR` whose message is `Internal Server Error: <Name>: <message>` (query strings and credential-looking values removed, cut to 300 characters) and which is logged once with the capability id and the stack.
 
 | Code | Status | Meaning |
 |-|-|-|
@@ -62,6 +62,7 @@ Declared on every operation (they land in the OpenAPI document), keyed by `code`
 | `INVALID_OUTPUT` | 502 | the answer failed the schema after one re-ask; `data: { attempts, reason }` |
 | `OUTPUT_TRUNCATED` | 502 | the output ceiling ended the answer; `data.reason` is `starved` (reasoning ate it, no text) or `truncated` |
 | `URL_REFUSED` | 422 | `web.fetch` will not fetch the URL (not http(s), credentials in it, an internal name, or a non-public address, on the first URL or on a redirect hop). Nothing was sent. The CLI maps 422 to its usage exit code |
+| `NOT_FOUND` | 404 | the thing asked for does not exist: `web.package` for a package the registry does not know or a crate with no stable version. The CLI maps 404 to its `not_found` exit |
 | `CANCELLED` | 499 | the caller's signal aborted |
 
 ### `internal` and `hidden`
@@ -189,7 +190,7 @@ research-gateway's tools as capabilities (Wave 6), behaviour ported and code rew
 
 **Left behind for the lead:** `CONTEXT7_API_KEY` resolves through `op://vps/research-gateway/CONTEXT7_API_KEY`, an item under research-gateway, which P6 archives. Move the ref to a platform-owned item (`.env.tpl`, `dotfiles-private/headless.refs`, `make secrets-seed`) before then.
 
-**`web.package`.** Latest stable version straight from the registry, the golden set's `live:` resolvers made a capability: `registry.npmjs.org/<name>/latest`, `pypi.org/pypi/<name>/json`, `crates.io/api/v1/crates/<name>` (`max_stable_version`; a crate with no stable version is a 404, never a prerelease as `latest`), `api.github.com/repos/<owner/repo>/releases/latest` (`v` and `bun-v` removed; `GITHUB_TOKEN` is used when set, empty counts as unset). `publishedAt` is the release's own date; npm's cheap endpoints carry none, so it is left out rather than guessed. A name that does not fit its registry's pattern, or has a `.`/`..` segment (the GitHub request carries the token), is `BAD_REQUEST`, validated in the input schema only; an unknown package is `UPSTREAM_ERROR` 404. research-gateway's `go` and `docker` lookups are not in the contract.
+**`web.package`.** Latest stable version straight from the registry, the golden set's `live:` resolvers made a capability: `registry.npmjs.org/<name>/latest`, `pypi.org/pypi/<name>/json`, `crates.io/api/v1/crates/<name>` (`max_stable_version`; a crate with no stable version is `NOT_FOUND`, never a prerelease as `latest`), `api.github.com/repos/<owner/repo>/releases/latest` (`v` and `bun-v` removed; `GITHUB_TOKEN` is used when set, empty counts as unset). `publishedAt` is the release's own date; npm's cheap endpoints carry none, so it is left out rather than guessed. A name that does not fit its registry's pattern, or has a `.`/`..` segment (the GitHub request carries the token), is `BAD_REQUEST`, validated in the input schema only; an unknown package, or a crate with no stable version, is `NOT_FOUND` (404). research-gateway's `go` and `docker` lookups are not in the contract.
 
 **Pricing** (N6: a direct `agw web search …` is a `cap.web.search` run `done` with priced usage).
 

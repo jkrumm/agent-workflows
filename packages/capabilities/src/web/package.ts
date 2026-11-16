@@ -80,7 +80,10 @@ export const createPackage = (deps: ResolvedWebDeps) =>
           })
         } catch (error) {
           if ((error as { data?: { status?: number } }).data?.status === 404) {
-            throw fail('UPSTREAM_ERROR', `web.package: ${name} not found on ${registry}`, { status: 404 })
+            throw fail(
+              'NOT_FOUND',
+              `web.package: ${name} not found on ${registry}; check the spelling or search for the right name`,
+            )
           }
           throw error
         }
@@ -117,7 +120,10 @@ export const createPackage = (deps: ResolvedWebDeps) =>
             // no "latest" to report.
             const latest = parsed.data.crate.max_stable_version
             if (!latest) {
-              throw fail('UPSTREAM_ERROR', `web.package: ${name} has no stable version on crates.io`, { status: 404 })
+              throw fail(
+                'NOT_FOUND',
+                `web.package: ${name} has no stable version on crates.io; it only has prereleases`,
+              )
             }
             const publishedAt = parsed.data.versions?.find((v) => v.num === latest)?.created_at
             return { name, latest, ...(publishedAt ? { publishedAt } : {}), url: `https://crates.io/crates/${name}` }
