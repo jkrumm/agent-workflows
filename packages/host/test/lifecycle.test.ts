@@ -3,17 +3,19 @@ import { EventEmitter } from 'node:events'
 import { installLifecycle } from '../src/lifecycle.ts'
 
 function setup(shutdown: () => Promise<void>, backstopMs = 10_000) {
+  const clock = { t: 0 }
   const proc = new EventEmitter()
   const exits: number[] = []
   const logs: string[] = []
   installLifecycle({
     shutdown,
     backstopMs,
+    now: () => clock.t,
     exit: (code) => void exits.push(code),
     proc: proc as never,
     log: (message) => void logs.push(message),
   })
-  return { proc, exits, logs }
+  return { proc, exits, logs, clock }
 }
 
 describe('process lifecycle', () => {
@@ -26,10 +28,22 @@ describe('process lifecycle', () => {
     expect(exits).toEqual([0])
   })
 
-  test('a second SIGTERM or SIGINT during shutdown exits at once', async () => {
-    const { proc, exits } = setup(() => new Promise(() => {}))
+  test('a repeat signal right after the first is the same stop and is ignored', async () => {
+    let calls = 0
+    const { proc, exits, clock } = setup(async () => void calls++)
+    proc.emit('SIGTERM')
+    clock.t = 5
+    proc.emit('SIGTERM')
+    await Bun.sleep(10)
+    expect(calls).toBe(1)
+    expect(exits).toEqual([0])
+  })
+
+  test('a later SIGTERM or SIGINT during a slow shutdown exits at once', async () => {
+    const { proc, exits, clock } = setup(() => new Promise(() => {}))
     proc.emit('SIGTERM')
     expect(exits).toEqual([])
+    clock.t = 5_000
     proc.emit('SIGINT')
     expect(exits).toEqual([1])
   })
