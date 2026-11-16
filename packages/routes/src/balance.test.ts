@@ -133,7 +133,7 @@ describe('isBalanceFailure: OpenAI insufficient_quota', () => {
 describe('FallbackFailedError', () => {
   const make = (message: string) =>
     new FallbackFailedError({
-      route: 'cheap.classify',
+      route: 'cheap.title',
       primaryModel: 'claude-x',
       fallbackModel: 'gpt-y',
       primaryRequestId: 'req-1',
@@ -148,7 +148,7 @@ describe('FallbackFailedError', () => {
     expect(error.message).toContain('boom')
     expect((error.cause as Error).message).toBe('iu-openai request failed (500): boom')
     expect(error).toMatchObject({
-      route: 'cheap.classify',
+      route: 'cheap.title',
       primaryModel: 'claude-x',
       fallbackModel: 'gpt-y',
       primaryRequestId: 'req-1',

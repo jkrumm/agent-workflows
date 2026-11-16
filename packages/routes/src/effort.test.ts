@@ -50,18 +50,18 @@ describe('Sonnet at effort none is a configuration error', () => {
   })
 
   test('a patch naming a Sonnet model or effort none is refused, naming the route', () => {
-    const onHaikuRoute = { 'cheap.classify': { model: 'claude-sonnet-5-5' } }
-    // cheap.classify runs Haiku at effort none: moving it to a Sonnet without raising the effort is the error.
+    const onHaikuRoute = { 'cheap.title': { model: 'claude-sonnet-5-5' } }
+    // cheap.title runs Haiku at effort none: moving it to a Sonnet without raising the effort is the error.
     expect(() => validateArm({ routes: onHaikuRoute })).toThrow(RouteOverrideError)
-    expect(() => resolveRoute('cheap.classify', onHaikuRoute)).toThrow(/cheap\.classify.*Sonnet.*effort none/s)
+    expect(() => resolveRoute('cheap.title', onHaikuRoute)).toThrow(/cheap\.title.*Sonnet.*effort none/s)
     expect(() => resolveRoute('retro.analyze', { 'retro.analyze': { effort: 'none' } })).toThrow(
       /retro\.analyze.*Sonnet/s,
     )
   })
 
   test('the same patch with a real effort is accepted', () => {
-    const patch = { 'cheap.classify': { model: 'claude-sonnet-5-5', effort: 'low' } }
-    expect(resolveRoute('cheap.classify', patch)).toMatchObject({ model: 'claude-sonnet-5-5', effort: 'low' })
+    const patch = { 'cheap.title': { model: 'claude-sonnet-5-5', effort: 'low' } }
+    expect(resolveRoute('cheap.title', patch)).toMatchObject({ model: 'claude-sonnet-5-5', effort: 'low' })
   })
 
   test('the efforts each provider family takes: DeepSeek its four levels, GPT-6 Astra and 6.1 Sol no none, the rest all', () => {

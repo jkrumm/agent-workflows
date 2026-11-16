@@ -138,12 +138,6 @@ All four are `POST` with a JSON body. The model comes from the route; an eval ru
 
 **Token effect / cache effect.** Output is a handful of tokens, so cost is almost all input. Same fixed-prefix layout and rate-based cost as `llm.summarize`. Titling a text you already summarized with `llm.summarize` is cheaper on the summary than on the original.
 
-### `llm.classify` — route `cheap.classify` (`iu-openai`, Luna, effort low)
-
-`agw llm classify [text] --labels '{"bug":"something is broken","feature":"a new behaviour"}'`. Input `{ text, labels }` where `labels` maps each label to what it means (at least two); output `{ label, reason }` with `label` exactly one of the keys, validated per call. Haiku 5.5 on the chat wire (the gateway used deepseek-v4.1-flash, a Requesty model; IU reports no cost there, so the route carries the rate). The answer schema is sent (§Schema output); a wrong label or unparseable answer is re-asked once with the reason.
-
-**Token effect / cache effect.** The label list and the instruction come first and the text last, so the prefix is identical across calls with the same labels and the provider's prompt cache applies (`cacheRead` is reported; the cost in `usage.cost` already reflects it). The model reasons, so `output` includes reasoning tokens, and `max_completion_tokens` is the route's 16000 so reasoning cannot starve the answer. A failed first answer costs a second full call. Cost is the provider's.
-
 ### `decide` — route `decide` (`iu-decision`)
 
 `agw decide --questions '{"q":{"type":"choice","instructions":"…","options":{"a":"…","b":"…"}}}'`, state from stdin; JSON output. Input `{ state, questions }` where each question is `choice` (`options`: id → description, 2 to 255) or `boolean`. Output `{ answers, model, truncatedChars, latencyMs, usage }` (`usage`: see `triage`): a choice answers `{ choice, confidence, probabilities }`, a boolean `{ value, confidence, probability }` (`probability` is P(true), `value` is `probability >= 0.5`). The API rounds probabilities to two decimals. The model cannot search or read anything: `state` is its whole world. State beyond 60 000 characters is cut and reported in `truncatedChars`.

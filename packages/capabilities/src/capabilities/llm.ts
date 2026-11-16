@@ -1,5 +1,4 @@
 import type { LlmDeps } from '../llm/model-call.ts'
-import { createClassify } from './classify.ts'
 import { createDecide } from './decide.ts'
 import { createDigest } from './digest.ts'
 import { createFactoryAsk } from './factory-ask.ts'
@@ -26,7 +25,6 @@ export function createLlmCapabilities(deps: LlmDeps) {
   return [
     createSummarize(deps),
     createTitle(deps),
-    createClassify(deps),
     createDecide(deps),
     createTriage(deps),
     createProseReview(deps),

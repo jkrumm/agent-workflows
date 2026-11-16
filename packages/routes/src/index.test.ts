@@ -38,7 +38,7 @@ describe('table', () => {
   })
 
   test('covers the routes Waves 2-4 need', () => {
-    const needed: RouteId[] = ['cheap.summarize', 'cheap.title', 'cheap.classify', 'decide', 'research.agent', 'check']
+    const needed: RouteId[] = ['cheap.summarize', 'cheap.title', 'decide', 'research.agent', 'check']
     for (const id of needed) expect(routeIds()).toContain(id)
   })
 
@@ -111,8 +111,8 @@ describe('resolveRoute', () => {
   })
 
   test('null clears an optional field', () => {
-    const e = { 'cheap.classify': { maxOutputTokens: null } }
-    expect(resolveRoute('cheap.classify', e).maxOutputTokens).toBeUndefined()
+    const e = { 'cheap.title': { maxOutputTokens: null } }
+    expect(resolveRoute('cheap.title', e).maxOutputTokens).toBeUndefined()
   })
 
   test("a new model takes the table's rate for that model; a priced route never moves to a model the table prices no such way", () => {
@@ -120,15 +120,15 @@ describe('resolveRoute', () => {
     expect(() => resolveRoute('decide', { decide: { model: 'other' } })).toThrow(
       'arm: route "decide": model "other" is not in the route table (add it to the table first)',
     )
-    expect(() => resolveRoute('cheap.classify', { 'cheap.classify': { fallback: { model: 'other' } } })).toThrow(
-      'route "cheap.classify" fallback: model "other" is not in the route table',
+    expect(() => resolveRoute('cheap.title', { 'cheap.title': { fallback: { model: 'other' } } })).toThrow(
+      'route "cheap.title" fallback: model "other" is not in the route table',
     )
     // A table model priced per call, not per token: the text route would lose its rate.
-    expect(() => resolveRoute('cheap.classify', { 'cheap.classify': { model: entry('image.upscale').model } })).toThrow(
-      'route "cheap.classify": the route table has no rate for the patched model, and this route is priced by one',
+    expect(() => resolveRoute('cheap.title', { 'cheap.title': { model: entry('image.upscale').model } })).toThrow(
+      'route "cheap.title": the route table has no rate for the patched model, and this route is priced by one',
     )
     expect(resolveRoute('decide', { decide: { effort: null } }).rate).toEqual(DEFAULT_ROUTES.decide?.rate)
-    const sonnet = resolveRoute('cheap.classify', { 'cheap.classify': { model: 'claude-sonnet-5-5', effort: 'low' } })
+    const sonnet = resolveRoute('cheap.title', { 'cheap.title': { model: 'claude-sonnet-5-5', effort: 'low' } })
     expect(sonnet.rate).toEqual(resolveRoute('retro.analyze').rate as never)
   })
 
@@ -167,7 +167,7 @@ describe('resolveRoute', () => {
 
   test('an agent route moves only to a model the OpenCode server serves, naming the route and the model', () => {
     // A table model that only single calls use (the FAST tier's fallback) is not one the server serves.
-    const callOnly = entry('cheap.classify').fallback?.model as string
+    const callOnly = entry('cheap.title').fallback?.model as string
     expect(opencodeModels().has(callOnly)).toBe(false)
     expect(() => resolveRoute('check', { check: { model: callOnly } })).toThrow(
       `arm: route "check": model "${callOnly}" is not served by the OpenCode server`,
@@ -448,7 +448,7 @@ describe('fallback', () => {
       rate: terraRate,
     }
     const terraMedium = { ...terraLow, effort: 'medium' }
-    for (const id of ['cheap.classify', 'cheap.title', 'factory.classify', 'factory.digest'] as const) {
+    for (const id of ['cheap.title', 'factory.classify', 'factory.digest'] as const) {
       expect(resolveRoute(id, {})).toMatchObject({ wire: 'anthropic', model: 'claude-haiku-5-5', effort: 'none' })
       expect(resolveRoute(id, {}).fallback).toMatchObject(luna)
     }
@@ -572,7 +572,7 @@ describe('fallback', () => {
   // The Requesty check covers the routes Wave 9 moved (route and fallback); no route runs a Requesty model any more. They run on the GPT stack and fall back to the other GPT model.
   test('the routes moved off Requesty (classify) and their fallbacks name no Requesty model', () => {
     const requesty = /^(eu\/)?deepseek-v4\.1-flash|^DeepSeek-V4|^pplx-decider|^kimi-k3|^kimi-k2\.7/i
-    for (const id of ['cheap.classify'] as const) {
+    for (const id of ['cheap.title'] as const) {
       const route = resolveRoute(id, {})
       expect(route.model).not.toMatch(requesty)
       // the fallback is a GPT model on the chat wire
@@ -592,10 +592,10 @@ describe('fallback', () => {
   })
 
   test('fallbackRoute is the fallback as a route of the same id, marked, without a fallback of its own', () => {
-    const route = resolveRoute('cheap.classify', {})
+    const route = resolveRoute('cheap.title', {})
     const fallback = fallbackRoute(route)
     expect(fallback).toEqual({
-      id: 'cheap.classify',
+      id: 'cheap.title',
       ...(route.fallback as object),
       isFallback: true,
     } as never)
@@ -606,13 +606,13 @@ describe('fallback', () => {
   test('a patch reaches a fallback like a primary, and only the part it names', () => {
     // The FAST tier's fallback moves to the Terra model the table names, at an effort of its own.
     const terra = entry('research.agent').fallback?.model as string
-    const e = { 'cheap.classify': { fallback: { model: terra, effort: 'high' } } }
-    const route = resolveRoute('cheap.classify', e)
-    expect(route.model).toBe(entry('cheap.classify').model)
+    const e = { 'cheap.title': { fallback: { model: terra, effort: 'high' } } }
+    const route = resolveRoute('cheap.title', e)
+    expect(route.model).toBe(entry('cheap.title').model)
     expect(route.fallback).toMatchObject({ wire: 'iu-openai', model: terra, effort: 'high' })
     // The table's rate for that model, as on the primary.
     expect(route.fallback?.rate).toEqual(entry('research.agent').fallback?.rate as never)
-    expect(routeFingerprint('cheap.classify', e)).not.toBe(routeFingerprint('cheap.classify', {}))
+    expect(routeFingerprint('cheap.title', e)).not.toBe(routeFingerprint('cheap.title', {}))
   })
 
   test('a primary patch leaves the fallback alone; null removes the fallback', () => {
@@ -625,12 +625,12 @@ describe('fallback', () => {
 
   test('a fallback override is validated like the table', () => {
     for (const bad of [
-      { 'cheap.classify': { fallback: { wire: 'opencode' } } },
-      { 'cheap.classify': { fallback: { effort: 'turbo' } } },
-      { 'cheap.classify': { fallback: { fallback: { model: 'x' } } } },
+      { 'cheap.title': { fallback: { wire: 'opencode' } } },
+      { 'cheap.title': { fallback: { effort: 'turbo' } } },
+      { 'cheap.title': { fallback: { fallback: { model: 'x' } } } },
       { decide: { fallback: { model: 'x' } } },
     ]) {
-      expect(() => resolveRoute('cheap.classify', bad as never)).toThrow(RouteOverrideError)
+      expect(() => resolveRoute('cheap.title', bad as never)).toThrow(RouteOverrideError)
     }
   })
 
@@ -767,7 +767,7 @@ describe('validateArm', () => {
     const unknown = () => validateArm({ routes: { check: { effort: 'low' }, 'no.such': { model: 'x' } } })
     expect(unknown).toThrow(RouteOverrideError)
     expect(unknown).toThrow('"no.such"')
-    const bad = () => validateArm({ routes: { 'cheap.classify': { effort: 'low' }, decide: { effort: 'high' } } })
+    const bad = () => validateArm({ routes: { 'cheap.title': { effort: 'low' }, decide: { effort: 'high' } } })
     expect(bad).toThrow(RouteOverrideError)
     expect(bad).toThrow('"decide"')
     expect(() => validateArm({ routes: { 'retro.analyze': { effort: 'none' } } })).toThrow(/retro\.analyze.*Sonnet/s)

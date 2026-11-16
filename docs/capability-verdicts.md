@@ -8,7 +8,7 @@ email-gateway) and Hermes' skills and config.
 | Capability | Runs | Callers found | Verdict |
 |-|-|-|-|
 | `llm.summarize` | 2 | dotfiles `rules/research-first.md` and `hooks/web-fetch-route.ts` tell agents to pipe a long YouTube transcript into `agw llm summarize` | keep: it is the instructed path for long transcripts |
-| `llm.classify` | 5 | none. email-gateway's `llm.classify` span is its own telemetry; software-factory only names it in a 2026-11-01 research note and built `factory.classify` instead; `agw decide` covers calibrated verdicts | **delete**, as its own change: the capability, route `cheap.classify`, its CLI verb, README section and about 15 test files that use it as the example capability (`capabilities`, `fallback`, `registry`, `routes`, `middleware`, `host` tests) must move to another route first, so it is not a clean removal inside this Issue |
+| `llm.classify` | 5 | none. email-gateway's `llm.classify` span is its own telemetry; software-factory only names it in a 2026-11-01 research note and built `factory.classify` instead; `agw decide` covers calibrated verdicts | **deleted** (`issue_1671`): the capability, route and CLI verb are gone; the stand-in tests moved to `cheap.title` |
 | `overview.classify` | 2 | `packages/host/src/workflows/overview` (`agw overview`, behind `agw agents`); argo's plan lists the overview push | keep: only that workflow calls it; the verb goes with the workflow |
 | `llm.title` | 199, all `verify` and `smoke` | `make verify` calls `agw llm title`; the `smoke` workflow calls it | keep: the verify probe is its job |
 | `eval.label` | 0 | `packages/host/src/workflows/eval-mine` calls it in process, once per seat (`agw eval mine review`); no root run exists by design (`eval-mine/history.ts`). The nightly miner is retired, the manual command stays | keep |
@@ -18,4 +18,4 @@ email-gateway) and Hermes' skills and config.
 | `narrative-polish` | 0 | internal child run of `narrative` (`NARRATIVE_POLISH_ID`); hermes-agent `scripts/project-narratives.py` runs `agw narrative` for the daily vault pages | keep |
 | `podcast-publish` | 0 | dotfiles `skills/podcast/SKILL.md` and hermes-agent `skills/podcast/SKILL.md` and `AGENTS.md` | keep: the repeat of a failed upload |
 
-One deletion follows from this table (`llm.classify`), filed as its own Issue (`issue_1671`). Nothing else lacks both a caller and a plan.
+One deletion followed from this table (`llm.classify`, done in `issue_1671`). Nothing else lacks both a caller and a plan.

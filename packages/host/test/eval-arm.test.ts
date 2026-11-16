@@ -25,7 +25,7 @@ const env = { AGW_EVAL_DIR: join(root, 'eval'), AGW_EVAL_HOME: join(root, 'home'
 
 /** The patched routes: an agent route's effort and model, a single-call route's effort. */
 const SONNET = resolveRoute('retro.analyze').model
-const ARM = { routes: { check: { model: SONNET, effort: 'max' }, 'cheap.classify': { effort: 'high' } } }
+const ARM = { routes: { check: { model: SONNET, effort: 'max' }, 'cheap.title': { effort: 'high' } } }
 
 const Seen = z.object({ model: z.string(), effort: z.string().nullable() })
 type Seen = z.infer<typeof Seen>
@@ -43,7 +43,7 @@ const leaf = defineWorkflow({
   version: 'v1',
   input: z.object({}),
   output: Seen,
-  run: (ctx) => ctx.step('resolve', (scope) => seen('cheap.classify', scope.arm?.routes)),
+  run: (ctx) => ctx.step('resolve', (scope) => seen('cheap.title', scope.arm?.routes)),
 })
 
 /** A judge capability: answers with the route its call resolved (with the arm the call carries, if any). */
@@ -52,13 +52,13 @@ const probe = defineCapability({
   summary: 'the route a judge call resolves',
   input: z.object({}),
   output: Seen,
-  handler: (_input, ctx) => seen('cheap.classify', ctx.arm?.routes),
+  handler: (_input, ctx) => seen('cheap.title', ctx.arm?.routes),
 })
 const capWorkflows = createCapabilityWorkflows({ served: [probe] })
 
 /** 1 when the judge resolved the plain table. */
 const judgedOnTable = async (judge: ScoreJudge | undefined) =>
-  judge && JSON.stringify(await judge('llm.armprobe', {})) === JSON.stringify(seen('cheap.classify', undefined)) ? 1 : 0
+  judge && JSON.stringify(await judge('llm.armprobe', {})) === JSON.stringify(seen('cheap.title', undefined)) ? 1 : 0
 
 /** The replayed workflow: an agent step, an inline gate, a route resolved outside any step, and a fan-out child. */
 const target = defineWorkflow({
@@ -75,7 +75,7 @@ const target = defineWorkflow({
     const agent = Seen.parse(await ctx.agent('ask', { agent: 'checker', prompt: 'x' }))
     await ctx.score('gate', null)
     const [child] = await ctx.workflow('fan', leaf, [{}])
-    return { agent, outside: seen('cheap.classify', ctx.arm?.routes), child: Seen.parse(child) }
+    return { agent, outside: seen('cheap.title', ctx.arm?.routes), child: Seen.parse(child) }
   },
 })
 
@@ -127,8 +127,8 @@ async function evalOnce(input: Record<string, unknown>): Promise<{ runId: string
   return { runId, output: end.output as Out }
 }
 
-const table = { agent: seen('check', undefined), outside: seen('cheap.classify', undefined) }
-const armed = { agent: seen('check', ARM.routes), outside: seen('cheap.classify', ARM.routes) }
+const table = { agent: seen('check', undefined), outside: seen('cheap.title', undefined) }
+const armed = { agent: seen('check', ARM.routes), outside: seen('cheap.title', ARM.routes) }
 
 describe('agw eval run --arm', () => {
   test('the patches are real moves off the table', () => {
@@ -195,7 +195,7 @@ describe('agw eval run --arm', () => {
     expect(await refused({ routes: { check: { model: 'not-in-table' } } })).toContain(
       'route "check": model "not-in-table" is not in the route table (add it to the table first)',
     )
-    const callOnly = resolveRoute('cheap.classify').fallback?.model as string
+    const callOnly = resolveRoute('cheap.title').fallback?.model as string
     expect(await refused({ routes: { check: { model: callOnly } } })).toContain(
       `route "check": model "${callOnly}" is not served by the OpenCode server`,
     )

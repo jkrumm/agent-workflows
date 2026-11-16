@@ -8,7 +8,7 @@ git log -1 --format=%B | agw llm summarize --format plain
 agw <workflow words…> [args]                           # a workflow: waits, or exits 10 with the resume command
 agw run wait 6f1c…                                     # that resume command, verbatim
 agw schema                                             # offline: every command from the cached contract
-agw schema llm classify                                # one operation's input schema and x-cli
+agw schema llm title                                   # one operation's input schema and x-cli
 agw schema --index [group…]                            # one `command<TAB>summary` line per command, sorted, nothing else; --all adds server-only ones; --format json
 agw schema --exit-codes
 ```

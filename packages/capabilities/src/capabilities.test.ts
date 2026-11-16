@@ -26,7 +26,7 @@ function registry() {
   return createRegistry(createCapabilities({ transports, env: {} }))
 }
 /** One call, as a step of a run whose arm carries `routes` would make it (`routes` absent: a production call). */
-const call = <Id extends 'llm.summarize' | 'llm.title' | 'llm.classify' | 'decide'>(
+const call = <Id extends 'llm.summarize' | 'llm.title' | 'decide'>(
   id: Id,
   input: Parameters<ReturnType<typeof registry>['call']>[1],
   routes?: PatchInput,
@@ -164,140 +164,6 @@ describe('llm.title (anthropic)', () => {
   test('an answer that is nothing after cleanup is INVALID_OUTPUT', async () => {
     iu.on('messages', () => messageResponse('""', null))
     expect(await caught(call('llm.title', { text: 'x' }))).toMatchObject({ code: 'INVALID_OUTPUT' })
-  })
-})
-
-const labels = { bug: 'something is broken', feature: 'a request for new behaviour' }
-const classifyUsage = { input_tokens: 150, output_tokens: 30, cache_read_input_tokens: 50 }
-
-describe('llm.classify (anthropic)', () => {
-  test('classifies over the Messages wire; the provider’s cost wins; counts are raw', async () => {
-    iu.on('messages', () =>
-      messageResponse('{"label":"bug","reason":"It crashes."}', { ...classifyUsage, cost: 0.00031 }),
-    )
-    const out = await call('llm.classify', { text: 'The app crashes on start.', labels })
-    expect(out).toEqual({ label: 'bug', reason: 'It crashes.' })
-
-    const route = resolveRoute('cheap.classify', {})
-    expect(route).toMatchObject({ wire: 'anthropic', effort: 'none' })
-    const [request] = iu.requests
-    expect(request?.path).toBe('/anthropic/v1/messages')
-    expect(request?.body).toMatchObject({ model: route.model })
-    expect(request?.body.thinking).toEqual({ type: 'disabled' })
-    expect(request?.body.temperature).toBeUndefined()
-    expect(request?.body.stream).toBeUndefined()
-    const prompt = JSON.stringify(request?.body.messages)
-    expect(prompt).toContain('- bug: something is broken')
-    expect(prompt).toContain('The app crashes on start.')
-
-    expect(usages).toEqual([
-      {
-        model: 'fake',
-        route: 'cheap.classify',
-        tokens: { input: 200, output: 30, cacheRead: 50, cacheWrite: 0, reasoning: 0 },
-        cost: 0.00031,
-        costSource: 'provider',
-      },
-    ])
-  })
-
-  test('cost is the route rate when the provider omits it', async () => {
-    iu.on('messages', () => messageResponse('{"label":"bug","reason":"r"}', classifyUsage))
-    await call('llm.classify', { text: 'x', labels })
-    const rate = resolveRoute('cheap.classify', {}).rate!
-    // 150 input + 50 cache read + 30 output at the Haiku rate
-    expect(usages[0]).toMatchObject({
-      cost: (150 * rate.inputPerM + 50 * rate.cacheReadPerM! + 30 * rate.outputPerM) / 1e6,
-      costSource: 'rate',
-    })
-  })
-
-  test('cost is unknown, not 0, when the provider omits it and the route has no rate', async () => {
-    iu.on('messages', () => messageResponse('{"label":"bug","reason":"r"}', classifyUsage))
-    await call('llm.classify', { text: 'x', labels }, { 'cheap.classify': { rate: null } })
-    expect(usages[0]).toMatchObject({ cost: null, costSource: 'unknown' })
-  })
-
-  test('a reported cost of 0 stays 0', async () => {
-    iu.on('messages', () => messageResponse('{"label":"bug","reason":"r"}', { ...classifyUsage, cost: 0 }))
-    await call('llm.classify', { text: 'x', labels })
-    expect(usages[0]).toMatchObject({ cost: 0, costSource: 'provider' })
-  })
-
-  test('a label outside the set is re-asked once with the reason; both attempts bill', async () => {
-    iu.on('messages', (_, attempt) =>
-      attempt === 0
-        ? messageResponse('{"label":"question","reason":"r"}', classifyUsage)
-        : messageResponse('```json\n{"label":"feature","reason":"It asks for something."}\n```', classifyUsage),
-    )
-    const out = await call('llm.classify', { text: 'Please add dark mode.', labels })
-    expect(out).toEqual({ label: 'feature', reason: 'It asks for something.' })
-    expect(iu.requests).toHaveLength(2)
-    const retry = JSON.stringify(iu.requests[1]?.body.messages)
-    expect(retry).toContain('RETRY')
-    expect(retry).toContain('the JSON did not match the schema')
-    expect(retry).toContain('question')
-    expect(usages).toHaveLength(2)
-  })
-
-  test('the schema goes on the wire from the zod type, on the first ask and on the re-ask', async () => {
-    iu.on('messages', (_, attempt) =>
-      attempt === 0
-        ? messageResponse('{"label":"bug"}', classifyUsage)
-        : messageResponse('{"label":"bug","reason":"r"}', classifyUsage),
-    )
-    expect(await call('llm.classify', { text: 'x', labels })).toEqual({ label: 'bug', reason: 'r' })
-    expect(iu.requests).toHaveLength(2)
-    for (const request of iu.requests) {
-      expect(request.body.output_config).toMatchObject({
-        format: {
-          type: 'json_schema',
-          schema: {
-            type: 'object',
-            properties: { label: { type: 'string', enum: Object.keys(labels) } },
-            required: ['label', 'reason'],
-            additionalProperties: false,
-          },
-        },
-      })
-    }
-  })
-
-  test('a long reason is not a reason to throw the label away', async () => {
-    iu.on('messages', () => messageResponse(JSON.stringify({ label: 'bug', reason: 'r'.repeat(900) }), classifyUsage))
-    expect(await call('llm.classify', { text: 'x', labels })).toMatchObject({ label: 'bug' })
-    expect(iu.requests).toHaveLength(1)
-  })
-
-  test('prose around the object is tolerated', async () => {
-    iu.on('messages', () => messageResponse('Sure! {"label":"bug","reason":"r"} Hope that helps.', classifyUsage))
-    expect(await call('llm.classify', { text: 'x', labels })).toMatchObject({ label: 'bug' })
-    expect(iu.requests).toHaveLength(1)
-  })
-
-  test('unparseable twice is INVALID_OUTPUT with the attempts, and no third call', async () => {
-    iu.on('messages', () => messageResponse('I think it is a bug.', classifyUsage))
-    const error = await caught(call('llm.classify', { text: 'x', labels }))
-    expect(error).toMatchObject({ code: 'INVALID_OUTPUT', status: 502, defined: true, data: { attempts: 2 } })
-    expect(iu.requests).toHaveLength(2)
-    expect(usages).toHaveLength(2)
-  })
-
-  test('a max_tokens stop with no text is starved, and it still bills', async () => {
-    iu.on('messages', () => messageResponse('', classifyUsage, 'max_tokens'))
-    expect(await caught(call('llm.classify', { text: 'x', labels }))).toMatchObject({
-      code: 'OUTPUT_TRUNCATED',
-      data: { reason: 'starved' },
-    })
-    expect(iu.requests).toHaveLength(1)
-    expect(usages).toHaveLength(1)
-  })
-
-  test('fewer than two labels is a bad request', async () => {
-    expect(await caught(call('llm.classify', { text: 'x', labels: { only: 'one' } }))).toMatchObject({
-      code: 'BAD_REQUEST',
-    })
-    expect(iu.requests).toHaveLength(0)
   })
 })
 

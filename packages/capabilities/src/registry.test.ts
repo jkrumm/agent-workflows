@@ -160,10 +160,10 @@ describe('one definition, two doors', () => {
   test('the same model failure after the re-ask is INVALID_OUTPUT on both doors', async () => {
     const b = build({ anthropic: [{ text: 'not json' }] })
     const s = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: b.registry.fetch })
-    const input = { text: 'x', labels: { a: 'first', b: 'second' } }
+    const input = { destination: 'd', transcript: 't' }
     try {
-      const viaImport = await b.registry.call('llm.classify', input).catch(errorJson)
-      const viaHttp = await post(`http://127.0.0.1:${s.port}`, '/llm/classify', input)
+      const viaImport = await b.registry.call('triage', input).catch(errorJson)
+      const viaHttp = await post(`http://127.0.0.1:${s.port}`, '/triage', input)
       expect(viaHttp.status).toBe(502)
       expect(viaHttp.body).toEqual(viaImport)
       expect(viaImport).toMatchObject({ code: 'INVALID_OUTPUT', data: { attempts: 2 } })
@@ -248,7 +248,6 @@ describe('OpenAPI', () => {
         'post /image/read',
         'post /image/upscale',
         'post /image/vectorize',
-        'post /llm/classify',
         'post /llm/summarize',
         'post /llm/title',
         'post /prose/critique',
@@ -308,7 +307,6 @@ describe('OpenAPI', () => {
       'imageRead',
       'imageUpscale',
       'imageVectorize',
-      'llmClassify',
       'llmSummarize',
       'llmTitle',
       'proseCritique',

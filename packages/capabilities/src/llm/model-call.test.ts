@@ -43,7 +43,7 @@ describe('parseJsonLoose', () => {
 const tokens = { input: 10, output: 2, cacheRead: 0, reasoning: 0 }
 
 describe('toUsage', () => {
-  const route = resolveRoute('cheap.classify', {})
+  const route = resolveRoute('cheap.title', {})
   const textRoute = resolveRoute(
     Object.keys(DEFAULT_ROUTES).find(
       (id) => DEFAULT_ROUTES[id as keyof typeof DEFAULT_ROUTES].wire === 'iu-openai',
@@ -74,7 +74,7 @@ describe('toUsage', () => {
   })
 
   test('the route id is on the usage; a fallback call keeps the primary’s', () => {
-    expect(toUsage(route, route.model, undefined).route).toBe('cheap.classify')
+    expect(toUsage(route, route.model, undefined).route).toBe('cheap.title')
     const fallback = { ...textRoute, isFallback: true as const }
     expect(toUsage(fallback, fallback.model, undefined).route).toBe(textRoute.id)
   })
