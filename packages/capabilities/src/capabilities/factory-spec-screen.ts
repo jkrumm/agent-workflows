@@ -88,6 +88,8 @@ export function guardSpecScreen(answer: FactorySpecScreenOutput): FactorySpecScr
   return { verdict: answer.verdict, reason }
 }
 
+// `JUDGE_RULES` in `packages/host/src/workflows/factory-spec-screen/scorer.ts` mirrors the pass/settle rules below for the drift
+// judge: a change to what the owner has to read is made in both, or `judged` measures agreement with the old rules.
 const INSTRUCTIONS = `You decide whether a Spec is the owner's to read or its lead's to decide. A Spec is a lead agent's one-page plan
 (what it will build, then at most three open choices, each with a default and what changing it later costs), written before the
 lead builds. The owner has said most Specs that reached him could have been decided by their lead; the precedents below are

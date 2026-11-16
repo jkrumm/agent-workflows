@@ -49,5 +49,6 @@ exists), `nextEmpty`, `clean` (the planted canary is nowhere in the output) and,
 
 **`judged`** (regression and drift): one question to the `decide` judge, over the Issue list and the digest, whether every
 line says only what the Issues it cites show. It runs on the sampled run in drift too, so a drift row carries a correctness
-score and not only `valid`. `decide` (the IU decision API) is the cheapest route that held: about $0.00002 a call, and it agreed
-with the owner-labelled reference on 16 of 17 committed spec-screen cases (`docs/evals/2026-11-16-judged-drift.md`).
+score and not only `valid`. `decide` (the IU decision API) is the cheapest route that held: about $0.00002 a call, and on
+this seat's own probe (a faithful and an invented digest for three committed snapshots) it called 5 of 6 right and refused all
+three invented ones (`docs/evals/2026-11-16-judged-drift.md`).
