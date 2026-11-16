@@ -66,7 +66,7 @@ export function createFactoryHygiene(): HostWorkflow {
     workflow,
     summary:
       'Find stale and filler documents in a read-only checkout, with read-only tools; the hygiene candidates JSON comes on stdin',
-    cli: { stdin: 'hygiene', defaultFormat: 'json' },
+    cli: { stdin: 'hygiene', defaultFormat: 'json', serverOnly: true },
     agents: [{ agent: HYGIENE_AGENT, route: 'factory.hygiene' }],
   }
 }

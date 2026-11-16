@@ -36,6 +36,6 @@ export function createFactoryErrandNeeded(deps: { registry: ErrandNeededCaller }
     workflow,
     summary:
       "Whether an open request for the owner's hands is still needed: needed, not_needed or unsure; the request JSON comes on stdin",
-    cli: { stdin: 'request', defaultFormat: 'json' },
+    cli: { stdin: 'request', defaultFormat: 'json', serverOnly: true },
   }
 }

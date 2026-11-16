@@ -1,8 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { join } from 'node:path'
 import { z } from 'zod'
 import { createCapabilities, createRegistry } from '@agent-workflows/capabilities'
 import { fakeTransports } from '@agent-workflows/testing/transports'
 import { withOutputType } from '../src/operations.ts'
+import { createFactoryAsk } from '../src/workflows/factory-ask/index.ts'
+import { discoverWorkflowModules } from '../src/workflows/registry.ts'
 import { createCheckWorkflows } from '../src/workflows/check/index.ts'
 import { createNarrative } from '../src/workflows/narrative/index.ts'
 import { captureLogger, startTestHost, type TestHost, until } from './support.ts'
@@ -470,5 +473,34 @@ describe('withOutputType', () => {
     type Node = { next?: Node }
     const node: z.ZodType<Node> = z.object({ next: z.lazy(() => node).optional() })
     expect(() => withOutputType(state(), { id: 'a.b', output: node })).toThrow()
+  })
+})
+
+describe('serverOnly', () => {
+  test('every factory-* workflow is a server-only command: `agw schema --index` leaves the factory seats out', async () => {
+    const dir = join(import.meta.dir, '..', 'src', 'workflows')
+    const factory = (await discoverWorkflowModules(dir)).filter((m) => m.id.startsWith('factory-'))
+    expect(factory.length).toBeGreaterThan(0)
+    for (const module of factory) {
+      const entries = module.create({ registry: {} } as never, { suites: {}, peers: [] } as never)
+      expect(entries.length).toBeGreaterThan(0)
+      for (const entry of entries) expect([module.id, entry.cli?.serverOnly]).toEqual([module.id, true])
+    }
+  })
+
+  test('the emitted x-cli carries serverOnly only where it is set', async () => {
+    const registry = createRegistry(createCapabilities({ transports: fakeTransports({}), env: {} }))
+    const entries = createFactoryAsk({ registry })
+    const host = await startTestHost({ prefix: 'wfso', extra: [entries] })
+    try {
+      const doc = (await host.host.openapi()) as {
+        paths: Record<string, Record<string, { 'x-cli'?: { command: string[]; serverOnly?: boolean } }>>
+      }
+      const x = Object.values(doc.paths).flatMap((ops) => Object.values(ops).map((op) => op['x-cli']))
+      expect(x.find((c) => c?.command.join(' ') === 'factory-ask')?.serverOnly).toBe(true)
+      expect(x.find((c) => c?.command.join(' ') === 'run status')?.serverOnly).toBeUndefined()
+    } finally {
+      await host.close()
+    }
   })
 })

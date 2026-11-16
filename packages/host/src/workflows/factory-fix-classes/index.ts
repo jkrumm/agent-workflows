@@ -28,6 +28,6 @@ export function createFactoryFixClasses(deps: { registry: FixClassesCaller }): H
   return {
     workflow,
     summary: 'Sort fix commits into the classes the caller sends, one answer per sha; the request JSON comes on stdin',
-    cli: { stdin: 'request', defaultFormat: 'json' },
+    cli: { stdin: 'request', defaultFormat: 'json', serverOnly: true },
   }
 }

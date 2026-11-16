@@ -54,6 +54,6 @@ export function createFactoryAsk(deps: { registry: AskCaller }): HostWorkflow {
     workflow,
     summary:
       "Decide whether a lead's factory ask is the owner's or answerable from the plan or the declared default; the ask JSON comes on stdin",
-    cli: { stdin: 'ask', defaultFormat: 'json' },
+    cli: { stdin: 'ask', defaultFormat: 'json', serverOnly: true },
   }
 }

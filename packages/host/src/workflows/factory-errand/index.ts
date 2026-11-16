@@ -35,6 +35,6 @@ export function createFactoryErrand(deps: { registry: ErrandCaller }): HostWorkf
   return {
     workflow,
     summary: 'Screen an Errand before the owner sees it: pass or turn_away; the request JSON comes on stdin',
-    cli: { stdin: 'request', defaultFormat: 'json' },
+    cli: { stdin: 'request', defaultFormat: 'json', serverOnly: true },
   }
 }

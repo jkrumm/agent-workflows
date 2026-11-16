@@ -42,6 +42,6 @@ export function createFactoryTriage(deps: { registry: TriageCaller }): HostWorkf
     workflow,
     summary:
       'Match a signal to an open Issue, or name the open Issues a new Issue must wait for; the request JSON comes on stdin',
-    cli: { stdin: 'request', defaultFormat: 'json' },
+    cli: { stdin: 'request', defaultFormat: 'json', serverOnly: true },
   }
 }

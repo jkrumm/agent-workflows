@@ -34,6 +34,6 @@ export function createFactoryClassify(deps: { registry: ClassifyCaller }): HostW
   return {
     workflow,
     summary: 'Classify a factory Issue: project, kind, class, size, tier and effort; the Issue JSON comes on stdin',
-    cli: { stdin: 'issue', defaultFormat: 'json' },
+    cli: { stdin: 'issue', defaultFormat: 'json', serverOnly: true },
   }
 }

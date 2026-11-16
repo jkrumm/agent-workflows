@@ -24,6 +24,8 @@ export interface CliSpec {
   resume?: CliResume
   /** Default: false. True: no CLI command (its answer is not for a terminal, e.g. megabytes of base64); the operation stays on HTTP and in process. The CLI lists it under `hidden` in `agw schema`. Its `command` is still checked for uniqueness: the host's `assertCommands` covers every capability, hidden or not. */
   hidden?: boolean
+  /** Default: false. True: a command only a server calls (the factory's seats), never an agent session. It stays a command; `agw schema --index` leaves it out unless `--all`. */
+  serverOnly?: boolean
 }
 
 export type CliKind = 'capability' | 'workflow' | 'run'
@@ -37,7 +39,7 @@ export interface CliResume {
 export type ResolvedCliSpec = Required<
   Pick<CliSpec, 'command' | 'positional' | 'mutating' | 'defaultFormat' | 'kind'>
 > &
-  Pick<CliSpec, 'stdin' | 'plainField' | 'resume' | 'hidden'>
+  Pick<CliSpec, 'stdin' | 'plainField' | 'resume' | 'hidden' | 'serverOnly'>
 
 export interface RouteSpec {
   /** Default: `POST`. */
@@ -110,6 +112,7 @@ export function resolveDefinition<I extends z.ZodObject, O extends z.ZodType>(
       ...(def.cli?.stdin ? { stdin: def.cli.stdin } : {}),
       ...(def.cli?.plainField ? { plainField: def.cli.plainField } : {}),
       ...(def.cli?.hidden ? { hidden: true } : {}),
+      ...(def.cli?.serverOnly ? { serverOnly: true } : {}),
     },
     route: {
       method: def.route?.method ?? 'POST',

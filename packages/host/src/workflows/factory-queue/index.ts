@@ -40,6 +40,6 @@ export function createFactoryQueue(deps: { registry: QueueCaller }): HostWorkflo
     workflow,
     summary:
       "Propose `after` edges and an order for a repo's queued Issues, never against the owner's priority; the queue JSON comes on stdin",
-    cli: { stdin: 'queue', defaultFormat: 'json' },
+    cli: { stdin: 'queue', defaultFormat: 'json', serverOnly: true },
   }
 }

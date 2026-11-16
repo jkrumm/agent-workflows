@@ -35,6 +35,6 @@ export function createFactoryDigest(deps: { registry: DigestCaller }): HostWorkf
     workflow,
     summary:
       "Summarise a project's recently closed, running and queued Issues into a headline, shipped, next and risks; the request JSON comes on stdin or `--input <file>`",
-    cli: { stdin: 'input', defaultFormat: 'json' },
+    cli: { stdin: 'input', defaultFormat: 'json', serverOnly: true },
   }
 }

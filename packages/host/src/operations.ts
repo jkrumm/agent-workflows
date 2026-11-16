@@ -94,7 +94,7 @@ const workflowOperationId = (id: string) => operationIdOf(id.replace(/-([a-z])/g
 export interface HostWorkflow {
   workflow: AnyWorkflow
   summary?: string
-  cli?: Pick<CliSpec, 'positional' | 'stdin' | 'mutating' | 'defaultFormat' | 'plainField'>
+  cli?: Pick<CliSpec, 'positional' | 'stdin' | 'mutating' | 'defaultFormat' | 'plainField' | 'serverOnly'>
   /** The agents the workflow's steps run, with their routes: they feed the run fingerprint (concept §5). */
   agents?: AgentRef[]
   /** Optional expensive work: the wallet gate refuses it at admission (concept §4). */
@@ -603,6 +603,7 @@ export function workflowOperation(entry: HostWorkflow, deps: OperationDeps): Hos
     resume: { command: [...RESUME.command], positional: [...RESUME.positional] },
     ...(entry.cli?.stdin ? { stdin: entry.cli.stdin } : {}),
     ...(entry.cli?.plainField ? { plainField: entry.cli.plainField } : {}),
+    ...(entry.cli?.serverOnly ? { serverOnly: true } : {}),
   }
   const path = `/workflows/${workflow.id.split('.').join('/')}`
   return {
