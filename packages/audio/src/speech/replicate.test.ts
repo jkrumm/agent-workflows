@@ -114,8 +114,11 @@ describe.skipIf(!hasFfmpeg)('replicate lane', () => {
     await speak(post({ model: FLASH, input: `${sentence} ${sentence}`, response_format: 'pcm' }))
     const inputs = predictionInputs()
     expect(inputs).toHaveLength(2)
-    expect(inputs[0]?.next_text).toBe(inputs[1]?.prompt)
-    expect(inputs[1]?.previous_text).toBe(inputs[0]?.prompt)
+    // The chunks are predicted in parallel, so the requests arrive in either order: the first chunk is the one with no previous_text.
+    const first = inputs.find((input) => input.previous_text === undefined)
+    const second = inputs.find((input) => input !== first)
+    expect(first?.next_text).toBe(second?.prompt)
+    expect(second?.previous_text).toBe(first?.prompt)
   })
 
   test('pcm is transcoded and labelled audio/pcm; speed is clamped, and exactly 1 is omitted', async () => {
