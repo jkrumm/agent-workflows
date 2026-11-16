@@ -90,31 +90,57 @@ describe('factory-queue workflow', () => {
 })
 
 describe('the guard through the workflow', () => {
-  test.each([
-    [
-      'an edge to an Issue that was not shown',
-      { ...output, edges: [{ issue: 'issue_20', after: 'issue_999', reason: 'x' }] },
-    ],
-    ['an order against the owner priority', { ...output, order: ['issue_15', 'issue_20', 'issue_21', 'issue_22'] }],
-  ])('%s is the empty answer', async (_name, answer) => {
-    answers(answer)
+  test('an edge to an Issue that was not shown is discarded, the order stands', async () => {
+    answers({ ...output, edges: [{ issue: 'issue_20', after: 'issue_999', reason: 'x' }] })
     try {
       const { body } = await run()
-      expect(body.output).toMatchObject(none)
-      expect(body.output.reason).toStartWith('guard: ')
+      expect(body.output).toMatchObject({ edges: [], order: output.order })
+      expect(body.output.reason).toContain('guard: an edge names an Issue that was not shown')
     } finally {
       answers(output)
     }
   })
+
+  test('an order against the owner priority is discarded, the edges stand', async () => {
+    answers({ ...output, order: ['issue_15', 'issue_20', 'issue_21', 'issue_22'] })
+    try {
+      const { body } = await run()
+      expect(body.output).toMatchObject({ edges: output.edges, order: [] })
+      expect(body.output.reason).toContain("guard: the order overrides the owner's priority")
+    } finally {
+      answers(output)
+    }
+  })
+
+  test('a running id in the order is trimmed, the edges and the rest of the order stand', async () => {
+    answers({ ...output, order: ['issue_22', 'issue_12', 'issue_21', 'issue_15', 'issue_20'] })
+    try {
+      const { body } = await run()
+      expect(body.output).toMatchObject({ edges: output.edges, order: output.order })
+      expect(body.output.reason).toContain('not queued')
+    } finally {
+      answers(output)
+    }
+  })
+
+  test('the prompt lists the queued ids under Routing', async () => {
+    await run()
+    const prompt = promptOf(t.iu.requests.at(-1))
+    expect(prompt).toContain('Queued Issues (the only ids "order" may hold): issue_15, issue_20, issue_21, issue_22')
+  })
 })
 
 describe('guardQueue', () => {
+  const edge = (issue: string, after: string) => ({ issue, after, reason: 'x' })
   const guard = (answer: Partial<typeof output>) => guardQueue({ ...output, ...answer }, input)
+  /** Nothing survives: the empty answer, with the guard's reason. */
   const refused = (answer: Partial<typeof output>, why: string) => {
-    const result = guard(answer)
+    const result = guard({ edges: [], order: [], ...answer })
     expect(result).toMatchObject(none)
     expect(result.reason).toContain(why)
   }
+  /** The edges are refused as a set; the order is `[]` here, so nothing survives. */
+  const edgesRefused = (edges: ReturnType<typeof edge>[], why: string) => refused({ edges }, why)
 
   test('the fixture answer holds', () => {
     expect(guard({})).toEqual(output)
@@ -125,24 +151,22 @@ describe('guardQueue', () => {
   })
 
   test('edges: a running Issue cannot wait, nothing waits for itself, twice or again', () => {
-    const edge = (issue: string, after: string) => ({ issue, after, reason: 'x' })
-    refused({ edges: [edge('issue_12', 'issue_15')] }, 'not queued')
-    refused({ edges: [edge('issue_20', 'issue_20')] }, 'itself')
-    refused({ edges: [edge('issue_20', 'issue_12'), edge('issue_20', 'issue_12')] }, 'twice')
-    refused({ edges: [edge('issue_22', 'issue_12')] }, 'exists already')
+    edgesRefused([edge('issue_12', 'issue_15')], 'not queued')
+    edgesRefused([edge('issue_20', 'issue_20')], 'itself')
+    edgesRefused([edge('issue_20', 'issue_12'), edge('issue_20', 'issue_12')], 'twice')
+    edgesRefused([edge('issue_22', 'issue_12')], 'exists already')
   })
 
   test('edges: at most three for one Issue', () => {
     const blockers = ['issue_12', 'issue_15', 'issue_21', 'issue_22']
-    const edges = blockers.map((after) => ({ issue: 'issue_20', after, reason: 'x' }))
-    refused({ edges, order: [] }, 'three edges')
+    const edges = blockers.map((after) => edge('issue_20', after))
+    edgesRefused(edges, 'three edges')
     expect(guard({ edges: edges.slice(0, 3), order: [] }).edges).toHaveLength(3)
   })
 
   test('edges: a cycle through proposed edges is refused', () => {
-    const edge = (issue: string, after: string) => ({ issue, after, reason: 'x' })
-    refused({ edges: [edge('issue_20', 'issue_21'), edge('issue_21', 'issue_20')], order: [] }, 'cycle')
-    refused({ edges: [edge('issue_15', 'issue_22'), edge('issue_12', 'issue_15')] }, 'not queued')
+    edgesRefused([edge('issue_20', 'issue_21'), edge('issue_21', 'issue_20')], 'cycle')
+    edgesRefused([edge('issue_15', 'issue_22'), edge('issue_12', 'issue_15')], 'not queued')
     // issue_22 waits for issue_12 already: issue_12 is running, so only a queued Issue can close a loop through it
     const chained = {
       ...input,
@@ -152,21 +176,48 @@ describe('guardQueue', () => {
     expect(result.reason).toContain('cycle')
   })
 
-  test('order: every queued Issue once, none unknown', () => {
+  test('a bad edge discards the edges and keeps a sound order', () => {
+    const result = guard({ edges: [edge('issue_12', 'issue_15')] })
+    expect(result.edges).toEqual([])
+    expect(result.order).toEqual(output.order)
+    expect(result.reason).toContain('an edge names an Issue that is not queued')
+    expect(result.reason).toContain(output.reason.slice(0, 40))
+  })
+
+  test('order: a wrong order is [] and the valid edges stand', () => {
+    for (const order of [
+      ['issue_22', 'issue_21', 'issue_15'],
+      ['issue_22', 'issue_21', 'issue_15', 'issue_15'],
+      ['issue_15', 'issue_20', 'issue_21', 'issue_22'],
+    ]) {
+      const result = guard({ order })
+      expect(result.order).toEqual([])
+      expect(result.edges).toEqual(output.edges)
+    }
     refused({ order: ['issue_22', 'issue_21', 'issue_15'] }, 'once')
     refused({ order: ['issue_22', 'issue_21', 'issue_15', 'issue_15'] }, 'once')
-    refused({ order: ['issue_22', 'issue_21', 'issue_15', 'issue_12'] }, 'not queued')
+  })
+
+  test('order: ids that are not queued are dropped from it, the edges stand', () => {
+    const result = guard({ order: ['issue_22', 'issue_12', 'issue_21', 'issue_15', 'issue_20', 'issue_999'] })
+    expect(result.order).toEqual(output.order)
+    expect(result.edges).toEqual(output.edges)
+    expect(result.reason).toContain('not queued')
+    // a running id and nothing else wrong: the same answer without it
+    expect(guard({ order: ['issue_12', ...output.order] }).order).toEqual(output.order)
   })
 
   test('order: a blocker goes before the Issue that waits for it, proposed edges included', () => {
-    const edges = [{ issue: 'issue_21', after: 'issue_15', reason: 'x' }]
+    const edges = [edge('issue_21', 'issue_15')]
     expect(guard({ edges, order: ['issue_22', 'issue_15', 'issue_21', 'issue_20'] }).order).toHaveLength(4)
-    refused({ edges, order: ['issue_22', 'issue_21', 'issue_15', 'issue_20'] }, 'before one it waits for')
+    const result = guard({ edges, order: ['issue_22', 'issue_21', 'issue_15', 'issue_20'] })
+    expect(result).toMatchObject({ edges, order: [] })
+    expect(result.reason).toContain('before one it waits for')
   })
 
   test('order: only a tie may be broken; a lower prio goes first only for a blocker', () => {
     refused({ order: ['issue_21', 'issue_22', 'issue_15', 'issue_20'] }, 'priority')
-    const edges = [{ issue: 'issue_22', after: 'issue_21', reason: 'x' }]
+    const edges = [edge('issue_22', 'issue_21')]
     expect(guard({ edges, order: ['issue_21', 'issue_22', 'issue_15', 'issue_20'] }).order[0]).toBe('issue_21')
   })
 })

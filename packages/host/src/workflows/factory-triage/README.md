@@ -21,8 +21,9 @@ echo '{"mode":"settle","repo":"app","issue":{"id":"issue_20","title":"…","text
 - **Data is fenced** like `factory-ask`'s; the mode, the repo and the Issue ids are the factory's, outside the fence.
 - **Only Issues it was shown.** `guardTriage`, applied by the workflow after the step so a replay gets it too: an Issue that
   was not among the candidates, the Issue itself, an edge twice, an `amend` answer with edges, a `settled` id that was not shown, `amend` and `settled` both set, or a `settle` answer with an
-  `amend` or a `settled` becomes the empty answer (`amend: null, settled: null, after: []`): file anew, chain nothing. The factory checks the same again
-  before it acts (an open Issue it showed, no cycle).
+  `amend` or a `settled`, or more than `MAX_AFTER` (3) edges becomes the empty answer (`amend: null, settled: null, after: []`): file anew,
+  chain nothing. One repair: a `checkpoint: "spec"` whose `size` is not medium or large is dropped (null) and the rest of the
+  answer stands, as the factory would drop it. The factory checks the same again before it acts (an open Issue it showed, no cycle).
 - **When unsure, nothing.** A duplicate costs a note, a lost request costs the work; most Issues wait for nothing.
 - **Fail closed.** Any failure of the call gives the empty answer with `reason: 'triage unavailable: <class>'`.
 

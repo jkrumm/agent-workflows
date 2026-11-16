@@ -12,7 +12,7 @@ echo '{"repo":"app","issues":[{"id":"issue_12","title":"…","kind":"bug","state
 | | |
 |-|-|
 | Input (stdin JSON) | `{repo, issues[]}`; an Issue is `{id, title, kind, state, prio, ageMinutes, size, summary, after[]}` (1 to 40). `state: "queued"` marks the Issues to order, any other state is chain context. `prio` is the owner's (−1000..1000), `after` the edges that exist. The CLI reads it as the workflow's one `queue` property, so the HTTP body is `{"queue": {…}}`. `title` and `summary` are untrusted data |
-| Output | the run envelope's `output`: `{edges[{issue, after, reason}], order[], reason}`. `edges`: proposed new edges (at most 10), `[]` is the common answer. `order`: every queued Issue once, first to start at the front, or `[]` when the factory's order stands |
+| Output | the run envelope's `output`: `{edges[{issue, after, reason}], order[], reason}` (every `reason` is one line, clipped to 240 in code). `edges`: proposed new edges (at most 10), `[]` is the common answer. `order`: every queued Issue once, first to start at the front, or `[]` when the factory's order stands |
 | Shape | one journaled step (`queue`), one tool-free call to the internal `factory.queue` capability |
 | Pending | exit 10 like every workflow (`agw run wait <runId>`) |
 
@@ -24,10 +24,13 @@ echo '{"repo":"app","issues":[{"id":"issue_12","title":"…","kind":"bug","state
   re-assertion after. The repo, ids, states, priorities, ages and existing edges are the factory's.
 - **The owner's prio is not the model's.** `guardQueue` refuses an order that puts an Issue before one of higher priority
   unless the higher one waits for it: the order breaks ties and nothing else.
-- **Only Issues it was shown.** `guardQueue`, applied by the workflow after the step so a replay gets it too: an edge whose
-  waiter is not queued or whose blocker was not shown, an edge to itself, twice or that exists already, an edge that closes a
-  cycle (over the shown edges, proposed ones included), an order that is not every queued Issue once, or a blocker placed
-  after the Issue that waits for it becomes the empty answer (`edges: [], order: []`). It never rewrites an answer.
+- **Only Issues it was shown, and only the wrong part goes.** `guardQueue`, applied by the workflow after the step so a replay
+  gets it too, judges `edges` and `order` apart. An edge whose waiter is not queued or whose blocker was not shown, an edge to
+  itself, twice or that exists already, one that closes a cycle (over the shown edges, proposed ones included) or a fourth for
+  one Issue discards the edges as a set. In the order, ids that are not queued (a running Issue listed by mistake) are dropped;
+  an order that is then not every queued Issue once, or puts a blocker after the Issue that waits for it, or goes against the
+  owner's priority becomes `[]`. The part that is sound stands; when nothing survives the answer is the empty one
+  (`edges: [], order: []`). It never reshuffles an order.
 - **When unsure, nothing.** Most queues need no edge and no order.
 - **Fail closed.** Any failure of the call gives the empty answer with `reason: 'queue unavailable: <class>'`. A cancel, a
   shutdown (`InfraError`) or an aborted run still propagates to the runtime.

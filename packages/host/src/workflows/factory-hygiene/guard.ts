@@ -1,5 +1,6 @@
 import { realpathSync, statSync } from 'node:fs'
 import { isAbsolute, join, relative } from 'node:path'
+import { clipReason } from '@agent-workflows/capabilities'
 import type { FactoryHygieneOutputValue, HygieneInput } from './schema.ts'
 
 /** True when `path` (relative to `root`) is an existing regular file whose real path stays below the real `root`. */
@@ -20,7 +21,8 @@ export function isFileUnder(root: string, path: string): boolean {
  * The code-side guard, applied by the workflow after the step so a replayed result is held to it too. A finding is dropped
  * when its path is not a candidate of its own kind, when the file does not exist below `cwd` (a `../` path, an absolute path
  * and a link out of the checkout included), or when it repeats a kind and path (the first stays). The rest is cut to `max`.
- * It drops and never rewrites: what stays is the agent's finding as it was.
+ * It drops and never rewrites a finding's substance: what stays is the agent's finding, except that `title` and `reason` are
+ * brought to one line of at most 240 characters (the agent writes them as free strings; a long one is no reason to ask again).
  */
 export function guardHygiene(answer: FactoryHygieneOutputValue, input: HygieneInput): FactoryHygieneOutputValue {
   const candidates = {
@@ -35,7 +37,7 @@ export function guardHygiene(answer: FactoryHygieneOutputValue, input: HygieneIn
     if (seen.has(key)) continue
     if (!isFileUnder(input.cwd, finding.path)) continue
     seen.add(key)
-    findings.push(finding)
+    findings.push({ ...finding, title: clipReason(finding.title) })
   }
-  return { ...answer, findings: findings.slice(0, input.max) }
+  return { ...answer, findings: findings.slice(0, input.max), reason: clipReason(answer.reason) }
 }

@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { factoryTriageInput, factoryTriageOutput, guardTriage } from '@agent-workflows/capabilities'
 import { messageResponse, startFakeGateway } from '@agent-workflows/testing/gateway'
 import { PlainCase, readCases } from '@agent-workflows/eval'
 import { createFactoryTriage } from '../src/workflows/factory-triage/index.ts'
@@ -77,11 +78,13 @@ describe('factory-triage workflow', () => {
   })
 
   test('settle: a spec checkpoint passes through, and the prompt carries the rule', async () => {
-    answers({ ...settleOutput, after: [], checkpoint: 'spec' })
+    answers({ ...settleOutput, after: [], size: 'medium', checkpoint: 'spec' })
     const { body } = await run(settleInput)
-    expect(body.output).toMatchObject({ checkpoint: 'spec' })
+    expect(body.output).toMatchObject({ checkpoint: 'spec', size: 'medium' })
     const prompt = promptOf(t.iu.requests.at(-1))
     expect(prompt).toContain('checkpoint: "spec" only for work of a session or more')
+    expect(prompt).toContain('At most 3.')
+    expect(prompt).not.toMatch(/per 100 Issues/)
     expect(prompt).toContain('"checkpoint": null | "spec"')
     answers(amendOutput)
   })
@@ -132,6 +135,34 @@ describe('factory-triage workflow', () => {
     const { body } = await run(amendInput)
     expect(body.output).toMatchObject({ amend: 'issue_12', kind: null, size: null, checkpoint: null })
     answers(amendOutput)
+  })
+
+  test('settle: a spec on a small or unsized Issue drops the checkpoint and keeps the rest', async () => {
+    for (const size of ['small', null]) {
+      answers({ ...settleOutput, after: ['issue_12'], size, checkpoint: 'spec' })
+      const { body } = await run(settleInput)
+      expect(body.output).toMatchObject({ after: ['issue_12'], size, checkpoint: null })
+    }
+    answers({ ...settleOutput, after: [], size: 'large', checkpoint: 'spec' })
+    expect((await run(settleInput)).body.output).toMatchObject({ size: 'large', checkpoint: 'spec' })
+    answers(amendOutput)
+  })
+
+  test('settle: four edges are refused, the cap is three in the schema, the guard and the prompt', () => {
+    expect(factoryTriageOutput.safeParse({ ...settleOutput, after: ['a', 'b', 'c', 'd'] }).success).toBe(false)
+    const request = factoryTriageInput.parse(settleInput)
+    const four = { ...factoryTriageOutput.parse(settleOutput), after: ['issue_12', 'issue_15', 'issue_a', 'issue_b'] }
+    const wide = {
+      ...request,
+      candidates: ['issue_12', 'issue_15', 'issue_a', 'issue_b'].map((id) => ({
+        id,
+        title: id,
+        kind: 'bug',
+        state: 'queued',
+      })),
+    }
+    expect(guardTriage(four, wide).reason).toContain('more than 3 edges')
+    expect(guardTriage({ ...four, after: four.after.slice(0, 3) }, wide).after).toHaveLength(3)
   })
 
   test('a checkpoint other than spec is refused as an unusable answer', async () => {
