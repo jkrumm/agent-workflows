@@ -227,19 +227,21 @@ async function writeJobDir(
     diffBase: string
     worktree: string
     files: string[]
+    deleted: string[]
     reviewMd: string | null
     route: { tier: Tier; seat: Seat | null }
     prompt: string
   },
 ): Promise<void> {
   const { git, ledger } = ctx
-  const { input, thread, files, worktree, diffBase } = job
+  const { input, thread, files, deleted, worktree, diffBase } = job
   const { repo, jobId, jobDir, resolved } = job.at
   const { gitDir, base, head } = resolved
   const range = `${diffBase}..${head}`
   const paths = {
     diff: join(jobDir, 'diff.patch'),
     stat: join(jobDir, 'stat.txt'),
+    deleted: join(jobDir, 'deleted.txt'),
     intent: join(jobDir, 'intent.md'),
     history: join(jobDir, 'history.txt'),
     prior: join(jobDir, 'prior.json'),
@@ -247,7 +249,18 @@ async function writeJobDir(
     agentsMd: join(worktree, 'AGENTS.md'),
   }
   writeFileSync(paths.diff, await git(gitDir, ['-c', 'core.quotePath=false', 'diff', '-M', range]))
-  writeFileSync(paths.stat, await git(gitDir, ['diff', '--numstat', '--no-renames', range]))
+  // stat.txt is what the reviewer reads whole and echoes: whole-file deletions go to deleted.txt so a mostly-deleting diff fits.
+  const skip = new Set(deleted)
+  const numstat = await git(gitDir, ['diff', '--numstat', '--no-renames', range])
+  const statLines = numstat.split('\n').filter(Boolean)
+  const statPath = (line: string) => line.split('\t').slice(2).join('\t')
+  const lines = (keep: boolean) =>
+    statLines
+      .filter((l) => skip.has(statPath(l)) === keep)
+      .map((l) => `${l}\n`)
+      .join('')
+  writeFileSync(paths.stat, lines(false))
+  writeFileSync(paths.deleted, lines(true))
   const commits = resolved.snapshot
     ? ''
     : (await git(gitDir, ['log', '--format=### %s%n%n%b', `${base}..${head}`])).trim()
@@ -399,6 +412,7 @@ async function prepareResolved(
     diffBase,
     worktree,
     files,
+    deleted: changes.filter((c) => c.deleted).map((c) => c.path),
     reviewMd,
     route: { tier: route.tier, seat: route.seat },
     prompt,

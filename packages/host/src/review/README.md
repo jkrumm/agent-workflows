@@ -46,7 +46,7 @@ share it. Thread: `sha256(repo \0 key)[:12]`, key `--thread` (or the 12-hex id o
 ## The job dir
 
 `<stateDir>/review-jobs/<jobId>/`: `prompt.txt` (the prompt line prepare prints as `prompt`; `promptFile` is its path), `job.json` (pointers; `files.agentsMd` is in the worktree), `diff.patch`
-(`diff -M diffBase..head`), `stat.txt` (`--numstat --no-renames`), `intent.md` (`--context`, the scope line, the commits
+(`diff -M diffBase..head`), `stat.txt` (`--numstat --no-renames`, without the files the range deletes whole: those are in `deleted.txt`, same format, so a diff that mostly deletes leaves `stat.txt` small enough to read in one piece), `intent.md` (`--context`, the scope line, the commits
 of base..head unless a snapshot), `history.txt` (15 commits on the touched paths before base), `prior.json` (≤ 20 ledger
 findings of the repo on the touched paths, newest first, with `sameThread` and the disposition as `state`), `REVIEW.md`
 (from base, or a note that there is none), `tree/` (a `clone --shared --no-checkout`, detached at head, escaping
@@ -145,7 +145,7 @@ id with `stillOpen` and E back to `open` in the same transaction. Two reply find
 a new finding; a `stillOpen` with an unknown id matches by key or is new. Nits past
 REVIEW.md `nits` are dropped (counted). Code decides `outcome` (`clean` without important, `needs-human` at the third fix-loop round in a row,
 else `actionable`), `summary` (counts only), `stepBack` (the reply's, or a fixed default at that round with important left)
-and `tier` (the job's). The echoed `files` may leave stat paths out: they are stored in the output as `unreviewed` (the summary says so), `covered` does not count a job for a commit that touches one (`reason: unreviewed`, `unreviewed` names the files), and the next prepare on the thread diffs from that round's diff base, so they are read again with the rest. An unreviewed file does not force a round by itself and never changes `outcome`. A path the reply echoes that stat.txt lacks, or a reply that echoes none of the text files, is refused and nothing is written; a binary file (numstat `-	-`) may be listed or left out.
+and `tier` (the job's). The echoed `files` may leave stat paths out: they are stored in the output as `unreviewed` (the summary says so), `covered` does not count a job for a commit that touches one (`reason: unreviewed`, `unreviewed` names the files), and the next prepare on the thread diffs from that round's diff base, so they are read again with the rest. An unreviewed file does not force a round by itself and never changes `outcome`. A path the reply echoes that stat.txt lacks, or a reply that echoes none of the text files, is refused and nothing is written; a binary file (numstat `-	-`) and a file the range deletes whole (`deleted.txt`) may be listed or left out, and a left-out one is never `unreviewed`. A refusal names its first 20 paths and a count of the rest.
 
 ## Quota reading and deep cap
 
