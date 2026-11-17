@@ -269,7 +269,12 @@ export async function bootProcess(
   const env = options.env ?? process.env
   const { name } = definition
   // Warn and error lines also ship as OTLP logs; its closer registers first, so it runs last and flushes what the others log.
-  const logs = createLogShipper({ env, serviceName: definition.serviceName, version: config.version })
+  const logs = createLogShipper({
+    env,
+    serviceName: definition.serviceName,
+    version: config.version,
+    machine: config.machine,
+  })
   const logger = logs.wrap(processLogger(name))
   const tag = `[agw-${name}]`
   // Every resource registers its closer as it is created; a failure at any point runs the same teardown as a
@@ -353,7 +358,12 @@ export async function bootProcess(
       ),
       friction: frictionSource,
       logger,
-      telemetry: { exporter: exporterFor(env), serviceName: definition.serviceName, version: config.version },
+      telemetry: {
+        exporter: exporterFor(env),
+        serviceName: definition.serviceName,
+        version: config.version,
+        machine: config.machine,
+      },
       usage: { machine: config.machine },
     })
     closers.push(() => platform.close())

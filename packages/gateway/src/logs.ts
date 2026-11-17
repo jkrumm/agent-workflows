@@ -9,6 +9,7 @@ import {
   type ReadableLogRecord,
 } from '@opentelemetry/sdk-logs'
 import { errorMessage, type Logger } from './log.ts'
+import { resourceAttributes } from './resource.ts'
 
 const SERVICE_NAME = 'agw-gateway'
 /** A shipped attribute value longer than this is cut: a log line is an event, not a payload. */
@@ -90,6 +91,8 @@ function attributesOf(fields: Record<string, unknown> | undefined): Record<strin
 export function createLogShipper(options: {
   env: Record<string, string | undefined>
   version: string
+  /** `host.name`: the machine (`AGW_MACHINE`). */
+  machine?: string
   /** Replaces the env's exporter (tests). */
   exporter?: LogRecordExporter
   /** Batch delay. Default 1000 ms. */
@@ -98,7 +101,9 @@ export function createLogShipper(options: {
   const exporter = options.exporter ?? exporterFor(options.env)
   if (exporter === null) return { wrap: (base) => base, shutdown: async () => {} }
   const provider = new LoggerProvider({
-    resource: resourceFromAttributes({ 'service.name': SERVICE_NAME, 'service.version': options.version }),
+    resource: resourceFromAttributes(
+      resourceAttributes({ serviceName: SERVICE_NAME, version: options.version, machine: options.machine }),
+    ),
     processors: [
       new BatchLogRecordProcessor({
         exporter: new StderrReportingExporter(exporter),
