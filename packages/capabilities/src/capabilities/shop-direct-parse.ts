@@ -238,9 +238,10 @@ export function parseCasekingSearch(html: string, finalUrl: string): SearchPage 
   }
   const candidates: SearchCandidate[] = []
   const seen = new Set<string>()
-  for (const tile of html.slice(grid).matchAll(/<div class="product-tile"[^>]*>/g)) {
+  const body = html.slice(grid)
+  for (const tile of body.matchAll(/<div class="product-tile"[^>]*>/g)) {
     const name = attr(tile[0], 'aria-label')
-    const href = html.slice(tile.index).match(/href="(\/[^"]+\/[A-Z]{2,6}-\d{1,6}\.html)"/)?.[1]
+    const href = body.slice(tile.index).match(/href="(\/[^"]+\/[A-Z]{2,6}-\d{1,6}\.html)"/)?.[1]
     const id = href ? casekingProductId(`${CASEKING_ORIGIN}${href}`) : null
     if (!name || !href || !id || seen.has(id)) continue
     seen.add(id)

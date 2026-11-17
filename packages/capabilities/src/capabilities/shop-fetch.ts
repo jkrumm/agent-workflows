@@ -184,7 +184,7 @@ export function createShopFetch(web: ResolvedWebDeps, pace: ShopPace = {}) {
 
   /**
    * One page read in the research Chrome: its HTML and final URL, or `undefined` when no browser is configured. For amazon
-   * this is the second read of a robot-checked page; for idealo and geizhals it is the only read. A challenge the browser
+   * this is the second read of a robot-checked page; for idealo, geizhals, caseking and mindfactory it is the only read. A challenge the browser
    * meets ends the call as blocked (`bot-protection`): the owner is not asked and the agent solves nothing. A browser
    * that fails or is refused leaves the original wall standing (amazon) or is an upstream error (no wall was seen).
    */
@@ -224,8 +224,8 @@ export function createShopFetch(web: ResolvedWebDeps, pace: ShopPace = {}) {
   }
 
   /**
-   * The page's response by the host's way in: idealo and geizhals in the research Chrome from the first request, amazon
-   * direct with one browser read for a robot check. A wall throws `blocked (<reason>)`.
+   * The page's response by the host's way in: idealo, geizhals, caseking and mindfactory in the research Chrome from the
+   * first request, amazon and alternate direct with one browser read for a robot check. A wall throws `blocked (<reason>)`.
    */
   async function obtain(key: string, host: string, label: string, ctx: PageContext): Promise<Fetched> {
     if (HOSTS[host] === 'browser') {
