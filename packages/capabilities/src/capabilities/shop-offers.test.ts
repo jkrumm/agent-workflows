@@ -374,7 +374,7 @@ describe('shop.offers', () => {
       [geizhalsSearchUrl('CMK48GX5M2B5600C40')]: { html: await fixture('geizhals-search-fuzzy') },
     }
     const r = rig({ pages })
-    const out = await r.offers.call({ product: 'CMK48GX5M2B5600C40', source: 'aggregators' }, r.options)
+    const out = await r.offers.call({ product: 'CMK48GX5M2B5600C40', source: 'all' }, r.options)
     expect(out.results.map((x) => x.source)).toEqual(['idealo'])
     expect(out.errors).toEqual([expect.objectContaining({ source: 'geizhals', code: 'NOT_FOUND' })])
   })
@@ -400,7 +400,7 @@ describe('shop.offers', () => {
     const other = await r.offers.call({ product: 'CMK48GX5M2B5600C40', source: 'geizhals' }, r.options)
     expect(other.results[0]!.source).toBe('geizhals')
     // `all` with one site walled answers from the other and reports the wall.
-    const both = await r.offers.call({ product: 'CMK48GX5M2B5600C40', source: 'aggregators' }, r.options)
+    const both = await r.offers.call({ product: 'CMK48GX5M2B5600C40', source: 'all' }, r.options)
     expect(both.results.map((x) => x.source)).toEqual(['geizhals'])
     expect(both.errors[0]!.message).toContain('blocked (cooldown)')
   })

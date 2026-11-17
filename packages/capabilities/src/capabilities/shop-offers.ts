@@ -67,10 +67,10 @@ const offersInput = z.object({
     .max(500)
     .describe('A manufacturer part number, or a product page URL on one of the sources'),
   source: z
-    .enum([...OFFER_SOURCES, 'aggregators', 'shops', 'all'])
+    .enum([...OFFER_SOURCES, 'all', 'shops', 'everything'])
     .default('idealo')
     .describe(
-      "Which site to read, one search page and one product page each: idealo, geizhals (price comparison, many shops per page) or alternate, mindfactory, caseking (the shop's own page). `aggregators` reads idealo and geizhals, `shops` the three tech shops, `all` every source; a URL names its own site",
+      "Which site to read, one search page and one product page each: idealo, geizhals (price comparison, many shops per page) or alternate, mindfactory, caseking (the shop's own page). `all` reads idealo and geizhals (as it always did), `shops` the three tech shops, `everything` every source; a URL names its own site",
     ),
   history: z
     .enum(HISTORY_PERIODS)
@@ -184,10 +184,17 @@ async function locate(shop: ShopFetch, args: ReadArgs, ctx: PageCtx): Promise<{ 
   const named = (c: SearchCandidate) => [c.mpn, ...(c.tokens ?? [])].some((word) => word && normMpn(word) === wanted)
   const exact = search.candidates.find(named)
   if (exact) return { url: exact.url }
-  // A shop whose search cards carry no part number (caseking): a search with exactly one hit is read, and the product page's
-  // own part number, checked in `readSource`, decides. Several hits are not read one by one.
-  const [only] = search.candidates
-  if (search.candidates.length === 1 && only!.mpn === null && only!.tokens === undefined) return { url: only!.url }
+  // A shop whose search cards carry no part number (caseking, mindfactory): a search with exactly one hit is read, and the
+  // product page's own part number, checked in `readSource`, decides. Several hits are not read one by one, and that is an
+  // error, not "the shop does not list it": the product may be among them.
+  const blind = search.candidates.filter((c) => c.mpnOnPage)
+  if (blind.length === 1 && search.candidates.length === 1) return { url: blind[0]!.url }
+  if (blind.length > 1)
+    throw fail(
+      'UPSTREAM_ERROR',
+      `shop.offers: the ${args.source} search for ${args.ref} lists ${blind.length} products with no part number on the card; none was read`,
+      {},
+    )
   const near = search.candidates
     .slice(0, 5)
     .map((c) => c.mpn ?? c.name)
@@ -314,9 +321,9 @@ export const createShopOffers = (shop: ShopFetch) =>
     async handler({ product, source, history, fresh }, ctx) {
       const sources: OfferSource[] = isUrl(product)
         ? [sourceOfUrl(product)]
-        : source === 'all'
+        : source === 'everything'
           ? [...OFFER_SOURCES]
-          : source === 'aggregators'
+          : source === 'all'
             ? [...AGGREGATORS]
             : source === 'shops'
               ? [...DIRECT_SHOPS]

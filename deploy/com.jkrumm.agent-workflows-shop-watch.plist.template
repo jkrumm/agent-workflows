@@ -5,8 +5,8 @@
   <key>Label</key>
   <string>com.jkrumm.agent-workflows-shop-watch</string>
 
-  <!-- One run of the price watch (docs/shop.md §Watch): `agw shop watch` reads the idealo, geizhals and amazon.de offers of
-       every product in ~/.agent-workflows/data/shop/watch.json, appends one row per product to record.jsonl and sends
+  <!-- One run of the price watch (docs/shop.md §Watch): `agw shop watch` reads the idealo, geizhals, tech-shop (Alternate, Mindfactory,
+       Caseking) and amazon.de offers of every product in ~/.agent-workflows/data/shop/watch.json, appends one row per product to record.jsonl and sends
        one ntfy message per product whose lowest qualifying offer changed state. The reads, the pause between them, the
        research Chrome and the ntfy settings are the host's (com.jkrumm.agent-workflows-host); this job only asks.
 

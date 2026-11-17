@@ -86,6 +86,8 @@ export interface SearchCandidate {
   mpn: string | null
   /** Words of the card that may be the part number (a subtitle that lists it among other words); one that equals it makes the card a match. */
   tokens?: string[]
+  /** The card carries no part number at all (a shop's tile names its item number): the product page's own part number decides. */
+  mpnOnPage?: true
 }
 
 export interface ProductPage {

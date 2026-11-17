@@ -244,7 +244,7 @@ export function parseCasekingSearch(html: string, finalUrl: string): SearchPage 
     const id = href ? casekingProductId(`${CASEKING_ORIGIN}${href}`) : null
     if (!name || !href || !id || seen.has(id)) continue
     seen.add(id)
-    candidates.push({ id, url: `${CASEKING_ORIGIN}${href}`, name, mpn: null })
+    candidates.push({ id, url: `${CASEKING_ORIGIN}${href}`, name, mpn: null, mpnOnPage: true })
   }
   return { kind: 'list', candidates }
 }
@@ -309,6 +309,7 @@ export function parseMindfactorySearch(html: string, finalUrl: string): SearchPa
       url,
       name: url.match(/product_info\.php\/(.+)_\d+\.html$/)?.[1] ?? url,
       mpn: null,
+      mpnOnPage: true,
     })),
   }
 }

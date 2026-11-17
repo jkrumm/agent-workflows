@@ -18,7 +18,7 @@ export interface ShopDeps {
 
 /**
  * `image.read` (vision, generic), the three amazon.de doors (`shop.search`, `shop.item`, `shop.find`), `shop.offers`
- * (idealo.de and geizhals.de offers by part number) and `shop.watch` (one run of the price watch). The doors share one
+ * (idealo.de, geizhals.de and tech-shop offers by part number) and `shop.watch` (one run of the price watch). The doors share one
  * fetcher, so one cache, one pause and one request at a time cover all of them; `shop.find` calls the other capabilities in
  * process, `image.read` for its `--images`.
  */
