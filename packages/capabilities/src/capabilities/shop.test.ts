@@ -27,6 +27,7 @@ function network(routes: Record<string, Reply | Reply[]>) {
   const calls: string[] = []
   const used = new Map<string, number>()
   const deps: WebDeps = {
+    env: {},
     retry: { backoffMs: 0 },
     warn: () => {},
     resolve: async () => [PUBLIC_IP],
