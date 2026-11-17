@@ -313,7 +313,8 @@ export function buildFactoryQueuePrompt(input: FactoryQueueInput, nonce: string)
 export const createFactoryQueue = (deps: LlmDeps) =>
   defineCapability({
     id: 'factory.queue',
-    summary: 'Propose `after` edges and an order for the queued Issues of a repo (route factory.queue)',
+    summary:
+      'Propose `after` edges, edges to take back and an order for the queued Issues of a repo (route factory.queue)',
     input: factoryQueueInput,
     output: factoryQueueOutput,
     // Not served: only the `factory-queue` workflow calls it (no free prompt on the seat).

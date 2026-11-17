@@ -31,7 +31,7 @@ echo '{"repo":"app","issues":[{"id":"issue_12","title":"…","kind":"bug","state
   fourth for one Issue is dropped on its own, with a note; the sound edges stand, as in the factory's own check. In the order, ids that are not queued (a running Issue listed by mistake) are dropped;
   an order that is then not every queued Issue once, or puts a blocker after the Issue that waits for it, or goes against the
   owner's priority becomes `[]`. The part that is sound stands; when nothing survives the answer is the empty one
-  (`edges: [], order: []`). It never reshuffles an order.
+  (`edges: [], drop: [], order: []`). It never reshuffles an order.
 - **A drop is a proposal the factory checks.** The request carries each Issue's `after` list but not who added an edge, so the
   guard only holds a drop to a queued Issue and an edge that Issue shows, once each (the rest goes with a note). The factory
   takes back only the edges it added itself, never one a person stated, and records the removal; the prompt says so. A drop

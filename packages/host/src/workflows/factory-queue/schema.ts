@@ -8,6 +8,6 @@ export const FactoryQueueInput = z.object({
   ),
 })
 
-/** The answer: proposed `after` edges and an order for the queued Issues. Only Issues the request showed; the owner's priority stands. */
+/** The answer: proposed `after` edges, edges to take back and an order for the queued Issues. Only Issues the request showed; the owner's priority stands. */
 export const FactoryQueueOutput = factoryQueueOutput
 export type FactoryQueueOutputValue = z.output<typeof FactoryQueueOutput>
