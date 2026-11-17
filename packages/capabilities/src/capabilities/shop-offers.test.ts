@@ -102,6 +102,17 @@ describe('idealo parsers', () => {
     expect(offers.every((o) => o.totalEur !== null && o.paymentMethods.length > 0)).toBe(true)
   })
 
+  test('every offer keeps its rating where idealo draws a star icon before it, and "Amazon Marketplace" is a marketplace', async () => {
+    const html = (await fixture('idealo-product-cmk')).replace(
+      '&quot;shop_name&quot;:&quot;kaufland.de&quot;',
+      '&quot;shop_name&quot;:&quot;Amazon Marketplace&quot;',
+    )
+    expect(html).toContain('<svg></svg>')
+    const { offers } = parseIdealoProduct(html, IDEALO_CMK)
+    expect(offers.filter((o) => o.rating === null).map((o) => o.shop)).toEqual(['pccomponentes.de'])
+    expect(offers.find((o) => o.shop === 'Amazon Marketplace')).toMatchObject({ marketplace: true, rating: 4.5 })
+  })
+
   test('the product page of the Patriot 2 x 16 GB kit states 2 x 16 GB (32 GB), and that the list is a first page of 28', async () => {
     const { product, offers } = parseIdealoProduct(await fixture('idealo-product-pvv'), IDEALO_PVV)
     expect(product.mpn).toBe('PVV532G600C30K')

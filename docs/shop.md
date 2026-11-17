@@ -112,6 +112,8 @@ An unrecognized layout (no `s-main-slot`, no `#productTitle`) is an upstream err
 | `geizhals-product-cmk` | real, 2026-11-17: JSON-LD cut to the variant, the spec row, and all 9 offers |
 | `robot-check-synthetic` | **synthetic**: no block was served in any probe, so the page is written from the documented shape of Amazon's robot check (`/errors/validateCaptcha`, "Geben Sie die angezeigten Zeichen im Bild ein"). It proves the detector, not Amazon's current markup |
 
+The idealo and geizhals fixtures keep markup the parsers do not read where it sits between two things they do: an `<svg>` is emptied (`<svg></svg>`), never removed. idealo draws a star icon between the rating wrapper and the number, and the first version of the fixtures, which dropped the icon, hid that the rating regex missed every rating on the live page (found by the live probe, fixed in the next commit). A fixture is only worth what its markup shares with the live page, so each is also checked live (§Live probe).
+
 Refresh when the layout shifts: read the pages under the conduct rules above (they apply to fixtures too), trim, apply the sanitization, update the expected values in `shop.test.ts`.
 
 ## Vision
@@ -143,6 +145,6 @@ Prices and ASINs drift; the order is stable only inside the cache window and whi
 
 ## Live probe, 2026-11-17 (offers and history)
 
-The product pages above were read once each in the research Chrome, one request per page. `agw shop offers CMK48GX5M2B5600C40`: idealo lists 11 offers from 564,85 € (it-veith.de, rating 4,7 from 204) to 1.245,07 €; geizhals lists 9 from 770,07 €. The two sites do not list the same shops, which is why the watch reads both. `agw shop offers PVV532G600C30K` answers "2 x 16 GB (32 GB)", 28 offers from 510,90 €. A part number nobody lists is `NOT_FOUND`. `agw shop item B0GGJ9YH2D` answers `seller: "Amazon"`, `soldByAmazon: true`, 929,99 €.
+The product pages above were read once each in the research Chrome, one request per page. `agw shop offers CMK48GX5M2B5600C40`: idealo lists 11 offers from 564,85 € (it-veith.de, rating 4,7 from about 205) to 1.245,07 €; geizhals lists 9 from 770,07 €. The two sites do not list the same shops, which is why the watch reads both. `agw shop offers PVV532G600C30K` answers "2 x 16 GB (32 GB)", 28 offers (20 listed) from 515,89 € total with shipping, among them alternate.de, caseking.de, computeruniverse.net and cyberport.de. `--history 1Y` returned 366 points, low 174,92 €, average 523,88 €, high 740,44 €. A part number nobody lists is `NOT_FOUND`. `agw shop item B0GGJ9YH2D` answers `seller: "Amazon"`, `soldByAmazon: true`, 929,99 €.
 
 Not covered here, filed as follow-up work: direct reads of the tech shops themselves (Alternate, Mindfactory, Caseking, Computeruniverse; issue_2064). For the first watch list neither aggregator lists Alternate, and idealo no Mindfactory.
