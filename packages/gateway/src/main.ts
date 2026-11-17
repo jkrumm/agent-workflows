@@ -44,7 +44,7 @@ function openLedger(config: GatewayConfig): Ledger {
 }
 
 const config = readConfig()
-const logs = createLogShipper({ env: process.env, version: config.version })
+const logs = createLogShipper({ env: process.env, version: config.version, machine: config.machine })
 const logger = logs.wrap(stderrLogger)
 const ledger = openLedger(config)
 const { keys, adminKeys } = await resolveKeys({ registry: config.registry, read: secretsRunReader(), logger })
@@ -56,7 +56,7 @@ for (const pool of reserveAboveCredit(config.registry)) {
   })
 }
 const pools = createPools({ registry: config.registry, keys, meter: ledger })
-const telemetry = createTelemetry({ env: process.env, logger, version: config.version })
+const telemetry = createTelemetry({ env: process.env, logger, version: config.version, machine: config.machine })
 
 const reconciler = new Reconciler({
   registry: config.registry.filter((pool) => pool.enabled),

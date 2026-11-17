@@ -4,6 +4,7 @@ import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto'
 import { resourceFromAttributes } from '@opentelemetry/resources'
 import { BatchSpanProcessor, type ReadableSpan, type SpanExporter, TracerProvider } from '@opentelemetry/sdk-trace'
 import type { Logger } from './log.ts'
+import { resourceAttributes } from './resource.ts'
 
 const SERVICE_NAME = 'agw-gateway'
 
@@ -50,6 +51,8 @@ export function createTelemetry(options: {
   logger: Logger
   /** `service.version`: the deployed sha. */
   version?: string
+  /** `host.name`: the machine (`AGW_MACHINE`). */
+  machine?: string
   /** Replaces the env's exporter (tests). */
   exporter?: SpanExporter
   /** Batch delay. Default 1000 ms. */
@@ -57,10 +60,9 @@ export function createTelemetry(options: {
 }): Telemetry {
   const exporter = options.exporter ?? exporterFor(options.env)
   const provider = new TracerProvider({
-    resource: resourceFromAttributes({
-      'service.name': SERVICE_NAME,
-      ...(options.version ? { 'service.version': options.version } : {}),
-    }),
+    resource: resourceFromAttributes(
+      resourceAttributes({ serviceName: SERVICE_NAME, version: options.version, machine: options.machine }),
+    ),
     spanProcessors:
       exporter === null
         ? []
