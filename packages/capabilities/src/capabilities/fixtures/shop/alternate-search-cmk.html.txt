@@ -1,0 +1,136 @@
+<html><head><title>Ihre Suche nach CMK48GX5M2B5600C40</title></head><body>
+<div class="grid-container listing">
+<a href="/Corsair/DIMM-48-GB-DDR5-5600-2x-24-GB-Dual-Kit-Arbeitsspeicher/html/product/1900210" class="card align-content-center productBox boxCounter campaign-timer-container   " data-key="hash">
+        <div class="container my-3">
+          <div class="row">
+            <div class="col-12">
+              <div class="row gx-2 justify-content-end">
+                <div class="col eyecatcher-container">
+                </div>
+              </div>
+            </div>
+
+            <div class="col col-sm-3 mx-sm-0 my-2 my-sm-0 pr-sm-0 product-image position-relative text-center text-sm-left">
+      <img src="/p/200x200/0/1/Corsair_DIMM_48_GB_DDR5_5600__2x_24_GB__Dual_Kit__Arbeitsspeicher@@1900210_1.jpg" loading="lazy" alt="Corsair DIMM 48 GB DDR5-5600 (2x 24 GB) Dual-Kit, Arbeitsspeicher schwarz, CMK48GX5M2B5600C40, Vengeance, INTEL XMP" class="productPicture img-fluid m-auto  " width="200" height="200" />
+            </div>
+
+            <div class="col-12 col-sm-9">
+              <div class="row h-100">
+                <div class="col-12 col-md-8">
+                  <div class="row">
+
+                    <div class="col">
+                      <div class="row">
+
+                        <div class="col-12">
+                          <div class="product-name font-weight-bold"><span>Corsair</span> DIMM 48 GB DDR5-5600 (2x 24 GB) Dual-Kit, Arbeitsspeicher</div>
+                        </div>
+
+                        <div class="col-12 pb-1">
+                          <span class="product-name-sub">schwarz, CMK48GX5M2B5600C40, Vengeance, INTEL XMP</span>
+                        </div>
+
+                        <div class="col-12 pb-2">
+                          <ul class="product-bullet-list">
+                              <li>Kapazität: 48 GB (2x 24 GB)</li>
+                              <li>Timings: CL40 40-40-77</li>
+                              <li>Standard: DDR5-5600 (PC5-44800)</li>
+                              <li>Profil: INTEL XMP (Version 3.0)</li>
+                          </ul>
+                        </div>
+
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="col-12 col-md-4">
+                  <div class="row flex-md-column justify-content-between align-items-end h-100 last-column">
+                    <div class="col-auto col-md-12 order-3 order-md-1 campaign-timer-price-section">
+                      <div class="row flex-column align-items-end last-column">
+                        <div class="col-12">
+                          <div class="row justify-content-end align-items-center">
+                            <div class="col-auto order-2 pl-0"><span class="price ">€ 730,00</span>
+                            </div>
+                          </div>
+                        </div>
+                          <div class="col-auto delivery-info text-right"><span class="font-weight-bold">Artikel kann derzeit nicht gekauft werden</span>
+                          </div>
+                      </div>
+                    </div>
+                    <div class="col-auto col-md-12 order-1 order-md-3 text-left text-md-right my-md-1">
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </a>
+<a href="/Corsair/DIMM-48-GB-DDR5-5600-2x-24-GB-Dual-Kit-Arbeitsspeicher/html/product/1900209" class="card align-content-center productBox boxCounter campaign-timer-container   " data-key="hash">
+        <div class="container my-3">
+          <div class="row">
+            <div class="col-12">
+              <div class="row gx-2 justify-content-end">
+                <div class="col eyecatcher-container">
+                </div>
+              </div>
+            </div>
+
+            <div class="col col-sm-3 mx-sm-0 my-2 my-sm-0 pr-sm-0 product-image position-relative text-center text-sm-left">
+      <img src="/p/200x200/9/0/Corsair_DIMM_48_GB_DDR5_5600__2x_24_GB__Dual_Kit__Arbeitsspeicher@@1900209_1.jpg" loading="lazy" alt="Corsair DIMM 48 GB DDR5-5600 (2x 24 GB) Dual-Kit, Arbeitsspeicher schwarz, CMH48GX5M2B5600C40, Vengeance RGB, INTEL XMP" class="productPicture img-fluid m-auto  " width="200" height="200" />
+            </div>
+
+            <div class="col-12 col-sm-9">
+              <div class="row h-100">
+                <div class="col-12 col-md-8">
+                  <div class="row">
+
+                    <div class="col">
+                      <div class="row">
+
+                        <div class="col-12">
+                          <div class="product-name font-weight-bold"><span>Corsair</span> DIMM 48 GB DDR5-5600 (2x 24 GB) Dual-Kit, Arbeitsspeicher</div>
+                        </div>
+
+                        <div class="col-12 pb-1">
+                          <span class="product-name-sub">schwarz, CMH48GX5M2B5600C40, Vengeance RGB, INTEL XMP</span>
+                        </div>
+
+                        <div class="col-12 pb-2">
+                          <ul class="product-bullet-list">
+                              <li>Kapazität: 48 GB (2x 24 GB)</li>
+                              <li>Timings: CL40 40-40-77</li>
+                              <li>Standard: DDR5-5600 (PC5-44800)</li>
+                              <li>Profil: INTEL XMP (Version 3.0)</li>
+                          </ul>
+                        </div>
+
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="col-12 col-md-4">
+                  <div class="row flex-md-column justify-content-between align-items-end h-100 last-column">
+                    <div class="col-auto col-md-12 order-3 order-md-1 campaign-timer-price-section">
+                      <div class="row flex-column align-items-end last-column">
+                        <div class="col-12">
+                          <div class="row justify-content-end align-items-center">
+                            <div class="col-auto order-2 pl-0"><span class="price ">€ 769,00</span>
+                            </div>
+                          </div>
+                        </div>
+                          <div class="col-auto delivery-info text-right"><span class="font-weight-bold">Artikel kann derzeit nicht gekauft werden</span>
+                          </div>
+                      </div>
+                    </div>
+                    <div class="col-auto col-md-12 order-1 order-md-3 text-left text-md-right my-md-1">
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </a>
+</div>
+</body></html>

@@ -1,0 +1,6 @@
+<html><head><title>Alle Produkte bei Caseking | günstig online kaufen bei Caseking</title></head><body>
+<script>var view = [{"event":"page_info"},{"page_info":{"shopEnv":"production","shopDomain":"DE","shopLanguage":"de","currency":"EUR","pageType":"search","breadcrumbs":null,"searchResults":0,"isCategorySearch":false,"searchTerm":"ZZQX9999NOPE"}}]</script>
+<div class="page" data-action="Search-Show" data-querystring="q=ZZQX9999NOPE">
+                    Es tut uns leid, aber es wurden keine Ergebnisse gefunden für:
+</div>
+</body></html>

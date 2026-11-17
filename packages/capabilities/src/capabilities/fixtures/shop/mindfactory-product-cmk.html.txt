@@ -1,0 +1,90 @@
+<html><head><meta charset="iso-8859-15"><title>48GB Corsair Vengeance schwarz DDR5-5600 DIMM CL40 Dual Kit - DDR5-5600 (PC5-44800U)</title></head><body>
+<div id="bProductInfo" class="init-dk-lightbox" itemscope="" itemtype="http://schema.org/Product">
+<div class="visible-xs visible-sm" style="padding:0 15px 15px 15px;">
+  <h1>48GB Corsair Vengeance schwarz DDR5-5600 DIMM CL40 Dual Kit</h1>
+  <div class="pshipping shipping2" style="text-align: left;">
+    <a data-target="#defaultModal" class="shipping2" href="https://www.mindfactory.de/popup_lagerstatus_help.php" role="button" data-toggle="modal" data-tooltip="tooltip" data-placement="bottom" title="" data-original-title="Der Artikel ist im Außenlager verfügbar. Lieferung innerhalb 2-3 Werktagen.">
+      Verfügbar
+          </a>
+  </div>
+</div>
+<h1 itemprop="name" class="hidden-xs hidden-sm">48GB Corsair Vengeance schwarz DDR5-5600 DIMM CL40 Dual Kit</h1>
+<span itemprop="brand" itemscope="" itemtype="https://schema.org/Brand" class="itemPropHiddenText"><span itemprop="name">Corsair</span></span>      <span itemprop="sku" content="CMK48GX5M2B5600C40" class="itemPropHiddenText"></span>
+        <span itemprop="gtin8" content="0840006665021" class="itemPropHiddenText"></span>
+    <span itemprop="productID" content="ean:0840006665021" class="itemPropHiddenText"></span>
+      <div class="pshipping shipping2 hidden-xs hidden-sm">
+    <a data-target="#defaultModal" class="shipping2" href="https://www.mindfactory.de/popup_lagerstatus_help.php" role="button" data-toggle="modal" data-tooltip="tooltip" data-placement="bottom" title="" data-original-title="Der Artikel ist im Außenlager verfügbar. Lieferung innerhalb 2-3 Werktagen.">
+      Verfügbar
+          </a>
+  </div>   
+
+      <span itemprop="image" class="itemPropHiddenText">https://image320.macovi.de/images/product_images/320/1483744_0__9087434.jpg</span>
+  
+          <div class="pstars mat5">
+            <span class="reviewcount"><a data-toggle="scroll-tab" href="https://www.mindfactory.de/product_info.php/48GB-Corsair-Vengeance-schwarz-DDR5-5600-DIMM-CL40-Dual-Kit_1483744.html#tBewertungen" title="Bewertungen 48GB Corsair Vengeance schwarz DDR5-5600 DIMM CL40 Dual Kit" class="line">0 Bewertungen</a> 
+            </span>
+          </div>
+  
+
+    	
+	
+	 
+		<div class="mat10"><a href="https://www.mindfactory.de/info_center.php/icID/90/popup/true/js/true#s7"><img src="https://cdn.macovi.de/templates/mindfactory_new/images/lables/163x80_badge_gewaehrleistung.jpg" alt="Gesetzliches Gewährleistungsrecht" class="img-responsive"></a></div>
+	
+				
+  
+
+                                                                
+
+  
+  <div class="row mat10 no-gutters vbottom">
+        <div class="col-xs-6 col-sm-12 col-md-6 text-center">        	
+      <div class="psold">über <span class="pcountsold">50</span> verkauft</div>          
+    </div>
+    
+        <div class="col-xs-6 col-sm-12 col-md-6 text-center visible-lg visible-xs visible-md">        	
+      <div class="psold"><span class="glyphicon glyphicons-basic-52-eye"></span> Beobachter: <span class="pcountsold">57</span></div>          
+    </div>
+    <div class="col-xs-6 col-sm-12 col-md-6 text-center no-pal no-par hidden-lg hidden-xs hidden-md mat10">        	
+      <div class="psold"><span class="glyphicon glyphicons-basic-52-eye"></span> Beobachter: <span class="pcountsold">57</span></div>          
+    </div>
+      </div>
+</div>    
+          
+  	<div class="col-sm-6 col-md-3 color-col-grey" id="priceCol">
+		
+	<span itemprop="offers" itemscope="" itemtype="http://schema.org/Offer">
+		<span itemprop="name" content="48GB Corsair Vengeance schwarz DDR5-5600 DIMM CL40 Dual Kit"></span>
+		<span itemprop="pricecurrency" content="EUR"></span>
+		<span itemprop="price" content="851.89"></span>
+		<span itemprop="itemCondition" content="NewCondition"></span>
+		<span itemprop="seller" content="Mindfactory.de"></span>
+		<link itemprop="availability" href="http://schema.org/InStock">
+	</span>
+	
+					
+		<div class="visible-xs visible-sm clear mat10"></div>
+
+    <div class="pprice">
+      <span class="only">nur</span> <span class="text-currency">€</span>&nbsp;851,89*            
+      
+            
+            
+          </div>
+
+    <div class="inkl_zzgl" style="position:relative;z-index:1;">
+      * inkl. 19% USt zzgl. <a href="https://www.mindfactory.de/info_center.php/icID/11/popup/true/js/true/js/true" class="line" title="Informationen zu unseren Versandkosten" target="_blank">Versandkosten</a>      / <a href="https://www.mindfactory.de/info_center.php/icID/92/popup/true/js/true" class="line" title="Lieferbeschränkungen" target="_blank">Lieferbeschränkungen</a>    </div>
+<p class="mat10">
+              <strong>Artikelnummer</strong> <span class="products-model">9087434</span><span style="margin-left:1em;"></span>
+        <br class="visible-md"><br class="visible-md">
+      
+              <strong>EAN</strong> <span class="product-ean">0840006665021</span>
+                    &nbsp;&nbsp;
+                      	
+        <strong>SKU</strong> <span class="sku-model">CMK48GX5M2B5600C40</span>
+          </p>
+</div>
+<div class="bottomText">
+* Alle hier genannten Preise verstehen sich inkl. 19% USt und zzgl. der Versandkosten in Höhe von mind. € 8,90*. Alle hier genannten Kosten verstehen sich inkl. 19% USt.
+</div>
+</body></html>

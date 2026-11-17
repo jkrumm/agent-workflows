@@ -8,8 +8,15 @@ import { attr, decode, elementEnd, parseCount, parsePrice, textOf } from './shop
 const IDEALO_ORIGIN = 'https://www.idealo.de'
 const GEIZHALS_ORIGIN = 'https://geizhals.de'
 
-export const OFFER_SOURCES = ['idealo', 'geizhals'] as const
+/** The price comparison sites: one product page lists many shops' offers. */
+export const AGGREGATORS = ['idealo', 'geizhals'] as const
+/** The tech shops read on their own pages (`shop-direct-parse.ts`): one product page lists the shop's own offer. */
+export const DIRECT_SHOPS = ['alternate', 'mindfactory', 'caseking'] as const
+export const OFFER_SOURCES = [...AGGREGATORS, ...DIRECT_SHOPS] as const
 export type OfferSource = (typeof OFFER_SOURCES)[number]
+export type DirectShop = (typeof DIRECT_SHOPS)[number]
+export const isDirectShop = (source: string): source is DirectShop =>
+  (DIRECT_SHOPS as readonly string[]).includes(source)
 
 const memorySchema = z.object({
   modules: z.int().min(1),
@@ -77,6 +84,8 @@ export interface SearchCandidate {
   url: string
   name: string
   mpn: string | null
+  /** Words of the card that may be the part number (a subtitle that lists it among other words); one that equals it makes the card a match. */
+  tokens?: string[]
 }
 
 export interface ProductPage {

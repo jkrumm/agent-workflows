@@ -4,6 +4,22 @@ import { CapabilityError, fail } from '../errors.ts'
 import { defineCapability } from '../procedure.ts'
 import { isBlockedError, type ShopFetch } from './shop-fetch.ts'
 import {
+  alternateProductId,
+  alternateSearchUrl,
+  casekingProductId,
+  casekingSearchUrl,
+  mindfactoryProductId,
+  mindfactorySearchUrl,
+  parseAlternateProduct,
+  parseAlternateSearch,
+  parseCasekingProduct,
+  parseCasekingSearch,
+  parseMindfactoryProduct,
+  parseMindfactorySearch,
+} from './shop-direct-parse.ts'
+import {
+  AGGREGATORS,
+  DIRECT_SHOPS,
   geizhalsProductId,
   geizhalsSearchUrl,
   HISTORY_PERIODS,
@@ -25,6 +41,7 @@ import {
   type Product,
   productSchema,
   type ProductPage,
+  type SearchCandidate,
   type SearchPage,
 } from './shop-offers-parse.ts'
 
@@ -48,11 +65,13 @@ const offersInput = z.object({
     .trim()
     .min(1)
     .max(500)
-    .describe('A manufacturer part number, or a product page URL on idealo.de or geizhals.de'),
+    .describe('A manufacturer part number, or a product page URL on one of the sources'),
   source: z
-    .enum([...OFFER_SOURCES, 'all'])
+    .enum([...OFFER_SOURCES, 'aggregators', 'shops', 'all'])
     .default('idealo')
-    .describe('Which comparison site to read: one request per page. `all` reads both; a URL names its own site'),
+    .describe(
+      "Which site to read, one search page and one product page each: idealo, geizhals (price comparison, many shops per page) or alternate, mindfactory, caseking (the shop's own page). `aggregators` reads idealo and geizhals, `shops` the three tech shops, `all` every source; a URL names its own site",
+    ),
   history: z
     .enum(HISTORY_PERIODS)
     .optional()
@@ -84,6 +103,24 @@ const SITES = {
     parseProduct: parseGeizhalsProduct,
     productId: geizhalsProductId,
   },
+  alternate: {
+    searchUrl: alternateSearchUrl,
+    parseSearch: parseAlternateSearch,
+    parseProduct: parseAlternateProduct,
+    productId: alternateProductId,
+  },
+  mindfactory: {
+    searchUrl: mindfactorySearchUrl,
+    parseSearch: parseMindfactorySearch,
+    parseProduct: parseMindfactoryProduct,
+    productId: mindfactoryProductId,
+  },
+  caseking: {
+    searchUrl: casekingSearchUrl,
+    parseSearch: parseCasekingSearch,
+    parseProduct: parseCasekingProduct,
+    productId: casekingProductId,
+  },
 } as const
 
 const cheapestFirst = (a: Offer, b: Offer) =>
@@ -94,7 +131,10 @@ const isUrl = (ref: string) => /^https?:\/\//i.test(ref)
 /** The site a product page URL belongs to, or INVALID_INPUT. */
 function sourceOfUrl(ref: string): OfferSource {
   for (const source of OFFER_SOURCES) if (SITES[source].productId(ref)) return source
-  throw fail('INVALID_INPUT', `shop.offers: not an idealo.de or geizhals.de product page URL: ${ref.slice(0, 120)}`)
+  throw fail(
+    'INVALID_INPUT',
+    `shop.offers: not a product page URL of ${OFFER_SOURCES.join(', ')}: ${ref.slice(0, 120)}`,
+  )
 }
 
 const notFound = (message: string) => fail('NOT_FOUND', `shop.offers: ${message}`)
@@ -141,8 +181,13 @@ async function locate(shop: ShopFetch, args: ReadArgs, ctx: PageCtx): Promise<{ 
   }
   if (search.kind === 'product') return { url: search.page.product.url, landed: search.page }
   const wanted = normMpn(args.ref)
-  const exact = search.candidates.find((c) => c.mpn !== null && normMpn(c.mpn) === wanted)
+  const named = (c: SearchCandidate) => [c.mpn, ...(c.tokens ?? [])].some((word) => word && normMpn(word) === wanted)
+  const exact = search.candidates.find(named)
   if (exact) return { url: exact.url }
+  // A shop whose search cards carry no part number (caseking): a search with exactly one hit is read, and the product page's
+  // own part number, checked in `readSource`, decides. Several hits are not read one by one.
+  const [only] = search.candidates
+  if (search.candidates.length === 1 && only!.mpn === null && only!.tokens === undefined) return { url: only!.url }
   const near = search.candidates
     .slice(0, 5)
     .map((c) => c.mpn ?? c.name)
@@ -237,7 +282,7 @@ function renderOffers(results: SourceResult[]): string {
         `${o.shop ?? '-'}${o.marketplace ? ' (marketplace)' : ''}`,
         o.rating === null ? '-' : `${o.rating} (${o.ratingCount ?? '?'})`,
         `${o.paymentMethods.join('/') || '-'}${o.prepaymentOnly ? ' [prepayment only]' : ''}`,
-        clip(`${o.delivery ?? '-'}${o.inStock === false ? ' [unavailable]' : ''}`, 60),
+        `${clip(o.delivery ?? '-', 60)}${o.inStock === false ? ' [unavailable]' : ''}`,
       ])
       const header = ['Total', 'Item', 'Ship', 'Shop', 'Rating', 'Payment', 'Delivery']
       const widths = header.map((h, c) => Math.max(h.length, ...rows.map((row) => row[c]!.length)))
@@ -255,14 +300,14 @@ function renderOffers(results: SourceResult[]): string {
 }
 
 /**
- * `shop.offers`: the offers for ONE exact product from idealo.de and/or geizhals.de, parsed in code (no model). Both
- * sites turn a plain client away, so every page is read in the research Chrome under the shop conduct.
+ * `shop.offers`: the offers for ONE exact product from idealo.de, geizhals.de and the tech shops, parsed in code (no
+ * model). Every page is read under the shop conduct, in the research Chrome where the host turns a plain client away.
  */
 export const createShopOffers = (shop: ShopFetch) =>
   defineCapability({
     id: 'shop.offers',
     summary:
-      'Offers for one exact product by part number or product URL from idealo.de and geizhals.de: total with shipping, shop, rating, payment, delivery, memory module count and size, optional price history; parsed in code, no model',
+      'Offers for one exact product by part number or product URL from idealo.de and geizhals.de (many shops per page) and from the tech shops Alternate, Mindfactory and Caseking (their own price): total with shipping, shop, rating, payment, delivery, memory module count and size, optional idealo price history; parsed in code, no model',
     input: offersInput,
     output: offersOutput,
     cli: { positional: ['product'], defaultFormat: 'plain', plainField: 'text' },
@@ -271,7 +316,11 @@ export const createShopOffers = (shop: ShopFetch) =>
         ? [sourceOfUrl(product)]
         : source === 'all'
           ? [...OFFER_SOURCES]
-          : [source]
+          : source === 'aggregators'
+            ? [...AGGREGATORS]
+            : source === 'shops'
+              ? [...DIRECT_SHOPS]
+              : [source]
       if (history && !sources.includes('idealo'))
         throw fail(
           'INVALID_INPUT',

@@ -142,9 +142,9 @@ describe('when a price is worth a message', () => {
 const AMAZON = 'https://www.amazon.de/dp/B0GGJ9YH2D'
 const WATCH = {
   products: [
-    { mpn: 'CMK48GX5M2B5600C40', label: 'Corsair 2x24 5600', ceilingEur: 600 },
-    { mpn: 'PVV532G600C30K', label: 'Patriot 2x16 6000', ceilingEur: 400 },
-    { mpn: 'CMG64GX5M2D6000Z40', label: 'Corsair 2x32 6000', ceilingEur: 850, asin: 'B0GGJ9YH2D' },
+    { mpn: 'CMK48GX5M2B5600C40', label: 'Corsair 2x24 5600', ceilingEur: 600, shops: [] },
+    { mpn: 'PVV532G600C30K', label: 'Patriot 2x16 6000', ceilingEur: 400, shops: [] },
+    { mpn: 'CMG64GX5M2D6000Z40', label: 'Corsair 2x32 6000', ceilingEur: 850, asin: 'B0GGJ9YH2D', shops: [] },
   ],
 }
 const NTFY = { NTFY_URL: 'https://ntfy.example.com/', NTFY_TOKEN: 'token-1' }
@@ -282,7 +282,7 @@ describe('shop.watch', () => {
     const first = await watchRig()
     await first.watch.call({}, first.options)
     const stored = () => JSON.parse(readFileSync(join(first.dir, 'state.json'), 'utf8')).CMK48GX5M2B5600C40
-    expect(stored().idealoUrl).toBe(IDEALO_CMK)
+    expect(stored().pageUrls.idealo).toBe(IDEALO_CMK)
     // The stored idealo page answers 404 now (geizhals still answers): the run records it and forgets the URL.
     const next = rig({
       pages: {
@@ -294,8 +294,8 @@ describe('shop.watch', () => {
     })
     const out = await next.watch.call({}, next.options)
     expect(out.rows[0]!.errors[0]!.message).toContain('not found (HTTP 404)')
-    expect(stored().idealoUrl).toBeNull()
-    expect(stored().geizhalsUrl).toBe(GEIZHALS_CMK)
+    expect(stored().pageUrls.idealo).toBeNull()
+    expect(stored().pageUrls.geizhals).toBe(GEIZHALS_CMK)
   })
 
   test('the scheduled call and the make target pass --commit: a mutating command is refused off a TTY without it', () => {
