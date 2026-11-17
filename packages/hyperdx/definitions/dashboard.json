@@ -156,7 +156,7 @@
             "aggFn": "count",
             "alias": "Failed runs",
             "valueExpression": "",
-            "where": "ServiceName IN ('agw', 'agw-audio') AND SpanName LIKE 'agw.run %' AND SpanAttributes['agw.run.id'] = SpanAttributes['agw.run.root_id'] AND SpanAttributes['agw.purpose'] NOT IN ('verify', 'eval') AND StatusCode = 'Error' AND SpanAttributes['agw.workflow.id'] NOT LIKE 'cap.web.%'",
+            "where": "ServiceName IN ('agw', 'agw-audio') AND SpanName LIKE 'agw.run %' AND SpanAttributes['agw.run.id'] = SpanAttributes['agw.run.root_id'] AND SpanAttributes['agw.purpose'] NOT IN ('verify', 'eval') AND StatusCode = 'Error' AND SpanAttributes['agw.workflow.id'] NOT LIKE 'cap.web.%' AND SpanAttributes['agw.error.message'] NOT LIKE '%\"code\":\"NOT_FOUND\"%'",
             "whereLanguage": "sql"
           }
         ],

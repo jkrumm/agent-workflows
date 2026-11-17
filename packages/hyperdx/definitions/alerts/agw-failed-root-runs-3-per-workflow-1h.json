@@ -5,7 +5,7 @@
   "interval": "1h",
   "threshold": 3,
   "thresholdType": "above",
-  "message": "A workflow had 3 or more failed root runs in an hour (verify and eval runs excluded). The group names the workflow; the dashboard's reason table and `agw runs` show why. Definition: packages/hyperdx/README.md.",
+  "message": "A workflow had 3 or more failed root runs in an hour (verify and eval runs excluded, and a capability's own NOT_FOUND answer: a lookup that finds nothing is not a failure). The group names the workflow; the dashboard's reason table and `agw runs` show why. Definition: packages/hyperdx/README.md.",
   "tags": ["agw"],
   "channels": [{ "type": "webhook", "webhook": "Factory door" }]
 }
