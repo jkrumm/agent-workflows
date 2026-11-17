@@ -26,7 +26,7 @@ The `agw` objects there are a copy; this directory is the one that gets applied.
 | Alert | Tile | Interval | Fires when |
 |-|-|-|-|
 | gateway silent | Gateway spans / 1 h | 1h | fewer than 1 `agw-gateway` span |
-| failed runs | Failed root runs per workflow | 1h | a workflow (not `cap.web.*`) has >= 3 failed root runs |
+| failed runs | Failed root runs per workflow | 1h | a workflow (not `cap.web.*`) has >= 3 failed root runs, a `NOT_FOUND` answer not counted |
 | failed web runs | Failed root runs per web capability | 1h | a `cap.web.*` capability has >= 20 failed root runs |
 | gateway errors | Gateway error spans | 15m | >= 5 error spans, caller `modelpick` excluded |
 | error logs | Error logs / 15 min | 15m | >= 3 error-level logs of `agw`, `agw-gateway`, `agw-audio` |
@@ -34,7 +34,7 @@ The `agw` objects there are a copy; this directory is the one that gets applied.
 | dead workflow | Workflows with every run failed in 6 h | 1h | a workflow with >= 3 root runs in 6 h failed every one |
 
 A failed root run is `agw.run` span with `agw.run.id = agw.run.root_id`, `StatusCode = 'Error'`, purpose not `verify`
-or `eval` (the deploy's probes fail on purpose: 136 of the 14 days' failures are `door.speech` probes). The cost and
+or `eval` (the deploy's probes fail on purpose: 136 of the 14 days' failures are `door.speech` probes). A run that ends in a capability's `NOT_FOUND` (`"code":"NOT_FOUND"` in `agw.error.message`) is not a failed run of the per-workflow tile either: asking for a part number or package nobody lists is the lookup's answer, not a breakage (2026-11-17: 23 `cap.shop.offers` runs in four minutes, every one "idealo has no product with part number …"). The reason table still lists them, and the dead-workflow alert still fires when every run of a workflow fails, whatever the reason, so a parser that stopped finding anything is not hidden. The cost and
 dead-workflow tiles are raw SQL with a fixed window anchored at `{endDateMilliseconds}`, so they hold the same number
 on the dashboard and in the alert. To silence one: `agw hdx write clickstack_save_alert` with its id and a changed
 threshold, or delete the file and the live alert; `agw hdx query clickstack_get_alert '{}'` finds the id.
@@ -51,7 +51,7 @@ Measured 2026-11-16 on prod spans, 2026-11-02 to 2026-11-16, each window evaluat
 | Alert | Would have fired | Not otherwise |
 |-|-|-|
 | gateway silent | never since the gateway first exported (the hourly minimum is 11 spans, p5 is 12); the empty windows are 2026-11-02 00:00 to 08:00, before it existed | the 2026-11-15 07:00 gap is 15 minutes: it does not fire, by design (a 30 minute window false-fires on two quiet buckets of 4.4 days) |
-| failed runs | 2026-11-13 09:00, `factory.digest`, 3 of 14 runs failed (a real cluster) | the busiest other hour is 2 (`cap.hdx.rest`, 2026-11-16 07:00) |
+| failed runs | 2026-11-13 09:00, `factory.digest`, 3 of 14 runs failed (a real cluster); 2026-11-17 19:00, `cap.shop.offers`, 22 NOT_FOUND runs, which the `NOT_FOUND` exclusion (measured 2026-11-17) removes: those 23 are the only NOT_FOUND root failures of the 15 days | the busiest other hour is 2 (`cap.hdx.rest`, 2026-11-16 07:00) |
 | failed web runs | 2026-11-14 16:00 (`cap.web.read` 61, `cap.web.fetch` 22) and 17:00 (59, 24) | 15:00 on 11-14 is 10 and 8; the highest hour on any other day is 10 (`cap.web.fetch`, 11-07 00:00): 2x margin |
 | gateway errors | six 15 min windows: 11-02 09:00 (6), 09:15 (5), 09:45 (6), 14:15 (15); 11-03 09:45 (5); 11-13 09:45 (10, caller `agw`, `/anthropic/v1/messages`, the hour `factory.digest` failed) | no window on any other day; 23 non-probe errors in 7 days, none clustered |
 | error logs | never: the stderr files of the 14 days hold 0 error-level lines (133 warn, 272 info) | shipping is live since the 2026-11-16 deploy: no history in ClickStack yet |
