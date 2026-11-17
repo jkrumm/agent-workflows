@@ -1,5 +1,3 @@
-import { HANDOFF_INTERVAL_MS, type OwnerPage } from './handoff.ts'
-
 /** A page as a real browser rendered it. `challenge` is a bot wall that did not clear within the settle time. */
 export interface BrowserPage {
   finalUrl: string
@@ -55,8 +53,8 @@ const SETTLE_MS = 20_000
  * the challenge is gone and the page passes the rendered test; the page then gets `SETTLE_MS` of its own to hydrate.
  *
  * Hard limit: agw never sends input to a challenge widget and never answers a "verify you are human" check (no `Input.*`
- * command is dispatched to a page, a test pins it). An interactive check never clears by itself, and passing it is the owner's,
- * through the handoff (`handoff.ts`). No signal that tells an interactive check from one still working was proven reliable
+ * command is dispatched to a page, a test pins it). An interactive check never clears by itself, and agw does not hand it to
+ * the owner: the read ends blocked (`needs-human`) and the caller goes on with other sources. No signal that tells an interactive check from one still working was proven reliable
  * (the widget is a cross-origin frame outside the tab's session), so an interactive check costs this whole limit.
  */
 const CHALLENGE_MS = 45_000
@@ -85,13 +83,6 @@ const MAX_HTML_CHARS = 6_000_000
 const DEFAULT_MAX_TABS = 8
 const MIN_TABS = 1
 const MAX_TABS_LIMIT = 16
-/**
- * Tabs kept open on a challenged page for the owner, across all hosts. They do not count against the tab cap and hold no
- * slot of it, and they do not block a read of their host (it opens a tab of its own; a pass releases the kept one, a second
- * keep of the host replaces it). The true ceiling is therefore the cap plus this: 11 tabs, about 1.3 GiB, by default.
- */
-const MAX_KEPT = 3
-
 /** The tab cap from `AGW_BROWSER_MAX_TABS`: unset or empty is the default; anything but an integer from 1 to 16 is refused, naming the variable. */
 export function parseMaxTabs(raw: string | undefined): number {
   const value = raw?.trim()
@@ -212,7 +203,6 @@ class Session {
   private readonly pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>()
   private readonly handlers = new Map<string, ((params: unknown) => void)[]>()
   private readonly closers = new Set<() => void>()
-  private readonly endHandlers: (() => void)[] = []
   private constructor(private readonly ws: WebSocket) {
     ws.addEventListener('message', (event) => {
       let message: Message
@@ -233,13 +223,7 @@ class Session {
     ws.addEventListener('close', () => {
       this.failPending('the browser closed the tab')
       for (const done of this.closers) done()
-      for (const ended of this.endHandlers) ended()
     })
-  }
-
-  /** Runs when the WebSocket closes, by `close()` or because the tab went away. */
-  onEnd(handler: () => void) {
-    this.endHandlers.push(handler)
   }
 
   /** Rejects with `signal.reason` when the signal fires first: a handshake nobody answers must not hold its tab slot forever. */
@@ -338,58 +322,6 @@ type Received = { type?: string; frameId?: string; response: { status: number; r
 const NO_WEBSOCKET =
   'Object.defineProperty(window, "WebSocket", { value: function () { throw new Error("WebSocket is disabled") }, configurable: false })'
 
-/**
- * Script for a tab kept open for a person to click in: it opens no second window. A popup is a tab of the same Chrome
- * with no guard of its own, so `window.open` is closed off for good; a link, area, form or submit button whose target is
- * a new window (its own `target` or `formtarget`, or the document's `<base target>`) is turned to the page's own window
- * before the click or submit acts; a link clicked with a modifier (new tab) or a button other than the first does
- * nothing. What it cannot reach: the browser's own context menu and frames the browser runs in another process.
- * Takes the page's `window` and `document`.
- */
-export const NO_POPUPS = `(function (window, document) {
-  Object.defineProperty(window, "open", { value: function () { return null }, configurable: false, writable: false })
-  var SELF = /^_(self|top|parent)$/i
-  var own = function (el, attribute) {
-    var target = el.getAttribute(attribute)
-    if (target === null && attribute === "target") {
-      var base = document.querySelector ? document.querySelector("base[target]") : null
-      target = base ? base.getAttribute("target") : null
-    }
-    if (target && !SELF.test(target)) el.setAttribute(attribute, "_self")
-  }
-  var act = function (event) {
-    // The element clicked, also inside a shadow root (where event.target is the shadow host).
-    var node = (event.composedPath ? event.composedPath()[0] : null) || event.target
-    if (!node || !node.closest) return
-    var link = node.closest("a[href], area[href]")
-    if (link) {
-      if (event.type === "auxclick" || event.button > 0 || event.ctrlKey || event.metaKey || event.shiftKey) {
-        event.preventDefault()
-        return
-      }
-      own(link, "target")
-    }
-    var submitter = node.closest("button[formtarget], input[formtarget]")
-    if (submitter) own(submitter, "formtarget")
-    var form = node.closest("form")
-    if (form) own(form, "target")
-  }
-  document.addEventListener("click", act, true)
-  document.addEventListener("auxclick", act, true)
-  document.addEventListener("submit", function (event) {
-    if (event.target && event.target.getAttribute) own(event.target, "target")
-    if (event.submitter && event.submitter.getAttribute) own(event.submitter, "formtarget")
-  }, true)
-  if (window.HTMLFormElement) {
-    var submit = window.HTMLFormElement.prototype.submit
-    Object.defineProperty(window.HTMLFormElement.prototype, "submit", {
-      value: function () { own(this, "target"); return submit.call(this) },
-      configurable: false,
-      writable: false,
-    })
-  }
-})(window, document)`
-
 /** A new blank tab of the browser: its id and the DevTools address of its page. */
 async function openTab(base: string, signal: AbortSignal): Promise<{ id: string; webSocketDebuggerUrl: string }> {
   try {
@@ -436,7 +368,7 @@ interface Guard {
 async function guardPage(
   session: Session,
   policy: RequestPolicy,
-  options: { onRefused?: () => void; noPopups?: boolean } = {},
+  options: { onRefused?: () => void } = {},
 ): Promise<Guard> {
   let refused = false
   let mainFrame = ''
@@ -491,7 +423,6 @@ async function guardPage(
   await session.send('Page.enable')
   await session.send('Network.enable')
   await session.send('Page.addScriptToEvaluateOnNewDocument', { source: NO_WEBSOCKET })
-  if (options.noPopups) await session.send('Page.addScriptToEvaluateOnNewDocument', { source: NO_POPUPS })
   const tree = await session.send<{ frameTree?: { frame?: { id?: string } } }>('Page.getFrameTree')
   mainFrame = tree.frameTree?.frame?.id ?? ''
   await session.send('Fetch.enable', { patterns: [{ urlPattern: '*' }] })
@@ -625,109 +556,6 @@ export async function readViaCdp(
   return options.challengedHost || challenging.has(host) ? withHost(host, signal, slotted) : slotted()
 }
 
-/** A tab kept on a challenged page: its guarding session stays attached until the tab is dropped. */
-interface Kept {
-  base: string
-  id: string
-  session: Session
-  timer: ReturnType<typeof setTimeout>
-}
-/** One per host, oldest first (insertion order). */
-const kept = new Map<string, Kept>()
-
-/** Closes the kept tab of `host`, if there is one. The map entry goes at once, the browser call is awaited. */
-async function dropKept(host: string): Promise<void> {
-  const entry = kept.get(host)
-  if (!entry) return
-  kept.delete(host)
-  clearTimeout(entry.timer)
-  entry.session.close()
-  await closeTab(entry.base, entry.id)
-}
-
-/** Closes every kept tab (tests, shutdown). */
-export const dropAllKept = async (): Promise<void> => {
-  await Promise.all([...kept.keys()].map(dropKept))
-}
-
-/** The hosts that have a kept tab right now. */
-export const keptHosts = (): string[] => [...kept.keys()]
-
-/**
- * Keeps the page the owner is asked to solve on screen: `url` in a tab of its own, brought to the front, and left
- * open until `dropKept` (a later read of the host passed, `keepMs` ran out, the page was refused, the owner closed it).
- * A kept tab has no read to ride along on, so the request guard stays attached to its session for as long as the tab is
- * kept: every request the page makes while the owner clicks through the wall (and the document it navigates to) is vetted
- * by the same `policy` as in a read, and a refused document closes the tab. The guard covers this tab only: a popup
- * would be a tab of the same Chrome with none, so the page gets `NO_POPUPS` (no `window.open`; a link, form or submit button aimed
- * at a new window, by its own target or `<base target>`, turns to the page's own; a new-tab click does nothing). Frames the browser runs in another process (cross-origin iframes, the captcha
- * widget) are outside this session and its scripts, as they are in a read. One tab per host (a second keep replaces
- * the first) and `MAX_KEPT` overall (the oldest goes). A tab that cannot be kept is closed and the failure thrown.
- */
-export async function keepViaCdp(
-  base: string,
-  url: string,
-  signal: AbortSignal,
-  policy: RequestPolicy,
-  timing: { keepMs?: number; openMs?: number } = {},
-): Promise<void> {
-  const host = new URL(url).hostname
-  const tab = await openTab(base, signal)
-  let session: Session | undefined
-  try {
-    const opening = within(signal, timing.openMs ?? TAB_REQUEST_MS)
-    session = await Session.open(tab.webSocketDebuggerUrl, opening)
-    const opened = session
-    const guard = await guardPage(opened, policy, {
-      noPopups: true,
-      onRefused: () => {
-        if (kept.get(host)?.session === opened) void dropKept(host)
-      },
-    })
-    await guard.navigate(url)
-    if (guard.refused) throw new BrowserRefused('the page leads to a non-public address')
-    await opened.send('Page.bringToFront')
-    signal.throwIfAborted()
-  } catch (error) {
-    session?.close()
-    await closeTab(base, tab.id)
-    throw error
-  }
-  const live = session
-  const stale: Promise<void>[] = []
-  if (kept.has(host)) stale.push(dropKept(host))
-  while (kept.size >= MAX_KEPT) stale.push(dropKept(kept.keys().next().value!))
-  const timer = setTimeout(() => void dropKept(host), timing.keepMs ?? HANDOFF_INTERVAL_MS)
-  timer.unref?.()
-  kept.set(host, { base, id: tab.id, session: live, timer })
-  // The owner closing the tab ends the session: forget it, unless a newer tab of the host has taken its place.
-  live.onEnd(() => {
-    const entry = kept.get(host)
-    if (entry?.session !== live) return
-    kept.delete(host)
-    clearTimeout(entry.timer)
-  })
-  await Promise.all(stale)
-}
-
-/** The kept tabs of a browser the process reads through: kept for the owner, released once a read of the host passes. */
-export interface PageHold {
-  /** Puts `url` on screen in the browser for the owner (see `keepViaCdp`). Throws when the page cannot be kept. */
-  keep(url: string, signal: AbortSignal): Promise<void>
-  /** Closes the kept tab of `host`: a read of it passed without a challenge. A host with no kept tab is a no-op. */
-  release(host: string): Promise<void>
-}
-
-/** The owner's view of one challenged page for `askOnce`: opened when he is asked, closed again if the ask did not go out. */
-export const ownerPage = (hold: PageHold | undefined, url: string, signal: AbortSignal): OwnerPage | undefined =>
-  hold && {
-    open: async () => {
-      await hold.keep(url, signal)
-      return true
-    },
-    close: () => hold.release(new URL(url).hostname),
-  }
-
 /** The browser reader `AGW_BROWSER_CDP_URL` configures: loopback http only (the endpoint is unauthenticated). */
 export function browserFromEnv(
   endpoint: string | undefined,
@@ -737,16 +565,6 @@ export function browserFromEnv(
   const base = loopbackBase(endpoint)
   if (!base) return undefined
   return (url, signal, options) => readViaCdp(base, url, signal, policy, { maxTabs }, options)
-}
-
-/** The kept tabs of the browser `AGW_BROWSER_CDP_URL` configures; the same loopback rule as `browserFromEnv`. */
-export function pageHoldFromEnv(endpoint: string | undefined, policy: RequestPolicy): PageHold | undefined {
-  const base = loopbackBase(endpoint)
-  if (!base) return undefined
-  return {
-    keep: (url, signal) => keepViaCdp(base, url, signal, policy),
-    release: dropKept,
-  }
 }
 
 function loopbackBase(endpoint: string | undefined): string | undefined {

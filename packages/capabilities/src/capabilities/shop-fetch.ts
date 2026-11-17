@@ -1,15 +1,14 @@
 import { fail } from '../errors.ts'
-import { BrowserFailure, BrowserRefused, ownerPage } from '../web/browser.ts'
+import { BrowserFailure, BrowserRefused } from '../web/browser.ts'
 import { type ResolvedWebDeps, webUsage, within } from '../web/deps.ts'
-import { askOnce } from '../web/handoff.ts'
 import { assertPublicUrl, publicOnlyPolicy } from '../web/ssrf.ts'
 import { AMAZON_ORIGIN, type BlockKind, detectBlock } from './shop-parse.ts'
 
 // The one place the shop doors touch the network. Conduct, in code (docs/shop.md §Conduct): one request at a time, a
 // jittered pause of 2-5 s between two page fetches, a search kept 1 h and an item page 24 h, a 429, captcha or sign-in
 // wall ends the call with `blocked (<reason>)`: no retry, no second identity, no proxy, no login, no solving. A robot
-// check alone gets one read in the headed research Chrome, and when that meets the check too the owner is asked once
-// (the agent never solves it). After a wall the process refuses further page fetches for a cooldown, so a loop of calls
+// check alone gets one read in the headed research Chrome, and when that meets the check too the call ends blocked
+// (nobody solves it: the owner is not asked). After a wall the process refuses further page fetches for a cooldown, so a loop of calls
 // cannot lean on it.
 
 export const SEARCH_TTL_MS = 3_600_000
@@ -142,8 +141,8 @@ export function createShopFetch(web: ResolvedWebDeps, pace: ShopPace = {}) {
 
   /**
    * The robot-checked page read once in the research Chrome: its HTML, or `undefined` when no browser is configured.
-   * A challenge the browser meets too asks the owner (once per host and half hour, the page kept open in the research
-   * Chrome for him) and ends the call; the agent solves nothing. A read that passes closes the tab kept for its host. A browser that fails or is refused leaves the original wall standing.
+   * A challenge the browser meets too ends the call as blocked (`bot-protection`): the owner is not asked and the agent
+   * solves nothing. A browser that fails or is refused leaves the original wall standing.
    */
   async function readInBrowser(
     key: string,
@@ -174,22 +173,8 @@ export function createShopFetch(web: ResolvedWebDeps, pace: ShopPace = {}) {
     const wall = detectBlock({ status: 200, html, finalUrl })
     if (wall === 'login-required') throw blocked(wall, 'the shop asks for a sign-in')
     if (page.challenge || wall) {
-      const asked = await askOnce(
-        web.handoff,
-        new URL(key).hostname,
-        now(),
-        ownerPage(web.pageHold(policy), key, ctx.signal),
-      )
-      throw blocked(
-        'bot-protection',
-        `robot check on ${label} in the research Chrome too (needs-human); ${asked ? 'the owner was asked to solve it' : 'the owner was not asked again (asked recently or no handoff)'}`,
-      )
+      throw blocked('bot-protection', `robot check on ${label} in the research Chrome too (needs-human)`)
     }
-    // The page passed: a tab kept for the owner on this host is no longer needed.
-    void web
-      .pageHold(policy)
-      ?.release(new URL(key).hostname)
-      .catch(() => undefined)
     return html
   }
 
