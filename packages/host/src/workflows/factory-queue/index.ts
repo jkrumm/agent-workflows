@@ -1,4 +1,4 @@
-import { guardQueue, queueNone } from '@agent-workflows/capabilities'
+import { factoryQueueOutput, guardQueue, queueNone } from '@agent-workflows/capabilities'
 import { Cancelled, defineWorkflow, InfraError, StepFailed } from '@agent-workflows/runtime'
 import type { HostWorkflow } from '../../operations.ts'
 import type { HostRegistry } from '../index.ts'
@@ -29,8 +29,9 @@ export function createFactoryQueue(deps: { registry: QueueCaller }): HostWorkflo
         const answer = await ctx.step('queue', ({ callContext }) =>
           deps.registry.call('factory.queue', queue, callContext),
         )
-        // Outside the step: an answer journaled before the guard existed is held to it on replay too.
-        return guardQueue(answer, queue)
+        // Outside the step: an answer journaled before the guard existed is held to it on replay too, and parsed again so a
+        // journaled answer from before a field existed (no `drop`) takes the field's default; a replayed step is not re-parsed.
+        return guardQueue(factoryQueueOutput.parse(answer), queue)
       } catch (error) {
         // A cancel, a shutdown and an infrastructure failure belong to the runtime, not to the answer.
         if (error instanceof Cancelled || error instanceof InfraError || ctx.signal.aborted) throw error

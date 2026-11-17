@@ -21,6 +21,8 @@ const promptOf = (request: { body: Record<string, unknown> } | undefined) =>
 
 let t: TestHost
 let broken: Error | null = null
+/** An answer the registry returns as is, as a step journaled before a field existed replays. */
+let replayed: unknown = null
 beforeAll(async () => {
   const iu = startFakeGateway({ messages: () => messageResponse(JSON.stringify(output), tokens) })
   t = await startTestHost({
@@ -30,7 +32,11 @@ beforeAll(async () => {
       createFactoryQueue({
         registry: {
           call: (...args: unknown[]) =>
-            broken ? Promise.reject(broken) : Reflect.apply(t.registry.call, t.registry, args),
+            broken
+              ? Promise.reject(broken)
+              : replayed
+                ? Promise.resolve(replayed)
+                : Reflect.apply(t.registry.call, t.registry, args),
         } as never,
       }),
     ],
@@ -288,6 +294,20 @@ describe('guardQueue', () => {
     refused({ order: ['issue_21', 'issue_22', 'issue_15', 'issue_20'] }, 'priority')
     const edges = [edge('issue_22', 'issue_21')]
     expect(guard({ edges, order: ['issue_21', 'issue_22', 'issue_15', 'issue_20'] }).order[0]).toBe('issue_21')
+  })
+})
+
+describe('replay', () => {
+  test('an answer journaled without drop takes the default, its edges and order stand', async () => {
+    const { drop: _drop, ...older } = output
+    replayed = older
+    try {
+      const { status, body } = await run()
+      expect(status).toBe(200)
+      expect(body.output).toEqual(output)
+    } finally {
+      replayed = null
+    }
   })
 })
 
