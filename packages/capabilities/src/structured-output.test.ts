@@ -10,11 +10,6 @@ import { isStrictCompatible } from './transports/index.ts'
 // silently turn structured output off for that capability; this fails instead.
 const CASES: { capability: string; route: RouteId; input: Record<string, unknown> }[] = [
   {
-    capability: 'factory.classify',
-    route: 'factory.classify',
-    input: { title: 't', facts: 'f', repo: 'argo', source: 'kuma', projects: ['argo'] },
-  },
-  {
     capability: 'factory.ask',
     route: 'factory.ask',
     input: { question: 'q', options: ['a', 'b'], default: 'a', facts: 'f', plan: 'p', repo: 'argo' },

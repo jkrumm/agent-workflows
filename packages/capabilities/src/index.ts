@@ -135,20 +135,7 @@ export {
   type FactoryTriageInput,
   type FactoryTriageOutput,
 } from './capabilities/factory-triage.ts'
-// The `factory-classify` workflow shares the classify seat's vocabulary and input limits.
-export {
-  CLASSES,
-  EFFORTS,
-  factoryClassifyInput,
-  floorIncident,
-  factoryClassifyOutput,
-  identifier,
-  KINDS,
-  SIZES,
-  TIERS,
-  type FactoryClassifyInput,
-  type FactoryClassifyOutput,
-} from './capabilities/factory-classify.ts'
+export { identifier } from './capabilities/identifier.ts'
 // `prose` shares its prompt vocabulary and fence with the host's writer brief instead of keeping copies.
 export {
   briefBlock,

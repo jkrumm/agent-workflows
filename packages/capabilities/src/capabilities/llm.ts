@@ -2,7 +2,6 @@ import type { LlmDeps } from '../llm/model-call.ts'
 import { createDecide } from './decide.ts'
 import { createDigest } from './digest.ts'
 import { createFactoryAsk } from './factory-ask.ts'
-import { createFactoryClassify } from './factory-classify.ts'
 import { createFactoryDigest } from './factory-digest.ts'
 import { createFactoryErrand } from './factory-errand.ts'
 import { createFactoryErrandNeeded } from './factory-errand-needed.ts'
@@ -31,7 +30,6 @@ export function createLlmCapabilities(deps: LlmDeps) {
     createProseWrite(deps),
     createNarrativeCompose(deps),
     createOverviewClassify(deps),
-    createFactoryClassify(deps),
     createFactoryAsk(deps),
     createFactorySteward(deps),
     createFactoryQueue(deps),
