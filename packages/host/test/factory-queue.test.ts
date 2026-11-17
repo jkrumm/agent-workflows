@@ -139,7 +139,7 @@ describe('guardQueue', () => {
     expect(result).toMatchObject(none)
     expect(result.reason).toContain(why)
   }
-  /** The edges are refused as a set; the order is `[]` here, so nothing survives. */
+  /** Every edge is refused; the order is `[]` here, so nothing survives. */
   const edgesRefused = (edges: ReturnType<typeof edge>[], why: string) => refused({ edges }, why)
 
   test('the fixture answer holds', () => {
@@ -153,35 +153,50 @@ describe('guardQueue', () => {
   test('edges: a running Issue cannot wait, nothing waits for itself, twice or again', () => {
     edgesRefused([edge('issue_12', 'issue_15')], 'not queued')
     edgesRefused([edge('issue_20', 'issue_20')], 'itself')
-    edgesRefused([edge('issue_20', 'issue_12'), edge('issue_20', 'issue_12')], 'twice')
     edgesRefused([edge('issue_22', 'issue_12')], 'exists already')
   })
 
-  test('edges: at most three for one Issue', () => {
+  test('edges: the second naming of an edge is dropped, the first stands', () => {
+    const result = guard({ edges: [edge('issue_20', 'issue_12'), edge('issue_20', 'issue_12')], order: [] })
+    expect(result.edges).toEqual([edge('issue_20', 'issue_12')])
+    expect(result.reason).toContain('twice')
+  })
+
+  test('edges: at most three for one Issue, the fourth is dropped', () => {
     const blockers = ['issue_12', 'issue_15', 'issue_21', 'issue_22']
     const edges = blockers.map((after) => edge('issue_20', after))
-    edgesRefused(edges, 'three edges')
+    const result = guard({ edges, order: [] })
+    expect(result.edges).toEqual(edges.slice(0, 3))
+    expect(result.reason).toContain('three edges')
     expect(guard({ edges: edges.slice(0, 3), order: [] }).edges).toHaveLength(3)
   })
 
-  test('edges: a cycle through proposed edges is refused', () => {
-    edgesRefused([edge('issue_20', 'issue_21'), edge('issue_21', 'issue_20')], 'cycle')
-    edgesRefused([edge('issue_15', 'issue_22'), edge('issue_12', 'issue_15')], 'not queued')
+  test('edges: an edge that closes a cycle through a kept edge is dropped, the kept one stands', () => {
+    const result = guard({ edges: [edge('issue_20', 'issue_21'), edge('issue_21', 'issue_20')], order: [] })
+    expect(result.edges).toEqual([edge('issue_20', 'issue_21')])
+    expect(result.reason).toContain('cycle')
     // issue_22 waits for issue_12 already: issue_12 is running, so only a queued Issue can close a loop through it
     const chained = {
       ...input,
       issues: input.issues.map((i) => (i.id === 'issue_20' ? { ...i, after: ['issue_22'] } : i)),
     }
-    const result = guardQueue({ edges: [edge('issue_22', 'issue_20')], order: [], reason: 'x' }, chained)
-    expect(result.reason).toContain('cycle')
+    const closed = guardQueue({ edges: [edge('issue_22', 'issue_20')], order: [], reason: 'x' }, chained)
+    expect(closed.reason).toContain('cycle')
   })
 
-  test('a bad edge discards the edges and keeps a sound order', () => {
-    const result = guard({ edges: [edge('issue_12', 'issue_15')] })
-    expect(result.edges).toEqual([])
+  test('a bad edge is dropped, the sound edges and the order stand', () => {
+    const sound = edge('issue_20', 'issue_21')
+    const result = guard({ edges: [edge('issue_12', 'issue_15'), sound] })
+    expect(result.edges).toEqual([sound])
     expect(result.order).toEqual(output.order)
     expect(result.reason).toContain('an edge names an Issue that is not queued')
     expect(result.reason).toContain(output.reason.slice(0, 40))
+  })
+
+  test('a bad edge alone leaves the order standing', () => {
+    const result = guard({ edges: [edge('issue_12', 'issue_15')] })
+    expect(result.edges).toEqual([])
+    expect(result.order).toEqual(output.order)
   })
 
   test('order: a wrong order is [] and the valid edges stand', () => {

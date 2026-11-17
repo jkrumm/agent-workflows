@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { completeJson, type LlmDeps } from '../llm/model-call.ts'
 import { defineCapability } from '../procedure.ts'
-import { identifier } from './factory-classify.ts'
+import { identifier } from './identifier.ts'
 import { clipLine, collapseLine, strictLine } from './one-line.ts'
 import {
   endOfData,

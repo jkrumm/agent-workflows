@@ -30,7 +30,7 @@ Context (2026-11-01):
 - Owner framing: greenfield, solo developer, optimal over compatible; the review pipeline may be reset.
 - Tiers (owner, 2026-10-31): `FAST`, `EASY`, `HARD`, `DECIDE`. The picks Wave 3 sets and Wave 12 formalises stay
   provisional until Wave 11 measures the review. Other jobs keep provisional picks until their own evals exist.
-- Audit (private numbers, outside the repo: `~/SourceRoot/agw-maturity-audit.md`). Findings carried below.
+- Audit: round one `docs/audits/2026-10-31-maturity-round-one.md`, round two `docs/audits/2026-11-17-maturity-round-two.md`. Findings carried below.
 
 **Why the rework goes before the tiers.** A tier wave first would only relabel unmeasured picks, and the review is the
 largest `HARD` consumer, so it would be redone after the sweep. The parts of the old tier and maturity waves that the

@@ -17,7 +17,7 @@ A module's suite reads its cases from `$AGW_EVAL_DIR/<workflow>/cases.jsonl` unl
 
 | Workflow | Cases | Scorer measures |
 |-|-|-|
-| `digest`, `factory-classify` | committed | see their READMEs |
+| `digest` | committed | see their READMEs |
 | `factory-steward` | 14 stalls of the journal (placeholders), 6 wake, 2 requeue, 4 raise_decision, 2 none | `recall.<action>` and `precision.<action>` (present only where they mean something, so the run's means are the per-action figures), `correct`; arm param `stewardWording` (`docs/evals/2026-11-16-steward-wording.md`) |
 | `factory-queue` | 10 snapshots: 6 with a pair the factory later ordered, 4 quiet | `edgeRecall`, `quiet`; the order has no independent truth and is not scored |
 | `factory-fix-classes` | 9 cases, 30 commits (28 of this repo's fixes, 2 written) | `accuracy`, `mechanical` (the paths decide), `judged` (a reading) |

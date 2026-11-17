@@ -27,7 +27,7 @@ pipeline variants**, so tier choices rest on data.
   how readily a model says "blocking" (Terra 87 blocking findings over 12 reviews, Sonnet 5). Lessons:
   `docs/evals/README.md`. Gaps: no ground truth, no clean controls, no false-positive metric, arms swap via
   `routes.json` + host restart (moves production traffic), `eval.run` cost is null, n = 12 paired.
-- Private audit numbers: `~/SourceRoot/agw-maturity-audit.md` (never copy its numbers into tracked files).
+- Audit numbers: `docs/audits/2026-10-31-maturity-round-one.md` (moved into the repo on 2026-11-17, at the owner's ask).
 
 ## Anthropic's account (claude.dev "How the Claude Code team does code review", 2026-10-15), the parts that matter
 

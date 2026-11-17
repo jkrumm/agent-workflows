@@ -4,7 +4,7 @@ import { plainSuite } from '../suite.ts'
 import { createDigest } from './index.ts'
 
 /**
- * The eval set is committed beside the module, as `factory-classify`'s is: every case is built from public material (the
+ * The eval set is committed beside the module, as the factory suites' are: every case is built from public material (the
  * wave headings of public repos' plans, replies and fact lists written for the set), so a release carries it and
  * `agw eval run digest` needs no seeding.
  */

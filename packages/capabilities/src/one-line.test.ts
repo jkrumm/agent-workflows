@@ -182,27 +182,4 @@ describe('a 300-character two-line reason is accepted and clipped, with one mode
     expectClipped(out.reason)
     expect(out.source).toMatch(/^[^\r\n]{1,240}$/)
   })
-
-  test('factory.classify', async () => {
-    iu.on('messages', () =>
-      messageResponse(
-        JSON.stringify({
-          project: 'argo',
-          kind: 'bug',
-          class: 'routine',
-          size: 's',
-          tier: 'sonnet',
-          effort: 'medium',
-          reason: long,
-        }),
-        tokens,
-      ),
-    )
-    const out = await registry().call(
-      'factory.classify',
-      { title: 't', facts: 'f', repo: 'argo', source: 'kuma', projects: ['argo'] },
-      noop,
-    )
-    expectClipped((out as { reason: string }).reason)
-  })
 })
