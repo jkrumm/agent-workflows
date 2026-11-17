@@ -26,8 +26,8 @@ echo '{"repo":"app","issues":[{"id":"issue_12","title":"…","kind":"bug","state
   unless the higher one waits for it: the order breaks ties and nothing else.
 - **Only Issues it was shown, and only the wrong part goes.** `guardQueue`, applied by the workflow after the step so a replay
   gets it too, judges `edges` and `order` apart. An edge whose waiter is not queued or whose blocker was not shown, an edge to
-  itself, twice or that exists already, one that closes a cycle (over the shown edges, proposed ones included) or a fourth for
-  one Issue discards the edges as a set. In the order, ids that are not queued (a running Issue listed by mistake) are dropped;
+  itself, twice or that exists already, one that closes a cycle (over the shown edges and the edges kept before it) or a
+  fourth for one Issue is dropped on its own, with a note; the sound edges stand, as in the factory's own check. In the order, ids that are not queued (a running Issue listed by mistake) are dropped;
   an order that is then not every queued Issue once, or puts a blocker after the Issue that waits for it, or goes against the
   owner's priority becomes `[]`. The part that is sound stands; when nothing survives the answer is the empty one
   (`edges: [], order: []`). It never reshuffles an order.
