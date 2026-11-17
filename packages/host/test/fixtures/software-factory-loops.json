@@ -190,6 +190,7 @@
     },
     "output": {
       "edges": [{ "issue": "issue_20", "after": "issue_12", "reason": "both change the checkout summary code" }],
+      "drop": [],
       "order": ["issue_22", "issue_21", "issue_15", "issue_20"],
       "reason": "issue_22 has the highest priority; among equals the small unblocked one goes first"
     }

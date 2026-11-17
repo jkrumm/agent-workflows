@@ -92,10 +92,15 @@ describe('a 300-character two-line reason is accepted and clipped, with one mode
     expectClipped((out as { reason: string }).reason)
   })
 
-  test('factory.queue, the answer and each edge', async () => {
+  test('factory.queue, the answer, each edge and each drop', async () => {
     iu.on('messages', () =>
       messageResponse(
-        JSON.stringify({ edges: [{ issue: 'issue_20', after: 'issue_12', reason: long }], order: [], reason: long }),
+        JSON.stringify({
+          edges: [{ issue: 'issue_20', after: 'issue_12', reason: long }],
+          drop: [{ issue: 'issue_20', after: 'issue_12', reason: long }],
+          order: [],
+          reason: long,
+        }),
         tokens,
       ),
     )
@@ -129,9 +134,10 @@ describe('a 300-character two-line reason is accepted and clipped, with one mode
         ],
       },
       noop,
-    )) as { reason: string; edges: { reason: string }[] }
+    )) as { reason: string; edges: { reason: string }[]; drop: { reason: string }[] }
     expectClipped(out.reason)
     expect(out.edges[0]?.reason).toMatch(/^[^\r\n]{1,240}$/)
+    expect(out.drop[0]?.reason).toMatch(/^[^\r\n]{1,240}$/)
   })
 
   test('factory.steward', async () => {
