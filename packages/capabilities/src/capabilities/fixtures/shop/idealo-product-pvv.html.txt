@@ -1,0 +1,841 @@
+<html><head><title>Patriot Viper Venom 32GB Kit DDR5-6000 CL30 (PVV532G600C30K) ab 510,90 € | Vergleiche Black Friday Angebote auf idealo.de</title></head><body>
+<script data-testid="Product" type="application/ld+json">{"@type":"Product","offers":{"@type":"AggregateOffer","offerCount":28}}</script>
+<h1 id="oopStage-title" class="oopStage-title" translate="no">
+<span>Patriot Viper Venom 32GB Kit DDR5-6000 CL30 (PVV532G600C30K)</span>
+</h1><div class="oopStage-productInfoTopItems small-12 collapse-both columns">
+<b>Produktübersicht:</b>
+<span class="oopStage-productInfoTopItem"> 32&nbsp;GB </span>
+<span class="oopStage-productInfoTopItem"> Anzahl Module&nbsp;2 </span>
+<span class="oopStage-productInfoTopItem"> Kapazität pro Modul&nbsp;16&nbsp;GB </span>
+<span class="oopStage-productInfoTopItem"> 6.000&nbsp;MT/s </span>
+<span class="oopStage-productInfoTopItem"> PC5-48.000 </span>
+<span class="oopStage-productInfoTopItem"> CL 30-40-40-76 </span>
+<span class="oopStage-productInfoTopItem"> 1,35&nbsp;V </span>
+<span class="oopStage-productInfoTopItem"> UDIMM </span>
+<span class="oopStage-productInfoTopItem"> On-Die ECC </span>
+<span class="oopStage-productInfoTopItem"> XMP </span>
+<span class="oopStage-productInfoTopItem"> EXPO </span>
+<span class="oopStage-productInfoTopItem"> Patriot Viper Venom </span>
+<span class="oopStage-productInfoTopItem"> 43&nbsp;mm </span>
+<span class="oopStage-productInfoTopItemWrapperDatasheetLink"><a id="productDetailsAnchor"> Produktdetails</a>
+</span>
+</div>
+<ul class="productOffers-list" data-import-time="Daten vom 17.11.2026&nbsp;17:06">
+<li class="productOffers-listItem row row-24 " data-shop="{&quot;type&quot;:&quot;IDECL&quot;}" data-mtrx-click="{&quot;shop_name&quot;:&quot;alza.de&quot;,&quot;products&quot;:[{&quot;id&quot;:204432987,&quot;category&quot;:4552,&quot;name&quot;:&quot;Patriot Viper Venom 32GB Kit DDR5-6000 CL30 (PVV532G600C30K)&quot;,&quot;price&quot;:510.9}],&quot;event&quot;:&quot;leadout&quot;}">
+<div class="small-24 medium-24 large-24 larger-5 xlarge-4 productOffers-listItemTitleWrapper" data-offerlist-column="title">
+<a class="productOffers-listItemTitle">
+<span class="productOffers-listItemTitleInner " title="Patriot Viper Venom 32 GB KIT DDR5 6000 MHz CL30"> Patriot Viper Venom 32 GB KIT DDR5 6000 MHz CL30</span>
+</a>
+</div>
+<div class="productOffers-listItemOffer small-8 medium-8 large-9 larger-8 xlarge-8 columns" data-offerlist-column="price">
+<div class="row">
+<div class="column small-24 large-12 larger-12 xlarge-12 price-column">
+<div class="price-and-badge-wrapper">
+<a class="productOffers-listItemOfferPrice"> 510,90&nbsp;€</a>
+<div class="best-total-price-box">
+<div class="best-total-price">
+<span>
+<a>
+<span class="productOffers-listItemOfferBestTotalPrice"> Günstigster Gesamtpreis</span><br>
+</a></span>
+</div>
+<div class="line-offer-view productOffers-listItemOfferShippingDetails show-for-large withBestTotalPrice">
+<a>
+<div class="productOffers-listItemOfferShippingDetails" title="515,89&nbsp;€ inkl. Versand"> 515,89&nbsp;€ inkl. Versand</div>
+</a>
+</div>
+</div>
+</div>
+</div>
+<div class="column large-12 larger-12 xlarge-12 show-for-large payment-column">
+<div class="productOffers-listItemOfferShippingDetailsRight">
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/paypal-c038cb02ad0744a542c4.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Rechnung">
+<a>
+<span> Rechnung</span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/visa-ac94b93bc9a9921b1f11.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/mastercard-2e81fe3d252402ab0358.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/klarna-78921c2f072f5cda9c8b.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Vorkasse">
+<a>
+<span> Vorkasse</span>
+</a>
+</span>
+</div>
+</div>
+</div>
+</div>
+<ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="delivery">
+<a>
+<li>
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Do. 19.11.</span>
+</p>
+<div class="productOffers-listItemOfferDeliveryProviderWrapper">
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> DHL</span>
+</div>
+</li>
+</a>
+</ul>
+<div class="small-8 medium-8 large-6 larger-4 xlarge-4 xlarge-text-left large-text-center small-text-center productOffers-listItemOfferShopV2Block va-middle-xlarge-up" data-offerlist-column="shop">
+<div class="productOffers-listItemOfferShopV2">
+<div class="productOffers-listItemOfferShopV2LogoContainer">
+<div class="productOffers-listItemOfferShopV2Logo">
+<a class="productOffers-listItemOfferShopV2LogoLink" data-shop-name="alza.de - Shop aus Praha">
+<img alt="alza.de - Shop aus Praha">
+</a>
+</div>
+</div>
+<div class="productOffers-listItemOfferShopV2RatingsContainer">
+<a class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/301558.html">
+<div class="productOffers-listItemOfferShopV2Stars rating-single-star">
+<div class="starAndRatingWrapper">
+<span>
+<b>4,9</b>
+</span>
+</div>
+</div>
+</a>
+<a class="productOffers-listItemOfferShopV2NORatings" href="https://www.idealo.de/preisvergleich/Shop/301558.html">
+<span class="productOffers-listItemOfferShopV2NORatings--numberOfRatings">9460</span>
+</a>
+</div>
+</div>
+<button class="show-for-large productOffers-listItemOfferShopV2Info"> Shop-Details</button>
+</div>
+<div class="productOffers-listItemOfferCtaHolder small-8 medium-8 large-4 larger-4 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="leadoutbutton">
+<ul class="productOffers-listItemOfferCta">
+<li>
+<a class="productOffers-listItemOfferCtaLeadout button button--leadout" data-shop-name="alza.de" aria-label="Zum alza.de Shop"> Zum Shop<img alt="Patriot Viper Venom 32GB Kit DDR5-6000 CL30 (PVV532G600C30K) kaufen: günstige RAM bei alza.de">
+</a>
+</li>
+</ul>
+</div>
+<div class="productOffers-listItemOfferDetailsMobile ">
+<div class="productOffers-listItemOfferDetails"> Details</div>
+<div class="vertical-separator"></div>
+<div class="productOffers-listItemOfferDelivery delivery delivery--short svg-icon">
+<a>
+</a>
+</div>
+<span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile">
+<a>
+<span class="productOffers-listItemOfferDeliveryStatusMobileText">
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Do. 19.11.</span>
+</p>
+</span>
+</a>
+</span>
+</div>
+<a class="productOffers-listItemOfferLink" data-shop-name="alza.de">
+</a>
+</li>
+<li class="productOffers-listItem row row-24 " data-shop="{&quot;type&quot;:&quot;IDECL&quot;}" data-mtrx-click="{&quot;shop_name&quot;:&quot;alternate.de&quot;,&quot;products&quot;:[{&quot;id&quot;:204432987,&quot;category&quot;:4552,&quot;name&quot;:&quot;Patriot Viper Venom 32GB Kit DDR5-6000 CL30 (PVV532G600C30K)&quot;,&quot;price&quot;:519.0}],&quot;event&quot;:&quot;leadout&quot;}">
+<div class="small-24 medium-24 large-24 larger-5 xlarge-4 productOffers-listItemTitleWrapper" data-offerlist-column="title">
+<a class="productOffers-listItemTitle">
+<span class="productOffers-listItemTitleInner " title="Patriot DIMM 32 GB DDR5-6000 (2x 16 GB) Dual-Kit, Ar­beits­spei­cher schwarz, PVV532G600C30K, Viper Venom, INTEL XMP, AMD EXPO"> Patriot DIMM 32 GB DDR5-6000 (2x 16 GB) Dual-Kit, Ar­beits­spei­cher schwarz, PVV532G600C30K, Viper Venom, INTEL XMP, AMD EXPO</span>
+</a>
+</div>
+<div class="productOffers-listItemOffer small-8 medium-8 large-9 larger-8 xlarge-8 columns" data-offerlist-column="price">
+<div class="row">
+<div class="column small-24 large-12 larger-12 xlarge-12 price-column">
+<div class="price-and-badge-wrapper">
+<a class="productOffers-listItemOfferPrice"> 519,00&nbsp;€</a>
+<div class="best-total-price">
+</div>
+<div class="line-offer-view productOffers-listItemOfferShippingDetails show-for-large">
+<a>
+<div class="productOffers-listItemOfferShippingDetails" title="526,99&nbsp;€ inkl. Versand"> 526,99&nbsp;€ inkl. Versand</div>
+</a>
+</div>
+</div>
+</div>
+<div class="column large-12 larger-12 xlarge-12 show-for-large payment-column">
+<div class="productOffers-listItemOfferShippingDetailsRight">
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/paypal-c038cb02ad0744a542c4.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Rechnung">
+<a>
+<span> Rechnung</span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/visa-ac94b93bc9a9921b1f11.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/mastercard-2e81fe3d252402ab0358.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/american-express-b6d0b3d814c4b5314ddb.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/diners-club-1742dae18f60772bc49a.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/klarna-78921c2f072f5cda9c8b.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Vorkasse">
+<a>
+<span> Vorkasse</span>
+</a>
+</span>
+</div>
+</div>
+</div>
+</div>
+<ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="delivery">
+<a>
+<li>
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Fr. 20.11.</span>
+</p>
+<div class="productOffers-listItemOfferDeliveryProviderWrapper">
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> DHL</span>
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> Spedition</span>
+</div>
+</li>
+<li>
+<div class="productOffers-listItemOfferDeliveryRetourText">
+<span>Rücksendung 14 Tage kostenfrei</span>
+</div>
+</li>
+</a>
+</ul>
+<div class="small-8 medium-8 large-6 larger-4 xlarge-4 xlarge-text-left large-text-center small-text-center productOffers-listItemOfferShopV2Block va-middle-xlarge-up" data-offerlist-column="shop">
+<div class="productOffers-listItemOfferShopV2">
+<div class="productOffers-listItemOfferShopV2LogoContainer">
+<div class="productOffers-listItemOfferShopV2Logo">
+<a class="productOffers-listItemOfferShopV2LogoLink" data-shop-name="alternate.de - Shop aus Linden">
+<img alt="alternate.de - Shop aus Linden">
+</a>
+</div>
+</div>
+<div class="productOffers-listItemOfferShopV2RatingsContainer">
+<a class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/1362.html">
+<div class="productOffers-listItemOfferShopV2Stars rating-single-star">
+<div class="starAndRatingWrapper">
+<span>
+<b>4,5</b>
+</span>
+</div>
+</div>
+</a>
+<a class="productOffers-listItemOfferShopV2NORatings" href="https://www.idealo.de/preisvergleich/Shop/1362.html">
+<span class="productOffers-listItemOfferShopV2NORatings--numberOfRatings">13505</span>
+</a>
+</div>
+</div>
+<button class="show-for-large productOffers-listItemOfferShopV2Info"> Shop-Details</button>
+</div>
+<div class="productOffers-listItemOfferCtaHolder small-8 medium-8 large-4 larger-4 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="leadoutbutton">
+<ul class="productOffers-listItemOfferCta">
+<li>
+<a class="productOffers-listItemOfferCtaLeadout button button--leadout" data-shop-name="alternate.de" aria-label="Zum alternate.de Shop"> Zum Shop<img alt="Patriot Viper Venom 32GB Kit DDR5-6000 CL30 (PVV532G600C30K) bestellen: preiswerte RAM bei alternate.de">
+</a>
+</li>
+</ul>
+</div>
+<div class="productOffers-listItemOfferDetailsMobile ">
+<div class="productOffers-listItemOfferDetails"> Details</div>
+<div class="vertical-separator"></div>
+<div class="productOffers-listItemOfferDelivery delivery delivery--short svg-icon">
+<a>
+</a>
+</div>
+<span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile">
+<a>
+<span class="productOffers-listItemOfferDeliveryStatusMobileText">
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Fr. 20.11.</span>
+</p>
+</span>
+</a>
+</span>
+</div>
+<a class="productOffers-listItemOfferLink" data-shop-name="alternate.de">
+</a>
+</li>
+<li class="productOffers-listItem row row-24 " data-shop="{&quot;type&quot;:&quot;IDECL&quot;}" data-mtrx-click="{&quot;shop_name&quot;:&quot;computeruniverse.net&quot;,&quot;products&quot;:[{&quot;id&quot;:204432987,&quot;category&quot;:4552,&quot;name&quot;:&quot;Patriot Viper Venom 32GB Kit DDR5-6000 CL30 (PVV532G600C30K)&quot;,&quot;price&quot;:524.9}],&quot;event&quot;:&quot;leadout&quot;}">
+<div class="small-24 medium-24 large-24 larger-5 xlarge-4 productOffers-listItemTitleWrapper" data-offerlist-column="title">
+<a class="productOffers-listItemTitle">
+<span class="productOffers-listItemTitleInner " title="Patriot VIPER VENOM DDR5 RAM 32GB (2X16GB) 6000MHz, CL30"> Patriot VIPER VENOM DDR5 RAM 32GB (2X16GB) 6000MHz, CL30</span>
+</a>
+</div>
+<div class="productOffers-listItemOffer small-8 medium-8 large-9 larger-8 xlarge-8 columns" data-offerlist-column="price">
+<div class="row">
+<div class="column small-24 large-12 larger-12 xlarge-12 price-column">
+<div class="price-and-badge-wrapper">
+<a class="productOffers-listItemOfferPrice"> 524,90&nbsp;€</a>
+<div class="best-total-price">
+</div>
+<div class="line-offer-view productOffers-listItemOfferShippingDetails show-for-large">
+<a>
+<div class="productOffers-listItemOfferShippingDetails" title="531,89&nbsp;€ inkl. Versand"> 531,89&nbsp;€ inkl. Versand</div>
+</a>
+</div>
+</div>
+</div>
+<div class="column large-12 larger-12 xlarge-12 show-for-large payment-column">
+<div class="productOffers-listItemOfferShippingDetailsRight">
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/paypal-c038cb02ad0744a542c4.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Rechnung">
+<a>
+<span> Rechnung</span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/visa-ac94b93bc9a9921b1f11.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/mastercard-2e81fe3d252402ab0358.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/american-express-b6d0b3d814c4b5314ddb.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/klarna-78921c2f072f5cda9c8b.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Vorkasse">
+<a>
+<span> Vorkasse</span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/amzpay-260d13cc85438b08e97b.png" title=""></span>
+</a>
+</span>
+</div>
+</div>
+</div>
+</div>
+<ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="delivery">
+<a>
+<li>
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Sa. 21.11.</span>
+</p>
+<div class="productOffers-listItemOfferDeliveryProviderWrapper">
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> DHL</span>
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> DPD</span>
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> Spedition</span>
+</div>
+</li>
+<li>
+<div class="productOffers-listItemOfferDeliveryRetourText">
+<span>Rücksendung 30 Tage kostenfrei</span>
+</div>
+</li>
+</a>
+</ul>
+<div class="small-8 medium-8 large-6 larger-4 xlarge-4 xlarge-text-left large-text-center small-text-center productOffers-listItemOfferShopV2Block va-middle-xlarge-up" data-offerlist-column="shop">
+<div class="productOffers-listItemOfferShopV2">
+<div class="productOffers-listItemOfferShopV2LogoContainer">
+<div class="productOffers-listItemOfferShopV2Logo">
+<a class="productOffers-listItemOfferShopV2LogoLink" data-shop-name="computeruniverse.net - Shop aus Bad Homburg">
+<img alt="computeruniverse.net - Shop aus Bad Homburg">
+</a>
+</div>
+</div>
+<div class="productOffers-listItemOfferShopV2RatingsContainer">
+<a class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/1140.html">
+<div class="productOffers-listItemOfferShopV2Stars rating-single-star">
+<div class="starAndRatingWrapper">
+<span>
+<b>3,9</b>
+</span>
+</div>
+</div>
+</a>
+<a class="productOffers-listItemOfferShopV2NORatings" href="https://www.idealo.de/preisvergleich/Shop/1140.html">
+<span class="productOffers-listItemOfferShopV2NORatings--numberOfRatings">29699</span>
+</a>
+</div>
+</div>
+<button class="show-for-large productOffers-listItemOfferShopV2Info"> Shop-Details</button>
+</div>
+<div class="productOffers-listItemOfferCtaHolder small-8 medium-8 large-4 larger-4 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="leadoutbutton">
+<ul class="productOffers-listItemOfferCta">
+<li>
+<a class="productOffers-listItemOfferCtaLeadout button button--leadout" data-shop-name="computeruniverse.net" aria-label="Zum computeruniverse.net Shop"> Zum Shop<img alt="Patriot Viper Venom 32GB Kit DDR5-6000 CL30 (PVV532G600C30K) versand: billige RAM bei computeruniverse.net">
+</a>
+</li>
+</ul>
+</div>
+<div class="productOffers-listItemOfferDetailsMobile ">
+<div class="productOffers-listItemOfferDetails"> Details</div>
+<div class="vertical-separator"></div>
+<div class="productOffers-listItemOfferDelivery delivery delivery--short svg-icon">
+<a>
+</a>
+</div>
+<span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile">
+<a>
+<span class="productOffers-listItemOfferDeliveryStatusMobileText">
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Sa. 21.11.</span>
+</p>
+</span>
+</a>
+</span>
+</div>
+<a class="productOffers-listItemOfferLink" data-shop-name="computeruniverse.net">
+</a>
+</li>
+<li class="productOffers-listItem row row-24 " data-shop="{&quot;type&quot;:&quot;IDECL&quot;}" data-mtrx-click="{&quot;shop_name&quot;:&quot;bueromarkt-ag.de&quot;,&quot;products&quot;:[{&quot;id&quot;:204432987,&quot;category&quot;:4552,&quot;name&quot;:&quot;Patriot Viper Venom 32GB Kit DDR5-6000 CL30 (PVV532G600C30K)&quot;,&quot;price&quot;:526.98}],&quot;event&quot;:&quot;leadout&quot;}">
+<div class="small-24 medium-24 large-24 larger-5 xlarge-4 productOffers-listItemTitleWrapper" data-offerlist-column="title">
+<a class="productOffers-listItemTitle">
+<span class="productOffers-listItemTitleInner " title="PATRIOT Ar­beits­spei­cher Viper Venom, PVV532G600C30K, 32 GB (2x 16 GB), DIMM, CL30, schwarz, DDR5-6000"> PATRIOT Ar­beits­spei­cher Viper Venom, PVV532G600C30K, 32 GB (2x 16 GB), DIMM, CL30, schwarz, DDR5-6000</span>
+</a>
+</div>
+<div class="productOffers-listItemOffer small-8 medium-8 large-9 larger-8 xlarge-8 columns" data-offerlist-column="price">
+<div class="row">
+<div class="column small-24 large-12 larger-12 xlarge-12 price-column">
+<div class="price-and-badge-wrapper">
+<a class="productOffers-listItemOfferPrice"> 526,98&nbsp;€</a>
+<div class="best-total-price">
+</div>
+<div class="line-offer-view productOffers-listItemOfferShippingDetails show-for-large">
+<a>
+<div class="productOffers-listItemOfferShippingDetails" title="531,13&nbsp;€ inkl. Versand"> 531,13&nbsp;€ inkl. Versand</div>
+</a>
+</div>
+</div>
+</div>
+<div class="column large-12 larger-12 xlarge-12 show-for-large payment-column">
+<div class="productOffers-listItemOfferShippingDetailsRight">
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/paypal-c038cb02ad0744a542c4.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Rechnung">
+<a>
+<span> Rechnung</span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/visa-ac94b93bc9a9921b1f11.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/mastercard-2e81fe3d252402ab0358.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/american-express-b6d0b3d814c4b5314ddb.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Lastschrift">
+<a>
+<span> Lastschrift</span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Vorkasse">
+<a>
+<span> Vorkasse</span>
+</a>
+</span>
+</div>
+</div>
+</div>
+</div>
+<ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="delivery">
+<a>
+<li>
+<p class="productOffers-listItemOfferDeliveryStatus"> sofort lie­fer­bar</p>
+<div class="productOffers-listItemOfferDeliveryProviderWrapper">
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> DHL</span>
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> Spedition</span>
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> GLS</span>
+</div>
+</li>
+<li>
+<div class="productOffers-listItemOfferDeliveryRetourText">
+<span>Rücksendung 14 Tage kostenfrei</span>
+</div>
+</li>
+</a>
+</ul>
+<div class="small-8 medium-8 large-6 larger-4 xlarge-4 xlarge-text-left large-text-center small-text-center productOffers-listItemOfferShopV2Block va-middle-xlarge-up" data-offerlist-column="shop">
+<div class="productOffers-listItemOfferShopV2">
+<div class="productOffers-listItemOfferShopV2LogoContainer">
+<div class="productOffers-listItemOfferShopV2Logo">
+<a class="productOffers-listItemOfferShopV2LogoLink" data-shop-name="bueromarkt-ag.de - Shop aus Jena-Zöllnitz">
+<img alt="bueromarkt-ag.de - Shop aus Jena-Zöllnitz">
+</a>
+</div>
+</div>
+<div class="productOffers-listItemOfferShopV2RatingsContainer">
+<a class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/29203.html">
+<div class="productOffers-listItemOfferShopV2Stars rating-single-star">
+<div class="starAndRatingWrapper">
+<span>
+<b>4,4</b>
+</span>
+</div>
+</div>
+</a>
+<a class="productOffers-listItemOfferShopV2NORatings" href="https://www.idealo.de/preisvergleich/Shop/29203.html">
+<span class="productOffers-listItemOfferShopV2NORatings--numberOfRatings">21663</span>
+</a>
+</div>
+</div>
+<button class="show-for-large productOffers-listItemOfferShopV2Info"> Shop-Details</button>
+</div>
+<div class="productOffers-listItemOfferCtaHolder small-8 medium-8 large-4 larger-4 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="leadoutbutton">
+<ul class="productOffers-listItemOfferCta">
+<li>
+<a class="productOffers-listItemOfferCtaLeadout button button--leadout" data-shop-name="bueromarkt-ag.de" aria-label="Zum bueromarkt-ag.de Shop"> Zum Shop<img alt="Patriot Viper Venom 32GB Kit DDR5-6000 CL30 (PVV532G600C30K) kaufen: günstige RAM bei bueromarkt-ag.de">
+</a>
+</li>
+</ul>
+</div>
+<div class="productOffers-listItemOfferDetailsMobile ">
+<div class="productOffers-listItemOfferDetails"> Details</div>
+<div class="vertical-separator"></div>
+<div class="productOffers-listItemOfferDelivery delivery delivery--short svg-icon">
+<a>
+</a>
+</div>
+<span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile">
+<a>
+<span class="productOffers-listItemOfferDeliveryStatusMobileText">
+<p class="productOffers-listItemOfferDeliveryStatus deliveryStatusText">sofort lie­fer­bar</p>
+</span>
+</a>
+</span>
+</div>
+<a class="productOffers-listItemOfferLink" data-shop-name="bueromarkt-ag.de">
+</a>
+</li>
+<li class="productOffers-listItem row row-24 " data-shop="{&quot;type&quot;:&quot;AMZDE&quot;}" data-mtrx-click="{&quot;shop_name&quot;:&quot;Amazon Marketplace&quot;,&quot;products&quot;:[{&quot;id&quot;:204432987,&quot;category&quot;:4552,&quot;name&quot;:&quot;Patriot Viper Venom 32GB Kit DDR5-6000 CL30 (PVV532G600C30K)&quot;,&quot;price&quot;:526.99}],&quot;event&quot;:&quot;leadout&quot;}">
+<div class="small-24 medium-24 large-24 larger-5 xlarge-4 productOffers-listItemTitleWrapper" data-offerlist-column="title">
+<a class="productOffers-listItemTitle">
+<span class="productOffers-listItemTitleInner " title="Viper Venom DDR5 32GB (2x16) 6000MHz CL30 | Patriot Memory, UDIMM, Gaming, Ar­beits­spei­cher, PVV516G560C40K"> Viper Venom DDR5 32GB (2x16) 6000MHz CL30 | Patriot Memory, UDIMM, Gaming, Ar­beits­spei­cher, PVV516G560C40K</span>
+</a>
+</div>
+<div class="productOffers-listItemOffer small-8 medium-8 large-9 larger-8 xlarge-8 columns" data-offerlist-column="price">
+<div class="row">
+<div class="column small-24 large-12 larger-12 xlarge-12 price-column">
+<div class="price-and-badge-wrapper">
+<a class="productOffers-listItemOfferPrice"> 526,99&nbsp;€</a>
+<div class="best-total-price">
+</div>
+<div class="line-offer-view productOffers-listItemOfferShippingDetails show-for-large">
+<a>
+<div class="productOffers-listItemOfferShippingDetails" title="526,99&nbsp;€ inkl. Versand"> 526,99&nbsp;€ inkl. Versand</div>
+</a>
+</div>
+</div>
+</div>
+<div class="column large-12 larger-12 xlarge-12 show-for-large payment-column">
+<div class="productOffers-listItemOfferShippingDetailsRight">
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Rechnung">
+<a>
+<span> Rechnung</span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/visa-ac94b93bc9a9921b1f11.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/mastercard-2e81fe3d252402ab0358.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/american-express-b6d0b3d814c4b5314ddb.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Lastschrift">
+<a>
+<span> Lastschrift</span>
+</a>
+</span>
+</div>
+</div>
+</div>
+</div>
+<ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="delivery">
+<a>
+<li>
+<p class="productOffers-listItemOfferDeliveryStatus"> Auf Lager</p>
+</li>
+</a>
+</ul>
+<div class="small-8 medium-8 large-6 larger-4 xlarge-4 xlarge-text-left large-text-center small-text-center productOffers-listItemOfferShopV2Block va-middle-xlarge-up" data-offerlist-column="shop">
+<div class="productOffers-listItemOfferShopV2">
+<div class="productOffers-listItemOfferShopV2LogoContainer">
+<div class="productOffers-listItemOfferShopV2Logo">
+<a class="productOffers-listItemOfferShopV2LogoLink" data-shop-name="Amazon Marketplace - Shop aus Luxemburg">
+<img alt="Amazon Marketplace - Shop aus Luxemburg">
+</a>
+</div>
+<a>
+<div class="show-for-medium productOffers-listItemOfferShopV2MarketPlace"> Marktplatz</div>
+</a>
+</div>
+<div class="productOffers-listItemOfferShopV2RatingsContainer">
+<a class="productOffers-listItemOfferShopV2StarsLink">
+<div class="productOffers-listItemOfferShopV2Stars rating-single-star">
+<div class="starAndRatingWrapper">
+<span>
+<b>4,9</b>
+</span>
+</div>
+</div>
+</a>
+<a class="productOffers-listItemOfferShopV2NORatings">
+<span class="productOffers-listItemOfferShopV2NORatings--numberOfRatings">270</span>
+</a>
+</div>
+</div>
+<div class="productOffers-listItemOfferShopV2MarketPlaceSoldThrough"> Verkauf durch:</div>
+<div class="productOffers-listItemOfferShopV2MarketPlaceMerchantName">
+<a data-shop-name="GadgetLifestyle" title="GadgetLifestyle"> GadgetLifestyle</a>
+</div>
+</div>
+<div class="productOffers-listItemOfferCtaHolder small-8 medium-8 large-4 larger-4 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="leadoutbutton">
+<ul class="productOffers-listItemOfferCta">
+<li>
+<a class="productOffers-listItemOfferCtaLeadout button button--leadout" data-shop-name="GadgetLifestyle" aria-label="Zum Amazon Marketplace Shop"> Zum Shop<img alt="Patriot Viper Venom 32GB Kit DDR5-6000 CL30 (PVV532G600C30K) bestellen: preiswerte RAM bei GadgetLifestyle">
+</a>
+</li>
+</ul>
+</div>
+<div class="productOffers-listItemOfferDetailsMobile ">
+<div class="productOffers-listItemOfferDetails"> Details</div>
+<div class="vertical-separator"></div>
+<div class="productOffers-listItemOfferDelivery delivery delivery--short svg-icon">
+<a>
+</a>
+</div>
+<span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile">
+<a>
+<span class="productOffers-listItemOfferDeliveryStatusMobileText">
+<p class="productOffers-listItemOfferDeliveryStatus deliveryStatusText">Auf Lager</p>
+</span>
+</a>
+</span>
+</div>
+<a class="productOffers-listItemOfferLink" data-shop-name="GadgetLifestyle">
+</a>
+</li>
+<li class="productOffers-listItem row row-24 " data-shop="{&quot;type&quot;:&quot;IDECL&quot;}" data-mtrx-click="{&quot;shop_name&quot;:&quot;galaxus.de&quot;,&quot;products&quot;:[{&quot;id&quot;:204432987,&quot;category&quot;:4552,&quot;name&quot;:&quot;Patriot Viper Venom 32GB Kit DDR5-6000 CL30 (PVV532G600C30K)&quot;,&quot;price&quot;:526.99}],&quot;event&quot;:&quot;leadout&quot;}">
+<div class="small-24 medium-24 large-24 larger-5 xlarge-4 productOffers-listItemTitleWrapper" data-offerlist-column="title">
+<a class="productOffers-listItemTitle">
+<span class="productOffers-listItemTitleInner " title="Patriot Viper Venom (2 x 16GB, 6000 MHz, DDR5-RAM, DIMM), RAM, Rot, Schwarz, Silber"> Patriot Viper Venom (2 x 16GB, 6000 MHz, DDR5-RAM, DIMM), RAM, Rot, Schwarz, Silber</span>
+</a>
+</div>
+<div class="productOffers-listItemOffer small-8 medium-8 large-9 larger-8 xlarge-8 columns" data-offerlist-column="price">
+<div class="row">
+<div class="column small-24 large-12 larger-12 xlarge-12 price-column">
+<div class="price-and-badge-wrapper">
+<a class="productOffers-listItemOfferPrice"> 526,99&nbsp;€</a>
+<div class="best-total-price">
+</div>
+<div class="line-offer-view productOffers-listItemOfferShippingDetails show-for-large">
+<a>
+<div class="productOffers-listItemOfferShippingDetails" title="526,99&nbsp;€ inkl. Versand"> 526,99&nbsp;€ inkl. Versand</div>
+</a>
+</div>
+</div>
+</div>
+<div class="column large-12 larger-12 xlarge-12 show-for-large payment-column">
+<div class="productOffers-listItemOfferShippingDetailsRight">
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/paypal-c038cb02ad0744a542c4.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Rechnung">
+<a>
+<span> Rechnung</span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/visa-ac94b93bc9a9921b1f11.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/mastercard-2e81fe3d252402ab0358.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/klarna-78921c2f072f5cda9c8b.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Vorkasse">
+<a>
+<span> Vorkasse</span>
+</a>
+</span>
+</div>
+</div>
+</div>
+</div>
+<ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="delivery">
+<a>
+<li>
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Do. 19.11.</span>
+</p>
+<div class="productOffers-listItemOfferDeliveryProviderWrapper">
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> DHL</span>
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> Spedition</span>
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> Deutsche Post</span>
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> PickPoint</span>
+</div>
+</li>
+<li>
+<div class="productOffers-listItemOfferDeliveryRetourText">
+<span>Rücksendung 30 Tage kostenfrei</span>
+</div>
+</li>
+</a>
+</ul>
+<div class="small-8 medium-8 large-6 larger-4 xlarge-4 xlarge-text-left large-text-center small-text-center productOffers-listItemOfferShopV2Block va-middle-xlarge-up" data-offerlist-column="shop">
+<div class="productOffers-listItemOfferShopV2">
+<div class="productOffers-listItemOfferShopV2LogoContainer">
+<div class="productOffers-listItemOfferShopV2Logo">
+<a class="productOffers-listItemOfferShopV2LogoLink" data-shop-name="galaxus.de - Shop aus Hamburg">
+<img alt="galaxus.de - Shop aus Hamburg">
+</a>
+</div>
+</div>
+<div class="productOffers-listItemOfferShopV2RatingsContainer">
+<a class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/317105.html">
+<div class="productOffers-listItemOfferShopV2Stars rating-single-star">
+<div class="starAndRatingWrapper">
+<span>
+<b>4,6</b>
+</span>
+</div>
+</div>
+</a>
+<a class="productOffers-listItemOfferShopV2NORatings" href="https://www.idealo.de/preisvergleich/Shop/317105.html">
+<span class="productOffers-listItemOfferShopV2NORatings--numberOfRatings">2657</span>
+</a>
+</div>
+</div>
+<button class="show-for-large productOffers-listItemOfferShopV2Info"> Shop-Details</button>
+</div>
+<div class="productOffers-listItemOfferCtaHolder small-8 medium-8 large-4 larger-4 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="leadoutbutton">
+<ul class="productOffers-listItemOfferCta">
+<li>
+<a class="productOffers-listItemOfferCtaLeadout button button--leadout" data-shop-name="galaxus.de" aria-label="Zum galaxus.de Shop"> Zum Shop<img alt="Patriot Viper Venom 32GB Kit DDR5-6000 CL30 (PVV532G600C30K) versand: billige RAM bei galaxus.de">
+</a>
+</li>
+</ul>
+</div>
+<div class="productOffers-listItemOfferDetailsMobile ">
+<div class="productOffers-listItemOfferDetails"> Details</div>
+<div class="vertical-separator"></div>
+<div class="productOffers-listItemOfferDelivery delivery delivery--short svg-icon">
+<a>
+</a>
+</div>
+<span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile">
+<a>
+<span class="productOffers-listItemOfferDeliveryStatusMobileText">
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Do. 19.11.</span>
+</p>
+</span>
+</a>
+</span>
+</div>
+<a class="productOffers-listItemOfferLink" data-shop-name="galaxus.de">
+</a>
+</li>
+</ul>
+</body></html>

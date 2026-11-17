@@ -1,0 +1,34 @@
+<html><body>
+<span id="productTitle" class="a-size-medium product-title-word-break"> CORSAIR Vengeance RGB RS DDR5 64GB (2 x 32GB) Bis zu 6000MHz AMD Intel RAM </span>
+
+<div id="corePrice_feature_div" class="celwidget" data-feature-name="corePrice" data-csa-c-type="widget" data-csa-c-content-id="corePrice" data-csa-c-slot-id="corePrice_feature_div" data-csa-c-asin="B0GGJ9YH2D" data-csa-c-is-in-initial-active-row="false">
+<div data-csa-c-type="widget" data-csa-c-slot-id="apex_dp_offer_display" data-csa-c-content-id="apex_with_rio_cx">
+<div class="a-section a-spacing-micro">
+<div class="a-section apex-core-price-identifier">
+<span class="a-price aok-align-center apex-pricetopay-value" data-a-size="xl" data-a-color="base"><span class="a-offscreen">929,99€</span><span><span class="a-price-whole">929<span class="a-price-decimal">,</span></span><span class="a-price-fraction">99</span><span class="a-price-symbol">€</span></span></span>
+<span id="taxInclusiveMessage" class="a-size-mini a-color-base aok-align-center aok-nowrap">
+</span>
+</div>
+</div>
+</div>
+</div>
+<span class="a-size-medium a-color-success primary-availability-message"> Auf Lager </span>
+<div class="offer-display-feature-text a-size-small" offer-display-feature-name="desktop-merchant-info" data-csa-c-type="widget" data-csa-c-slot-id="odf-feature-text-desktop-merchant-info" data-csa-c-content-id="desktop-merchant-info">
+<div class="offer-display-feature-text a-spacing-none odf-truncation-popover">
+<span class="a-size-small offer-display-feature-text-message">Amazon</span>
+</div>
+<span class="a-declarative" data-action="a-popover" data-a-popover="{&quot;max-width&quot;:&quot;500&quot;,&quot;name&quot;:&quot;offerDisplayFeatureMerchantInfoPopover-0&quot;,&quot;activate&quot;:&quot;onmouseover&quot;,&quot;position&quot;:&quot;triggerBottom&quot;,&quot;popoverLabel&quot;:&quot;Versender / Verkäufer&quot;}">
+<a data-csa-c-content-id="odf-desktop-merchant-info" data-csa-c-slot-id="odf-desktop-merchant-info-anchor-text" data-csa-c-type="widget" class="a-link-normal a-popover-trigger a-declarative odf-truncation-popover aok-hidden">
+<span class="a-size-small offer-display-feature-text-message">Amazon</span>
+</a>
+</span>
+<div class="a-popover-preload" id="a-popover-offerDisplayFeatureMerchantInfoPopover-0">
+<div data-csa-c-content-id="desktop-merchant-info" data-csa-c-slot-id="odf-desktop-merchant-info-popover-description" data-csa-c-type="widget" class="a-section a-padding-none">
+<div aria-level="5" class="a-row a-spacing-base">
+<span class="a-text-bold">Versender / Verkäufer</span>
+</div>
+<div class="a-row a-spacing-micro odf-popover-overflow-wrap"> Amazon </div>
+</div>
+</div>
+</div>
+</body></html>

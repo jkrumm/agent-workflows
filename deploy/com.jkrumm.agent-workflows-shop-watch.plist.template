@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jkrumm.agent-workflows-shop-watch</string>
+
+  <!-- One run of the price watch (docs/shop.md §Watch): `agw shop watch` reads the idealo, geizhals and amazon.de offers of
+       every product in ~/.agent-workflows/data/shop/watch.json, appends one row per product to record.jsonl and sends
+       one ntfy message per product whose lowest qualifying offer changed state. The reads, the pause between them, the
+       research Chrome and the ntfy settings are the host's (com.jkrumm.agent-workflows-host); this job only asks.
+
+       A schedule, not a daemon: StartInterval, no KeepAlive, no RunAtLoad (`make shop-watch-setup` makes the first run
+       itself, so a failing watch list shows at setup, where someone is present). Every six hours, four runs a day, one
+       request per product page per run. jobrun records each run and `jobs-grade` grades it; the deadline is far above a
+       run's length (about 2 s of pause per page plus the browser read, a few minutes for four products). -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>__HOME__/.local/bin/jobrun</string>
+    <string>com.jkrumm.agent-workflows-shop-watch</string>
+    <string>--owner</string><string>agent-workflows</string>
+    <string>--every</string><string>21600</string>
+    <string>--timeout</string><string>1800</string>
+    <string>--</string>
+    <string>__HOME__/.local/bin/agw</string>
+    <string>shop</string>
+    <string>watch</string>
+    <!-- A mutating command is refused off a TTY without --commit (launchd has none). -->
+    <string>--commit</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>21600</integer>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- launchd starts this with no shell profile: jobrun and agw are bun scripts. -->
+    <key>PATH</key>
+    <string>__HOME__/.bun/bin:__HOME__/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>AGW_CALLER</key>
+    <string>shop-watch</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/agent-workflows-shop-watch.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/agent-workflows-shop-watch.log</string>
+</dict>
+</plist>

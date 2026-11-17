@@ -1,0 +1,1516 @@
+<html><head><title>Corsair Vengeance 48GB Kit DDR5-5600 CL40 (CMK48GX5M2B5600C40) ab 564,85 € | Vergleiche Black Friday Angebote auf idealo.de</title></head><body>
+<script data-testid="Product" type="application/ld+json">{"@type":"Product","offers":{"@type":"AggregateOffer","offerCount":11}}</script>
+<h1 id="oopStage-title" class="oopStage-title" translate="no">
+<span>Corsair Vengeance 48GB Kit DDR5-5600 CL40 (CMK48GX5M2B5600C40)</span>
+</h1><div class="oopStage-productInfoTopItems small-12 collapse-both columns">
+<b>Produktübersicht:</b>
+<span class="oopStage-productInfoTopItem"> 48&nbsp;GB </span>
+<span class="oopStage-productInfoTopItem"> Anzahl Module&nbsp;2 </span>
+<span class="oopStage-productInfoTopItem"> Kapazität pro Modul&nbsp;24&nbsp;GB </span>
+<span class="oopStage-productInfoTopItem"> 5.600&nbsp;MT/s </span>
+<span class="oopStage-productInfoTopItem"> PC5-44.800 </span>
+<span class="oopStage-productInfoTopItem"> CL 40-40-40-77 </span>
+<span class="oopStage-productInfoTopItem"> 1,25&nbsp;V </span>
+<span class="oopStage-productInfoTopItem"> UDIMM </span>
+<span class="oopStage-productInfoTopItem"> On-Die ECC </span>
+<span class="oopStage-productInfoTopItem"> XMP </span>
+<span class="oopStage-productInfoTopItem"> schwarz </span>
+<span class="oopStage-productInfoTopItem"> Corsair Vengeance </span>
+<span class="oopStage-productInfoTopItemWrapperDatasheetLink"><a id="productDetailsAnchor"> Produktdetails</a>
+</span>
+</div>
+<ul class="productOffers-list" data-import-time="Daten vom 17.11.2026&nbsp;15:14">
+<li class="productOffers-listItem row row-24 " data-shop="{&quot;type&quot;:&quot;IDECL&quot;}" data-mtrx-click="{&quot;shop_name&quot;:&quot;it-veith.de&quot;,&quot;products&quot;:[{&quot;id&quot;:202332264,&quot;category&quot;:4552,&quot;name&quot;:&quot;Corsair Vengeance 48GB Kit DDR5-5600 CL40 (CMK48GX5M2B5600C40)&quot;,&quot;price&quot;:564.85}],&quot;event&quot;:&quot;leadout&quot;}">
+<div class="small-24 medium-24 large-24 larger-5 xlarge-4 productOffers-listItemTitleWrapper" data-offerlist-column="title">
+<a class="productOffers-listItemTitle">
+<span class="productOffers-listItemTitleInner " title="✔️ Corsair Vengeance DDR5 48GB (2x24GB) 5600MHz C40 In­tel-Op­ti­mier­ter Desk­top-Spei­cher (On­board-Span­nungs­re­ge­lung, Be­nut­zer­de­fi­nier­te XMP 3.0-Pro­fi­le, Kompakt Form­fak­tor) Schwarz, CMK48GX5M2B5600C40"> ✔️ Corsair Vengeance DDR5 48GB (2x24GB) 5600MHz C40 In­tel-Op­ti­mier­ter Desk­top-Spei­cher (On­board-Span­nungs­re­ge­lung, Be­nut­zer­de­fi­nier­te XMP 3.0-Pro­fi­le, Kompakt Form­fak­tor) Schwarz, CMK48GX5M2B5600C40</span>
+</a>
+</div>
+<div class="productOffers-listItemOffer small-8 medium-8 large-9 larger-8 xlarge-8 columns" data-offerlist-column="price">
+<div class="row">
+<div class="column small-24 large-12 larger-12 xlarge-12 price-column">
+<div class="price-and-badge-wrapper">
+<a class="productOffers-listItemOfferPrice"> 564,85&nbsp;€</a>
+<div class="best-total-price-box">
+<div class="best-total-price">
+<span>
+<a>
+<span class="productOffers-listItemOfferBestTotalPrice"> Günstigster Gesamtpreis</span><br>
+</a></span>
+</div>
+<div class="line-offer-view productOffers-listItemOfferShippingDetails show-for-large withBestTotalPrice">
+<a>
+<div class="productOffers-listItemOfferShippingDetails" title="564,85&nbsp;€ inkl. Versand"> 564,85&nbsp;€ inkl. Versand</div>
+</a>
+</div>
+</div>
+</div>
+</div>
+<div class="column large-12 larger-12 xlarge-12 show-for-large payment-column">
+<div class="productOffers-listItemOfferShippingDetailsRight">
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/paypal-c038cb02ad0744a542c4.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Rechnung">
+<a>
+<span> Rechnung</span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/visa-ac94b93bc9a9921b1f11.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/mastercard-2e81fe3d252402ab0358.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/klarna-78921c2f072f5cda9c8b.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Vorkasse">
+<a>
+<span> Vorkasse</span>
+</a>
+</span>
+</div>
+</div>
+</div>
+</div>
+<ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="delivery">
+<a>
+<li>
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Do. 19.11.</span>
+</p>
+<div class="productOffers-listItemOfferDeliveryProviderWrapper">
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> DHL</span>
+</div>
+</li>
+</a>
+</ul>
+<div class="small-8 medium-8 large-6 larger-4 xlarge-4 xlarge-text-left large-text-center small-text-center productOffers-listItemOfferShopV2Block va-middle-xlarge-up" data-offerlist-column="shop">
+<div class="productOffers-listItemOfferShopV2">
+<div class="productOffers-listItemOfferShopV2LogoContainer">
+<div class="productOffers-listItemOfferShopV2Logo">
+<a class="productOffers-listItemOfferShopV2LogoLink" data-shop-name="it-veith.de - Shop aus Zwickau">
+<img alt="it-veith.de - Shop aus Zwickau">
+</a>
+</div>
+</div>
+<div class="productOffers-listItemOfferShopV2RatingsContainer">
+<a class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/321919.html">
+<div class="productOffers-listItemOfferShopV2Stars rating-single-star">
+<div class="starAndRatingWrapper">
+<span>
+<b>4,7</b>
+</span>
+</div>
+</div>
+</a>
+<a class="productOffers-listItemOfferShopV2NORatings" href="https://www.idealo.de/preisvergleich/Shop/321919.html">
+<span class="productOffers-listItemOfferShopV2NORatings--numberOfRatings">204</span>
+</a>
+</div>
+</div>
+<button class="show-for-large productOffers-listItemOfferShopV2Info"> Shop-Details</button>
+</div>
+<div class="productOffers-listItemOfferCtaHolder small-8 medium-8 large-4 larger-4 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="leadoutbutton">
+<ul class="productOffers-listItemOfferCta">
+<li>
+<a class="productOffers-listItemOfferCtaLeadout button button--leadout" data-shop-name="it-veith.de" aria-label="Zum it-veith.de Shop"> Zum Shop<img alt="Corsair Vengeance 48GB Kit DDR5-5600 CL40 (CMK48GX5M2B5600C40) kaufen: günstige RAM bei it-veith.de">
+</a>
+</li>
+</ul>
+</div>
+<div class="productOffers-listItemOfferDetailsMobile ">
+<div class="productOffers-listItemOfferDetails"> Details</div>
+<div class="vertical-separator"></div>
+<div class="productOffers-listItemOfferDelivery delivery delivery--short svg-icon">
+<a>
+</a>
+</div>
+<span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile">
+<a>
+<span class="productOffers-listItemOfferDeliveryStatusMobileText">
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Do. 19.11.</span>
+</p>
+</span>
+</a>
+</span>
+</div>
+<a class="productOffers-listItemOfferLink" data-shop-name="it-veith.de">
+</a>
+</li>
+<li class="productOffers-listItem row row-24 " data-shop="{&quot;type&quot;:&quot;IDECL&quot;}" data-mtrx-click="{&quot;shop_name&quot;:&quot;kaufland.de&quot;,&quot;products&quot;:[{&quot;id&quot;:202332264,&quot;category&quot;:4552,&quot;name&quot;:&quot;Corsair Vengeance 48GB Kit DDR5-5600 CL40 (CMK48GX5M2B5600C40)&quot;,&quot;price&quot;:699.0}],&quot;event&quot;:&quot;leadout&quot;}">
+<div class="small-24 medium-24 large-24 larger-5 xlarge-4 productOffers-listItemTitleWrapper" data-offerlist-column="title">
+<a class="productOffers-listItemTitle">
+<span class="productOffers-listItemTitleInner " title="Corsair Vengeance CMK48GX5M2B5600C40, 48 GB, 2 x 24 GB, DDR5, 5200 MHz, 288-pin DIMM"> Corsair Vengeance CMK48GX5M2B5600C40, 48 GB, 2 x 24 GB, DDR5, 5200 MHz, 288-pin DIMM</span>
+</a>
+</div>
+<div class="productOffers-listItemOffer small-8 medium-8 large-9 larger-8 xlarge-8 columns" data-offerlist-column="price">
+<div class="row">
+<div class="column small-24 large-12 larger-12 xlarge-12 price-column">
+<div class="price-and-badge-wrapper">
+<a class="productOffers-listItemOfferPrice"> 699,00&nbsp;€</a>
+<div class="best-total-price">
+</div>
+<div class="line-offer-view productOffers-listItemOfferShippingDetails show-for-large">
+<a>
+<div class="productOffers-listItemOfferShippingDetails" title="699,00&nbsp;€ inkl. Versand"> 699,00&nbsp;€ inkl. Versand</div>
+</a>
+</div>
+</div>
+</div>
+<div class="column large-12 larger-12 xlarge-12 show-for-large payment-column">
+<div class="productOffers-listItemOfferShippingDetailsRight">
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/paypal-c038cb02ad0744a542c4.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Rechnung">
+<a>
+<span> Rechnung</span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/visa-ac94b93bc9a9921b1f11.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/mastercard-2e81fe3d252402ab0358.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/klarna-78921c2f072f5cda9c8b.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Lastschrift">
+<a>
+<span> Lastschrift</span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Vorkasse">
+<a>
+<span> Vorkasse</span>
+</a>
+</span>
+</div>
+</div>
+</div>
+</div>
+<ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="delivery">
+<a>
+<li>
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Fr. 20.11.</span>
+</p>
+</li>
+<li>
+<div class="productOffers-listItemOfferDeliveryRetourText">
+<span>Rücksendung 14 Tage kostenfrei</span>
+</div>
+</li>
+</a>
+</ul>
+<div class="small-8 medium-8 large-6 larger-4 xlarge-4 xlarge-text-left large-text-center small-text-center productOffers-listItemOfferShopV2Block va-middle-xlarge-up" data-offerlist-column="shop">
+<div class="productOffers-listItemOfferShopV2">
+<div class="productOffers-listItemOfferShopV2LogoContainer">
+<div class="productOffers-listItemOfferShopV2Logo">
+<a class="productOffers-listItemOfferShopV2LogoLink" data-shop-name="kaufland.de - Shop aus Neckarsulm">
+<img alt="kaufland.de - Shop aus Neckarsulm">
+</a>
+</div>
+<a>
+<div class="show-for-medium productOffers-listItemOfferShopV2MarketPlace"> Marktplatz</div>
+</a>
+</div>
+<div class="productOffers-listItemOfferShopV2RatingsContainer">
+<a class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/26895.html">
+<div class="productOffers-listItemOfferShopV2Stars rating-single-star">
+<div class="starAndRatingWrapper">
+<span>
+<b>4,5</b>
+</span>
+</div>
+</div>
+</a>
+<a class="productOffers-listItemOfferShopV2NORatings" href="https://www.idealo.de/preisvergleich/Shop/26895.html">
+<span class="productOffers-listItemOfferShopV2NORatings--numberOfRatings">56529</span>
+</a>
+</div>
+</div>
+<div class="productOffers-listItemOfferShopV2MarketPlaceSoldThrough"> Verkauf durch:</div>
+<div class="productOffers-listItemOfferShopV2MarketPlaceMerchantName">
+<a data-shop-name="kaufland.de" title="trade-sell"> trade-sell</a>
+</div>
+</div>
+<div class="productOffers-listItemOfferCtaHolder small-8 medium-8 large-4 larger-4 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="leadoutbutton">
+<ul class="productOffers-listItemOfferCta">
+<li>
+<a class="productOffers-listItemOfferCtaLeadout button button--leadout" data-shop-name="kaufland.de" aria-label="Zum kaufland.de Shop"> Zum Shop<img alt="Corsair Vengeance 48GB Kit DDR5-5600 CL40 (CMK48GX5M2B5600C40) bestellen: preiswerte RAM bei kaufland.de">
+</a>
+</li>
+</ul>
+</div>
+<div class="productOffers-listItemOfferDetailsMobile ">
+<div class="productOffers-listItemOfferDetails"> Details</div>
+<div class="vertical-separator"></div>
+<div class="productOffers-listItemOfferDelivery delivery delivery--short svg-icon">
+<a>
+</a>
+</div>
+<span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile">
+<a>
+<span class="productOffers-listItemOfferDeliveryStatusMobileText">
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Fr. 20.11.</span>
+</p>
+</span>
+</a>
+</span>
+</div>
+<a class="productOffers-listItemOfferLink" data-shop-name="kaufland.de">
+</a>
+</li>
+<li class="productOffers-listItem row row-24 " data-shop="{&quot;type&quot;:&quot;SHPSA&quot;}" data-mtrx-click="{&quot;shop_name&quot;:&quot;otto.de (Marktplatzhändler)&quot;,&quot;products&quot;:[{&quot;id&quot;:202332264,&quot;category&quot;:4552,&quot;name&quot;:&quot;Corsair Vengeance 48GB Kit DDR5-5600 CL40 (CMK48GX5M2B5600C40)&quot;,&quot;price&quot;:761.3}],&quot;event&quot;:&quot;leadout&quot;}">
+<div class="small-24 medium-24 large-24 larger-5 xlarge-4 productOffers-listItemTitleWrapper" data-offerlist-column="title">
+<a class="productOffers-listItemTitle">
+<span class="productOffers-listItemTitleInner " title="Corsair DIMM 48 GB DDR5-5600 (2x 24 GB) Dual-Kit, Ar­beits­spei­cher PC-Ar­beits­spei­cher"> Corsair DIMM 48 GB DDR5-5600 (2x 24 GB) Dual-Kit, Ar­beits­spei­cher PC-Ar­beits­spei­cher</span>
+</a>
+</div>
+<div class="productOffers-listItemOffer small-8 medium-8 large-9 larger-8 xlarge-8 columns" data-offerlist-column="price">
+<div class="row">
+<div class="column small-24 large-12 larger-12 xlarge-12 price-column">
+<div class="price-and-badge-wrapper">
+<a class="productOffers-listItemOfferPrice"> 761,30&nbsp;€</a>
+<div class="best-total-price">
+</div>
+<div class="line-offer-view productOffers-listItemOfferShippingDetails show-for-large">
+<a>
+<div class="productOffers-listItemOfferShippingDetails" title="761,30&nbsp;€ inkl. Versand"> 761,30&nbsp;€ inkl. Versand</div>
+</a>
+</div>
+</div>
+</div>
+<div class="column large-12 larger-12 xlarge-12 show-for-large payment-column">
+<div class="productOffers-listItemOfferShippingDetailsRight">
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/paypal-c038cb02ad0744a542c4.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Rechnung">
+<a>
+<span> Rechnung</span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/visa-ac94b93bc9a9921b1f11.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/mastercard-2e81fe3d252402ab0358.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/american-express-b6d0b3d814c4b5314ddb.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Lastschrift">
+<a>
+<span> Lastschrift</span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Vorkasse">
+<a>
+<span> Vorkasse</span>
+</a>
+</span>
+</div>
+</div>
+</div>
+</div>
+<ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="delivery">
+<a>
+<li>
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Fr. 20.11.</span>
+</p>
+<div class="productOffers-listItemOfferDeliveryProviderWrapper">
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> DHL</span>
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> DPD</span>
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> Hermes</span>
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> Spedition</span>
+</div>
+</li>
+<li>
+<div class="productOffers-listItemOfferDeliveryRetourText">
+<span>Rücksendung 30 Tage kostenfrei</span>
+</div>
+</li>
+</a>
+</ul>
+<div class="small-8 medium-8 large-6 larger-4 xlarge-4 xlarge-text-left large-text-center small-text-center productOffers-listItemOfferShopV2Block va-middle-xlarge-up" data-offerlist-column="shop">
+<div class="productOffers-listItemOfferShopV2">
+<div class="productOffers-listItemOfferShopV2LogoContainer">
+<div class="productOffers-listItemOfferShopV2Logo">
+<a class="productOffers-listItemOfferShopV2LogoLink" data-shop-name="otto.de (Marktplatzhändler) - Shop aus Hamburg">
+<img alt="otto.de (Marktplatzhändler) - Shop aus Hamburg">
+</a>
+</div>
+<a>
+<div class="show-for-medium productOffers-listItemOfferShopV2MarketPlace"> Marktplatz</div>
+</a>
+</div>
+<div class="productOffers-listItemOfferShopV2RatingsContainer">
+<a class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/322802.html">
+<div class="productOffers-listItemOfferShopV2Stars rating-single-star">
+<div class="starAndRatingWrapper">
+<span>
+<b>2,2</b>
+</span>
+</div>
+</div>
+</a>
+<a class="productOffers-listItemOfferShopV2NORatings" href="https://www.idealo.de/preisvergleich/Shop/322802.html">
+<span class="productOffers-listItemOfferShopV2NORatings--numberOfRatings">170</span>
+</a>
+</div>
+</div>
+<div class="productOffers-listItemOfferShopV2MarketPlaceSoldThrough"> Verkauf durch:</div>
+<div class="productOffers-listItemOfferShopV2MarketPlaceMerchantName">
+<a data-shop-name="otto.de (Marktplatzhändler)" title="ALTERNATE.de"> ALTERNATE.de</a>
+</div>
+</div>
+<div class="productOffers-listItemOfferCtaHolder small-8 medium-8 large-4 larger-4 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="leadoutbutton">
+<ul class="productOffers-listItemOfferCta">
+<li>
+<a class="productOffers-listItemOfferCtaLeadout button button--leadout" data-shop-name="otto.de (Marktplatzhändler)" aria-label="Zum otto.de (Marktplatzhändler) Shop"> Zum Shop<img alt="Corsair Vengeance 48GB Kit DDR5-5600 CL40 (CMK48GX5M2B5600C40) versand: billige RAM bei otto.de (Marktplatzhändler)">
+</a>
+</li>
+</ul>
+</div>
+<div class="productOffers-listItemOfferDetailsMobile ">
+<div class="productOffers-listItemOfferDetails"> Details</div>
+<div class="vertical-separator"></div>
+<div class="productOffers-listItemOfferDelivery delivery delivery--short svg-icon">
+<a>
+</a>
+</div>
+<span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile">
+<a>
+<span class="productOffers-listItemOfferDeliveryStatusMobileText">
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Fr. 20.11.</span>
+</p>
+</span>
+</a>
+</span>
+</div>
+<a class="productOffers-listItemOfferLink" data-shop-name="otto.de (Marktplatzhändler)">
+</a>
+</li>
+<li class="productOffers-listItem row row-24 " data-shop="{&quot;type&quot;:&quot;IDECL&quot;}" data-mtrx-click="{&quot;shop_name&quot;:&quot;25n.de&quot;,&quot;products&quot;:[{&quot;id&quot;:202332264,&quot;category&quot;:4552,&quot;name&quot;:&quot;Corsair Vengeance 48GB Kit DDR5-5600 CL40 (CMK48GX5M2B5600C40)&quot;,&quot;price&quot;:770.07}],&quot;event&quot;:&quot;leadout&quot;}">
+<div class="small-24 medium-24 large-24 larger-5 xlarge-4 productOffers-listItemTitleWrapper" data-offerlist-column="title">
+<a class="productOffers-listItemTitle">
+<span class="productOffers-listItemTitleInner " title="48GB DDR5-5600 CORSAIR VENGEANCE black CL40 (2x24GB)"> 48GB DDR5-5600 CORSAIR VENGEANCE black CL40 (2x24GB)</span>
+</a>
+</div>
+<div class="productOffers-listItemOffer small-8 medium-8 large-9 larger-8 xlarge-8 columns" data-offerlist-column="price">
+<div class="row">
+<div class="column small-24 large-12 larger-12 xlarge-12 price-column">
+<div class="price-and-badge-wrapper">
+<a class="productOffers-listItemOfferPrice"> 770,07&nbsp;€</a>
+<div class="best-total-price">
+</div>
+<div class="line-offer-view productOffers-listItemOfferShippingDetails show-for-large">
+<a>
+<div class="productOffers-listItemOfferShippingDetails" title="770,07&nbsp;€ inkl. Versand"> 770,07&nbsp;€ inkl. Versand</div>
+</a>
+</div>
+</div>
+</div>
+<div class="column large-12 larger-12 xlarge-12 show-for-large payment-column">
+<div class="productOffers-listItemOfferShippingDetailsRight">
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/paypal-c038cb02ad0744a542c4.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Rechnung">
+<a>
+<span> Rechnung</span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/visa-ac94b93bc9a9921b1f11.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/mastercard-2e81fe3d252402ab0358.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/american-express-b6d0b3d814c4b5314ddb.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Vorkasse">
+<a>
+<span> Vorkasse</span>
+</a>
+</span>
+</div>
+</div>
+</div>
+</div>
+<ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="delivery">
+<a>
+<li>
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Do. 19.11.</span>
+</p>
+<div class="productOffers-listItemOfferDeliveryProviderWrapper">
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> DHL</span>
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> UPS</span>
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> Spedition</span>
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> trans-o-flex|TOF</span>
+</div>
+</li>
+</a>
+</ul>
+<div class="small-8 medium-8 large-6 larger-4 xlarge-4 xlarge-text-left large-text-center small-text-center productOffers-listItemOfferShopV2Block va-middle-xlarge-up" data-offerlist-column="shop">
+<div class="productOffers-listItemOfferShopV2">
+<div class="productOffers-listItemOfferShopV2LogoContainer">
+<div class="productOffers-listItemOfferShopV2Logo">
+<a class="productOffers-listItemOfferShopV2LogoLink" data-shop-name="25n.de - Shop aus Kreuzau">
+<img alt="25n.de - Shop aus Kreuzau">
+</a>
+</div>
+</div>
+<div class="productOffers-listItemOfferShopV2RatingsContainer">
+<a class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/28156.html">
+<div class="productOffers-listItemOfferShopV2Stars rating-single-star">
+<div class="starAndRatingWrapper">
+<span>
+<b>3,6</b>
+</span>
+</div>
+</div>
+</a>
+<a class="productOffers-listItemOfferShopV2NORatings" href="https://www.idealo.de/preisvergleich/Shop/28156.html">
+<span class="productOffers-listItemOfferShopV2NORatings--numberOfRatings">218</span>
+</a>
+</div>
+</div>
+<button class="show-for-large productOffers-listItemOfferShopV2Info"> Shop-Details</button>
+</div>
+<div class="productOffers-listItemOfferCtaHolder small-8 medium-8 large-4 larger-4 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="leadoutbutton">
+<ul class="productOffers-listItemOfferCta">
+<li>
+<a class="productOffers-listItemOfferCtaLeadout button button--leadout" data-shop-name="25n.de" aria-label="Zum 25n.de Shop"> Zum Shop<img alt="Corsair Vengeance 48GB Kit DDR5-5600 CL40 (CMK48GX5M2B5600C40) kaufen: günstige RAM bei 25n.de">
+</a>
+</li>
+</ul>
+</div>
+<div class="productOffers-listItemOfferDetailsMobile ">
+<div class="productOffers-listItemOfferDetails"> Details</div>
+<div class="vertical-separator"></div>
+<div class="productOffers-listItemOfferDelivery delivery delivery--short svg-icon">
+<a>
+</a>
+</div>
+<span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile">
+<a>
+<span class="productOffers-listItemOfferDeliveryStatusMobileText">
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Do. 19.11.</span>
+</p>
+</span>
+</a>
+</span>
+</div>
+<a class="productOffers-listItemOfferLink" data-shop-name="25n.de">
+</a>
+</li>
+<li class="productOffers-listItem row row-24 " data-shop="{&quot;type&quot;:&quot;IDECL&quot;}" data-mtrx-click="{&quot;shop_name&quot;:&quot;electronis.de&quot;,&quot;products&quot;:[{&quot;id&quot;:202332264,&quot;category&quot;:4552,&quot;name&quot;:&quot;Corsair Vengeance 48GB Kit DDR5-5600 CL40 (CMK48GX5M2B5600C40)&quot;,&quot;price&quot;:825.33}],&quot;event&quot;:&quot;leadout&quot;}">
+<div class="small-24 medium-24 large-24 larger-5 xlarge-4 productOffers-listItemTitleWrapper" data-offerlist-column="title">
+<a class="productOffers-listItemTitle">
+<span class="productOffers-listItemTitleInner " title="Corsair Vengeance 48GB UDIMM Kit 2x24GB DDR5-5600 CL40-40-40-77 - CMK48GX5M2B5600C40 schwarz"> Corsair Vengeance 48GB UDIMM Kit 2x24GB DDR5-5600 CL40-40-40-77 - CMK48GX5M2B5600C40 schwarz</span>
+</a>
+</div>
+<div class="productOffers-listItemOffer small-8 medium-8 large-9 larger-8 xlarge-8 columns" data-offerlist-column="price">
+<div class="row">
+<div class="column small-24 large-12 larger-12 xlarge-12 price-column">
+<div class="price-and-badge-wrapper">
+<a class="productOffers-listItemOfferPrice"> 825,33&nbsp;€</a>
+<div class="best-total-price">
+</div>
+<div class="line-offer-view productOffers-listItemOfferShippingDetails show-for-large">
+<a>
+<div class="productOffers-listItemOfferShippingDetails" title="832,23&nbsp;€ inkl. Versand"> 832,23&nbsp;€ inkl. Versand</div>
+</a>
+</div>
+</div>
+</div>
+<div class="column large-12 larger-12 xlarge-12 show-for-large payment-column">
+<div class="productOffers-listItemOfferShippingDetailsRight">
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/paypal-c038cb02ad0744a542c4.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/visa-ac94b93bc9a9921b1f11.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/mastercard-2e81fe3d252402ab0358.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/american-express-b6d0b3d814c4b5314ddb.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/diners-club-1742dae18f60772bc49a.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/klarna-78921c2f072f5cda9c8b.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Nachnahme">
+<a>
+<span> Nachnahme</span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Vorkasse">
+<a>
+<span> Vorkasse</span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/amzpay-260d13cc85438b08e97b.png" title=""></span>
+</a>
+</span>
+</div>
+</div>
+</div>
+</div>
+<ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="delivery">
+<a>
+<li>
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Fr. 20.11.</span>
+</p>
+<div class="productOffers-listItemOfferDeliveryProviderWrapper">
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> DHL</span>
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> DPD</span>
+</div>
+</li>
+</a>
+</ul>
+<div class="small-8 medium-8 large-6 larger-4 xlarge-4 xlarge-text-left large-text-center small-text-center productOffers-listItemOfferShopV2Block va-middle-xlarge-up" data-offerlist-column="shop">
+<div class="productOffers-listItemOfferShopV2">
+<div class="productOffers-listItemOfferShopV2LogoContainer">
+<div class="productOffers-listItemOfferShopV2Logo">
+<a class="productOffers-listItemOfferShopV2LogoLink" data-shop-name="electronis.de - Shop aus Potsdam">
+<img alt="electronis.de - Shop aus Potsdam">
+</a>
+</div>
+</div>
+<div class="productOffers-listItemOfferShopV2RatingsContainer">
+<a class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/20481.html">
+<div class="productOffers-listItemOfferShopV2Stars rating-single-star">
+<div class="starAndRatingWrapper">
+<span>
+<b>4,8</b>
+</span>
+</div>
+</div>
+</a>
+<a class="productOffers-listItemOfferShopV2NORatings" href="https://www.idealo.de/preisvergleich/Shop/20481.html">
+<span class="productOffers-listItemOfferShopV2NORatings--numberOfRatings">6918</span>
+</a>
+</div>
+</div>
+<button class="show-for-large productOffers-listItemOfferShopV2Info"> Shop-Details</button>
+</div>
+<div class="productOffers-listItemOfferCtaHolder small-8 medium-8 large-4 larger-4 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="leadoutbutton">
+<ul class="productOffers-listItemOfferCta">
+<li>
+<a class="productOffers-listItemOfferCtaLeadout button button--leadout" data-shop-name="electronis.de" aria-label="Zum electronis.de Shop"> Zum Shop<img alt="Corsair Vengeance 48GB Kit DDR5-5600 CL40 (CMK48GX5M2B5600C40) bestellen: preiswerte RAM bei electronis.de">
+</a>
+</li>
+</ul>
+</div>
+<div class="productOffers-listItemOfferDetailsMobile ">
+<div class="productOffers-listItemOfferDetails"> Details</div>
+<div class="vertical-separator"></div>
+<div class="productOffers-listItemOfferDelivery delivery delivery--short svg-icon">
+<a>
+</a>
+</div>
+<span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile">
+<a>
+<span class="productOffers-listItemOfferDeliveryStatusMobileText">
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Fr. 20.11.</span>
+</p>
+</span>
+</a>
+</span>
+</div>
+<a class="productOffers-listItemOfferLink" data-shop-name="electronis.de">
+</a>
+</li>
+<li class="productOffers-listItem row row-24 " data-shop="{&quot;type&quot;:&quot;IDECL&quot;}" data-mtrx-click="{&quot;shop_name&quot;:&quot;jb-computer.de&quot;,&quot;products&quot;:[{&quot;id&quot;:202332264,&quot;category&quot;:4552,&quot;name&quot;:&quot;Corsair Vengeance 48GB Kit DDR5-5600 CL40 (CMK48GX5M2B5600C40)&quot;,&quot;price&quot;:825.34}],&quot;event&quot;:&quot;leadout&quot;}">
+<div class="small-24 medium-24 large-24 larger-5 xlarge-4 productOffers-listItemTitleWrapper" data-offerlist-column="title">
+<a class="productOffers-listItemTitle">
+<span class="productOffers-listItemTitleInner " title="Corsair Vengeance CMK48GX5M2B5600C40 Spei­cher­mo­dul 48 GB 2 x 24 GB DDR5 288-pin DIMM"> Corsair Vengeance CMK48GX5M2B5600C40 Spei­cher­mo­dul 48 GB 2 x 24 GB DDR5 288-pin DIMM</span>
+</a>
+</div>
+<div class="productOffers-listItemOffer small-8 medium-8 large-9 larger-8 xlarge-8 columns" data-offerlist-column="price">
+<div class="row">
+<div class="column small-24 large-12 larger-12 xlarge-12 price-column">
+<div class="price-and-badge-wrapper">
+<a class="productOffers-listItemOfferPrice"> 825,34&nbsp;€</a>
+<div class="best-total-price">
+</div>
+<div class="line-offer-view productOffers-listItemOfferShippingDetails show-for-large">
+<a>
+<div class="productOffers-listItemOfferShippingDetails" title="825,34&nbsp;€ inkl. Versand"> 825,34&nbsp;€ inkl. Versand</div>
+</a>
+</div>
+</div>
+</div>
+<div class="column large-12 larger-12 xlarge-12 show-for-large payment-column">
+<div class="productOffers-listItemOfferShippingDetailsRight">
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/paypal-c038cb02ad0744a542c4.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Rechnung">
+<a>
+<span> Rechnung</span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/visa-ac94b93bc9a9921b1f11.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/mastercard-2e81fe3d252402ab0358.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/american-express-b6d0b3d814c4b5314ddb.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/klarna-78921c2f072f5cda9c8b.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Lastschrift">
+<a>
+<span> Lastschrift</span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Vorkasse">
+<a>
+<span> Vorkasse</span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/amzpay-260d13cc85438b08e97b.png" title=""></span>
+</a>
+</span>
+</div>
+</div>
+</div>
+</div>
+<ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="delivery">
+<a>
+<li>
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Do. 19.11.</span>
+</p>
+<div class="productOffers-listItemOfferDeliveryProviderWrapper">
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> DHL</span>
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> Spedition</span>
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> GLS</span>
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> UPS</span>
+</div>
+</li>
+<li>
+<div class="productOffers-listItemOfferDeliveryRetourText">
+<span>Rücksendung 30 Tage kostenfrei</span>
+</div>
+</li>
+</a>
+</ul>
+<div class="small-8 medium-8 large-6 larger-4 xlarge-4 xlarge-text-left large-text-center small-text-center productOffers-listItemOfferShopV2Block va-middle-xlarge-up" data-offerlist-column="shop">
+<div class="productOffers-listItemOfferShopV2">
+<div class="productOffers-listItemOfferShopV2LogoContainer">
+<div class="productOffers-listItemOfferShopV2Logo">
+<a class="productOffers-listItemOfferShopV2LogoLink" data-shop-name="jb-computer.de - Shop aus Lübbecke">
+<img alt="jb-computer.de - Shop aus Lübbecke">
+</a>
+</div>
+</div>
+<div class="productOffers-listItemOfferShopV2RatingsContainer">
+<a class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/316826.html">
+<div class="productOffers-listItemOfferShopV2Stars rating-single-star">
+<div class="starAndRatingWrapper">
+<span>
+<b>3,8</b>
+</span>
+</div>
+</div>
+</a>
+<a class="productOffers-listItemOfferShopV2NORatings" href="https://www.idealo.de/preisvergleich/Shop/316826.html">
+<span class="productOffers-listItemOfferShopV2NORatings--numberOfRatings">458</span>
+</a>
+</div>
+</div>
+<button class="show-for-large productOffers-listItemOfferShopV2Info"> Shop-Details</button>
+</div>
+<div class="productOffers-listItemOfferCtaHolder small-8 medium-8 large-4 larger-4 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="leadoutbutton">
+<ul class="productOffers-listItemOfferCta">
+<li>
+<a class="productOffers-listItemOfferCtaLeadout button button--leadout" data-shop-name="jb-computer.de" aria-label="Zum jb-computer.de Shop"> Zum Shop<img alt="Corsair Vengeance 48GB Kit DDR5-5600 CL40 (CMK48GX5M2B5600C40) versand: billige RAM bei jb-computer.de">
+</a>
+</li>
+</ul>
+</div>
+<div class="productOffers-listItemOfferDetailsMobile ">
+<div class="productOffers-listItemOfferDetails"> Details</div>
+<div class="vertical-separator"></div>
+<div class="productOffers-listItemOfferDelivery delivery delivery--short svg-icon">
+<a>
+</a>
+</div>
+<span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile">
+<a>
+<span class="productOffers-listItemOfferDeliveryStatusMobileText">
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Do. 19.11.</span>
+</p>
+</span>
+</a>
+</span>
+</div>
+<a class="productOffers-listItemOfferLink" data-shop-name="jb-computer.de">
+</a>
+</li>
+<li class="productOffers-listItem row row-24 " data-shop="{&quot;type&quot;:&quot;IDECL&quot;}" data-mtrx-click="{&quot;shop_name&quot;:&quot;proshop.de&quot;,&quot;products&quot;:[{&quot;id&quot;:202332264,&quot;category&quot;:4552,&quot;name&quot;:&quot;Corsair Vengeance 48GB Kit DDR5-5600 CL40 (CMK48GX5M2B5600C40)&quot;,&quot;price&quot;:871.76}],&quot;event&quot;:&quot;leadout&quot;}">
+<div class="small-24 medium-24 large-24 larger-5 xlarge-4 productOffers-listItemTitleWrapper" data-offerlist-column="title">
+<a class="productOffers-listItemTitle">
+<span class="productOffers-listItemTitleInner " title="Corsair Vengeance DDR5-5600 - 48GB - CL40 - Dual Channel (2 pcs) - Intel XMP - Schwarz"> Corsair Vengeance DDR5-5600 - 48GB - CL40 - Dual Channel (2 pcs) - Intel XMP - Schwarz</span>
+</a>
+</div>
+<div class="productOffers-listItemOffer small-8 medium-8 large-9 larger-8 xlarge-8 columns" data-offerlist-column="price">
+<div class="row">
+<div class="column small-24 large-12 larger-12 xlarge-12 price-column">
+<div class="price-and-badge-wrapper">
+<a class="productOffers-listItemOfferPrice"> 871,76&nbsp;€</a>
+<div class="best-total-price">
+</div>
+<div class="line-offer-view productOffers-listItemOfferShippingDetails show-for-large">
+<a>
+<div class="productOffers-listItemOfferShippingDetails" title="876,75&nbsp;€ inkl. Versand"> 876,75&nbsp;€ inkl. Versand</div>
+</a>
+</div>
+</div>
+</div>
+<div class="column large-12 larger-12 xlarge-12 show-for-large payment-column">
+<div class="productOffers-listItemOfferShippingDetailsRight">
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/paypal-c038cb02ad0744a542c4.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Rechnung">
+<a>
+<span> Rechnung</span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/visa-ac94b93bc9a9921b1f11.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/mastercard-2e81fe3d252402ab0358.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/klarna-78921c2f072f5cda9c8b.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Vorkasse">
+<a>
+<span> Vorkasse</span>
+</a>
+</span>
+</div>
+</div>
+</div>
+</div>
+<ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="delivery">
+<a>
+<li>
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Mo. 23.11.</span>
+</p>
+<div class="productOffers-listItemOfferDeliveryProviderWrapper">
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> Deutsche Post</span>
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> DPD</span>
+</div>
+</li>
+</a>
+</ul>
+<div class="small-8 medium-8 large-6 larger-4 xlarge-4 xlarge-text-left large-text-center small-text-center productOffers-listItemOfferShopV2Block va-middle-xlarge-up" data-offerlist-column="shop">
+<div class="productOffers-listItemOfferShopV2">
+<div class="productOffers-listItemOfferShopV2LogoContainer">
+<div class="productOffers-listItemOfferShopV2Logo">
+<a class="productOffers-listItemOfferShopV2LogoLink" data-shop-name="proshop.de - Shop aus Hoejbjerg">
+<img alt="proshop.de - Shop aus Hoejbjerg">
+</a>
+</div>
+</div>
+<div class="productOffers-listItemOfferShopV2RatingsContainer">
+<a class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/302342.html">
+<div class="productOffers-listItemOfferShopV2Stars rating-single-star">
+<div class="starAndRatingWrapper">
+<span>
+<b>4,8</b>
+</span>
+</div>
+</div>
+</a>
+<a class="productOffers-listItemOfferShopV2NORatings" href="https://www.idealo.de/preisvergleich/Shop/302342.html">
+<span class="productOffers-listItemOfferShopV2NORatings--numberOfRatings">11597</span>
+</a>
+</div>
+</div>
+<button class="show-for-large productOffers-listItemOfferShopV2Info"> Shop-Details</button>
+</div>
+<div class="productOffers-listItemOfferCtaHolder small-8 medium-8 large-4 larger-4 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="leadoutbutton">
+<ul class="productOffers-listItemOfferCta">
+<li>
+<a class="productOffers-listItemOfferCtaLeadout button button--leadout" data-shop-name="proshop.de" aria-label="Zum proshop.de Shop"> Zum Shop<img alt="Corsair Vengeance 48GB Kit DDR5-5600 CL40 (CMK48GX5M2B5600C40) kaufen: günstige RAM bei proshop.de">
+</a>
+</li>
+</ul>
+</div>
+<div class="productOffers-listItemOfferDetailsMobile ">
+<div class="productOffers-listItemOfferDetails"> Details</div>
+<div class="vertical-separator"></div>
+<div class="productOffers-listItemOfferDelivery delivery delivery--medium svg-icon">
+<a>
+</a>
+</div>
+<span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile">
+<a>
+<span class="productOffers-listItemOfferDeliveryStatusMobileText">
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Mo. 23.11.</span>
+</p>
+</span>
+</a>
+</span>
+</div>
+<a class="productOffers-listItemOfferLink" data-shop-name="proshop.de">
+</a>
+</li>
+<li class="productOffers-listItem row row-24 " data-shop="{&quot;type&quot;:&quot;IDECL&quot;}" data-mtrx-click="{&quot;shop_name&quot;:&quot;Galaxus.de (Marktplatzhändler)&quot;,&quot;products&quot;:[{&quot;id&quot;:202332264,&quot;category&quot;:4552,&quot;name&quot;:&quot;Corsair Vengeance 48GB Kit DDR5-5600 CL40 (CMK48GX5M2B5600C40)&quot;,&quot;price&quot;:947.0}],&quot;event&quot;:&quot;leadout&quot;}">
+<div class="small-24 medium-24 large-24 larger-5 xlarge-4 productOffers-listItemTitleWrapper" data-offerlist-column="title">
+<a class="productOffers-listItemTitle">
+<span class="productOffers-listItemTitleInner " title="Corsair D548GB 5600-40 Vengeance bk K2 COR (2 x 24GB, 5600 MHz, DDR5-RAM, DIMM), RAM, Schwarz Schwarz"> Corsair D548GB 5600-40 Vengeance bk K2 COR (2 x 24GB, 5600 MHz, DDR5-RAM, DIMM), RAM, Schwarz Schwarz</span>
+</a>
+</div>
+<div class="productOffers-listItemOffer small-8 medium-8 large-9 larger-8 xlarge-8 columns" data-offerlist-column="price">
+<div class="row">
+<div class="column small-24 large-12 larger-12 xlarge-12 price-column">
+<div class="price-and-badge-wrapper">
+<a class="productOffers-listItemOfferPrice"> 947,00&nbsp;€</a>
+<div class="best-total-price">
+</div>
+<div class="line-offer-view productOffers-listItemOfferShippingDetails show-for-large">
+<a>
+<div class="productOffers-listItemOfferShippingDetails" title="947,00&nbsp;€ inkl. Versand"> 947,00&nbsp;€ inkl. Versand</div>
+</a>
+</div>
+</div>
+</div>
+<div class="column large-12 larger-12 xlarge-12 show-for-large payment-column">
+<div class="productOffers-listItemOfferShippingDetailsRight">
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/paypal-c038cb02ad0744a542c4.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Rechnung">
+<a>
+<span> Rechnung</span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/visa-ac94b93bc9a9921b1f11.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/mastercard-2e81fe3d252402ab0358.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/klarna-78921c2f072f5cda9c8b.png" title=""></span>
+</a>
+</span>
+</div>
+</div>
+</div>
+</div>
+<ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="delivery">
+<a>
+<li>
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Sa. 21.11.</span>
+</p>
+<div class="productOffers-listItemOfferDeliveryProviderWrapper">
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> DHL</span>
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> Spedition</span>
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> Deutsche Post</span>
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> PickPoint</span>
+</div>
+</li>
+<li>
+<div class="productOffers-listItemOfferDeliveryRetourText">
+<span>Rücksendung 30 Tage kostenfrei</span>
+</div>
+</li>
+</a>
+</ul>
+<div class="small-8 medium-8 large-6 larger-4 xlarge-4 xlarge-text-left large-text-center small-text-center productOffers-listItemOfferShopV2Block va-middle-xlarge-up" data-offerlist-column="shop">
+<div class="productOffers-listItemOfferShopV2">
+<div class="productOffers-listItemOfferShopV2LogoContainer">
+<div class="productOffers-listItemOfferShopV2Logo">
+<a class="productOffers-listItemOfferShopV2LogoLink" data-shop-name="Galaxus.de (Marktplatzhändler) - Shop aus Hamburg">
+<img alt="Galaxus.de (Marktplatzhändler) - Shop aus Hamburg">
+</a>
+</div>
+<a>
+<div class="show-for-medium productOffers-listItemOfferShopV2MarketPlace"> Marktplatz</div>
+</a>
+</div>
+<div class="productOffers-listItemOfferShopV2RatingsContainer">
+<a class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/329021.html">
+<div class="productOffers-listItemOfferShopV2Stars rating-single-star">
+<div class="starAndRatingWrapper">
+<span>
+<b>5,0</b>
+</span>
+</div>
+</div>
+</a>
+<a class="productOffers-listItemOfferShopV2NORatings" href="https://www.idealo.de/preisvergleich/Shop/329021.html">
+<span class="productOffers-listItemOfferShopV2NORatings--numberOfRatings">45</span>
+</a>
+</div>
+</div>
+<div class="productOffers-listItemOfferShopV2MarketPlaceSoldThrough"> Verkauf durch:</div>
+<div class="productOffers-listItemOfferShopV2MarketPlaceMerchantName">
+<a data-shop-name="Galaxus.de (Marktplatzhändler)" title="AO Projekt GmbH"> AO Projekt GmbH</a>
+</div>
+</div>
+<div class="productOffers-listItemOfferCtaHolder small-8 medium-8 large-4 larger-4 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="leadoutbutton">
+<ul class="productOffers-listItemOfferCta">
+<li>
+<a class="productOffers-listItemOfferCtaLeadout button button--leadout" data-shop-name="Galaxus.de (Marktplatzhändler)" aria-label="Zum Galaxus.de (Marktplatzhändler) Shop"> Zum Shop<img alt="Corsair Vengeance 48GB Kit DDR5-5600 CL40 (CMK48GX5M2B5600C40) bestellen: preiswerte RAM bei Galaxus.de (Marktplatzhändler)">
+</a>
+</li>
+</ul>
+</div>
+<div class="productOffers-listItemOfferDetailsMobile ">
+<div class="productOffers-listItemOfferDetails"> Details</div>
+<div class="vertical-separator"></div>
+<div class="productOffers-listItemOfferDelivery delivery delivery--medium svg-icon">
+<a>
+</a>
+</div>
+<span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile">
+<a>
+<span class="productOffers-listItemOfferDeliveryStatusMobileText">
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Sa. 21.11.</span>
+</p>
+</span>
+</a>
+</span>
+</div>
+<a class="productOffers-listItemOfferLink" data-shop-name="Galaxus.de (Marktplatzhändler)">
+</a>
+</li>
+<li class="productOffers-listItem row row-24 " data-shop="{&quot;type&quot;:&quot;EBYDE&quot;}" data-mtrx-click="{&quot;shop_name&quot;:&quot;eBay&quot;,&quot;products&quot;:[{&quot;id&quot;:202332264,&quot;category&quot;:4552,&quot;name&quot;:&quot;Corsair Vengeance 48GB Kit DDR5-5600 CL40 (CMK48GX5M2B5600C40)&quot;,&quot;price&quot;:981.43}],&quot;event&quot;:&quot;leadout&quot;}">
+<div class="small-24 medium-24 large-24 larger-5 xlarge-4 productOffers-listItemTitleWrapper" data-offerlist-column="title">
+<a class="productOffers-listItemTitle">
+<span class="productOffers-listItemTitleInner " title="Corsair Vengeance CMK48GX5M2B5600C40 Spei­cher­mo­dul 48 GB 2 x 24 GB DDR5 288-pin"> Corsair Vengeance CMK48GX5M2B5600C40 Spei­cher­mo­dul 48 GB 2 x 24 GB DDR5 288-pin</span>
+</a>
+</div>
+<div class="productOffers-listItemOffer small-8 medium-8 large-9 larger-8 xlarge-8 columns" data-offerlist-column="price">
+<div class="row">
+<div class="column small-24 large-12 larger-12 xlarge-12 price-column">
+<div class="price-and-badge-wrapper">
+<a class="productOffers-listItemOfferPrice"> 981,43&nbsp;€</a>
+<div class="best-total-price">
+</div>
+<div class="line-offer-view productOffers-listItemOfferShippingDetails show-for-large">
+<a>
+<div class="productOffers-listItemOfferShippingDetails" title="981,43&nbsp;€ inkl. Versand"> 981,43&nbsp;€ inkl. Versand</div>
+</a>
+</div>
+</div>
+</div>
+<div class="column large-12 larger-12 xlarge-12 show-for-large payment-column">
+<div class="productOffers-listItemOfferShippingDetailsRight">
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/paypal-c038cb02ad0744a542c4.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/visa-ac94b93bc9a9921b1f11.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/mastercard-2e81fe3d252402ab0358.png" title=""></span>
+</a>
+</span>
+</div>
+</div>
+</div>
+</div>
+<ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="delivery">
+<a>
+<li>
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Do. 19.11.</span>
+</p>
+</li>
+<li>
+<div class="productOffers-listItemOfferDeliveryRetourText">
+<span>Rücksendung 30 Tage kostenfrei</span>
+</div>
+</li>
+</a>
+</ul>
+<div class="small-8 medium-8 large-6 larger-4 xlarge-4 xlarge-text-left large-text-center small-text-center productOffers-listItemOfferShopV2Block va-middle-xlarge-up" data-offerlist-column="shop">
+<div class="productOffers-listItemOfferShopV2">
+<div class="productOffers-listItemOfferShopV2LogoContainer">
+<div class="productOffers-listItemOfferShopV2Logo">
+<a class="productOffers-listItemOfferShopV2LogoLink" data-shop-name="eBay - Shop aus Bern">
+<img alt="eBay - Shop aus Bern">
+</a>
+</div>
+<a>
+<div class="show-for-medium productOffers-listItemOfferShopV2MarketPlace"> Marktplatz</div>
+</a>
+</div>
+<div class="productOffers-listItemOfferShopV2RatingsContainer">
+<a class="productOffers-listItemOfferShopV2StarsLink">
+<div class="productOffers-listItemOfferShopV2Stars rating-single-star">
+<div class="starAndRatingWrapper">
+<span>
+<b>5,0</b>
+</span>
+</div>
+</div>
+</a>
+<a class="productOffers-listItemOfferShopV2NORatings">
+<span class="productOffers-listItemOfferShopV2NORatings--numberOfRatings">20322</span>
+</a>
+</div>
+</div>
+<div class="productOffers-listItemOfferShopV2MarketPlaceSoldThrough"> Verkauf durch:</div>
+<div class="productOffers-listItemOfferShopV2MarketPlaceMerchantName">
+<a data-shop-name="jb-vertrieb-gmbh" title="jb-vertrieb-gmbh"> jb-vertrieb-gmbh</a>
+</div>
+</div>
+<div class="productOffers-listItemOfferCtaHolder small-8 medium-8 large-4 larger-4 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="leadoutbutton">
+<ul class="productOffers-listItemOfferCta">
+<li>
+<a class="productOffers-listItemOfferCtaLeadout button button--leadout" data-shop-name="jb-vertrieb-gmbh" aria-label="Zum eBay Shop"> Zum Shop<img alt="Corsair Vengeance 48GB Kit DDR5-5600 CL40 (CMK48GX5M2B5600C40) versand: billige RAM bei jb-vertrieb-gmbh">
+</a>
+</li>
+</ul>
+</div>
+<div class="productOffers-listItemOfferDetailsMobile ">
+<div class="productOffers-listItemOfferDetails"> Details</div>
+<div class="vertical-separator"></div>
+<div class="productOffers-listItemOfferDelivery delivery delivery--short svg-icon">
+<a>
+</a>
+</div>
+<span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile">
+<a>
+<span class="productOffers-listItemOfferDeliveryStatusMobileText">
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Do. 19.11.</span>
+</p>
+</span>
+</a>
+</span>
+</div>
+<a class="productOffers-listItemOfferLink" data-shop-name="jb-vertrieb-gmbh">
+</a>
+</li>
+<li class="productOffers-listItem row row-24 " data-shop="{&quot;type&quot;:&quot;IDECL&quot;}" data-mtrx-click="{&quot;shop_name&quot;:&quot;e-tec.at (DE)&quot;,&quot;products&quot;:[{&quot;id&quot;:202332264,&quot;category&quot;:4552,&quot;name&quot;:&quot;Corsair Vengeance 48GB Kit DDR5-5600 CL40 (CMK48GX5M2B5600C40)&quot;,&quot;price&quot;:1068.9}],&quot;event&quot;:&quot;leadout&quot;}">
+<div class="small-24 medium-24 large-24 larger-5 xlarge-4 productOffers-listItemTitleWrapper" data-offerlist-column="title">
+<a class="productOffers-listItemTitle">
+<span class="productOffers-listItemTitleInner " title="CORSAIR Vengeance schwarz DIMM Kit 48GB, DDR5-5600, CL40-40-40-77, on-die ECC"> CORSAIR Vengeance schwarz DIMM Kit 48GB, DDR5-5600, CL40-40-40-77, on-die ECC</span>
+</a>
+</div>
+<div class="productOffers-listItemOffer small-8 medium-8 large-9 larger-8 xlarge-8 columns" data-offerlist-column="price">
+<div class="row">
+<div class="column small-24 large-12 larger-12 xlarge-12 price-column">
+<div class="price-and-badge-wrapper">
+<a class="productOffers-listItemOfferPrice"> 1.068,90&nbsp;€</a>
+<div class="best-total-price">
+</div>
+<div class="line-offer-view productOffers-listItemOfferShippingDetails show-for-large">
+<a>
+<div class="productOffers-listItemOfferShippingDetails" title="1.068,90&nbsp;€ inkl. Versand"> 1.068,90&nbsp;€ inkl. Versand</div>
+</a>
+</div>
+</div>
+</div>
+<div class="column large-12 larger-12 xlarge-12 show-for-large payment-column">
+<div class="productOffers-listItemOfferShippingDetailsRight">
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/paypal-c038cb02ad0744a542c4.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Rechnung">
+<a>
+<span> Rechnung</span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/visa-ac94b93bc9a9921b1f11.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/mastercard-2e81fe3d252402ab0358.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/klarna-78921c2f072f5cda9c8b.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Lastschrift">
+<a>
+<span> Lastschrift</span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Vorkasse">
+<a>
+<span> Vorkasse</span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="eps">
+<a>
+<span> eps</span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/amzpay-260d13cc85438b08e97b.png" title=""></span>
+</a>
+</span>
+</div>
+</div>
+</div>
+</div>
+<ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="delivery">
+<a>
+<li>
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Fr. 20.11.</span>
+</p>
+<div class="productOffers-listItemOfferDeliveryProviderWrapper">
+<span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider"> GLS</span>
+</div>
+</li>
+</a>
+</ul>
+<div class="small-8 medium-8 large-6 larger-4 xlarge-4 xlarge-text-left large-text-center small-text-center productOffers-listItemOfferShopV2Block va-middle-xlarge-up" data-offerlist-column="shop">
+<div class="productOffers-listItemOfferShopV2">
+<div class="productOffers-listItemOfferShopV2LogoContainer">
+<div class="productOffers-listItemOfferShopV2Logo">
+<a class="productOffers-listItemOfferShopV2LogoLink" data-shop-name="e-tec.at (DE) - Shop aus Pichlwang">
+<img alt="e-tec.at (DE) - Shop aus Pichlwang">
+</a>
+</div>
+</div>
+<div class="productOffers-listItemOfferShopV2RatingsContainer">
+<a class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/333157.html">
+<div class="productOffers-listItemOfferShopV2Stars rating-single-star">
+<div class="starAndRatingWrapper">
+<span>
+<b>4,7</b>
+</span>
+</div>
+</div>
+</a>
+<a class="productOffers-listItemOfferShopV2NORatings" href="https://www.idealo.de/preisvergleich/Shop/333157.html">
+<span class="productOffers-listItemOfferShopV2NORatings--numberOfRatings">155</span>
+</a>
+</div>
+</div>
+<button class="show-for-large productOffers-listItemOfferShopV2Info"> Shop-Details</button>
+</div>
+<div class="productOffers-listItemOfferCtaHolder small-8 medium-8 large-4 larger-4 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="leadoutbutton">
+<ul class="productOffers-listItemOfferCta">
+<li>
+<a class="productOffers-listItemOfferCtaLeadout button button--leadout" data-shop-name="e-tec.at (DE)" aria-label="Zum e-tec.at (DE) Shop"> Zum Shop<img alt="Corsair Vengeance 48GB Kit DDR5-5600 CL40 (CMK48GX5M2B5600C40) kaufen: günstige RAM bei e-tec.at (DE)">
+</a>
+</li>
+</ul>
+</div>
+<div class="productOffers-listItemOfferDetailsMobile ">
+<div class="productOffers-listItemOfferDetails"> Details</div>
+<div class="vertical-separator"></div>
+<div class="productOffers-listItemOfferDelivery delivery delivery--long svg-icon">
+<a>
+</a>
+</div>
+<span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile">
+<a>
+<span class="productOffers-listItemOfferDeliveryStatusMobileText">
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Fr. 20.11.</span>
+</p>
+</span>
+</a>
+</span>
+</div>
+<a class="productOffers-listItemOfferLink" data-shop-name="e-tec.at (DE)">
+</a>
+</li>
+<li class="productOffers-listItem row row-24 " data-hyperlinks="[{&quot;rel&quot;:&quot;totalPrice&quot;,&quot;href&quot;:&quot;https://www.idealo.de/offerpage/offerlist/product/202332264/start/0/sort/btpb?includeFilters=0&amp;excludeFilters=0&amp;offerpageViewId=0d43c0b5-31c8-4de6-b733-0dff6f45eb22&quot;},{&quot;rel&quot;:&quot;available&quot;,&quot;href&quot;:&quot;https://www.idealo.de/offerpage/offerlist/product/202332264/start/0/sort/default?includeFilters=64&amp;excludeFilters=0&amp;offerpageViewId=0d43c0b5-31c8-4de6-b733-0dff6f45eb22&quot;},{&quot;rel&quot;:&quot;freereturn&quot;,&quot;href&quot;:&quot;https://www.idealo.de/offerpage/offerlist/product/202332264/start/0/sort/default?includeFilters=262144&amp;excludeFilters=0&amp;offerpageViewId=0d43c0b5-31c8-4de6-b733-0dff6f45eb22&quot;},{&quot;rel&quot;:&quot;base&quot;,&quot;href&quot;:&quot;https://www.idealo.de/offerpage/offerlist/product/202332264/start/0/sort/default?includeFilters=0&amp;excludeFilters=0&amp;offerpageViewId=0d43c0b5-31c8-4de6-b733-0dff6f45eb22&quot;},{&quot;rel&quot;:&quot;homeDelivery&quot;,&quot;href&quot;:&quot;https://www.idealo.de/offerpage/offerlist/product/202332264/start/0/sort/default?includeFilters=0&amp;excludeFilters=0&amp;offerFilters=HOME_DELIVERY&amp;offerpageViewId=0d43c0b5-31c8-4de6-b733-0dff6f45eb22&quot;},{&quot;rel&quot;:&quot;disposalOnly&quot;,&quot;href&quot;:&quot;https://www.idealo.de/offerpage/offerlist/product/202332264/start/0/sort/default?includeFilters=0&amp;excludeFilters=0&amp;offerFilters=DISPOSAL_ONLY&amp;offerpageViewId=0d43c0b5-31c8-4de6-b733-0dff6f45eb22&quot;},{&quot;rel&quot;:&quot;shopLanguage&quot;,&quot;href&quot;:&quot;https://www.idealo.de/offerpage/offerlist/product/202332264/start/0/sort/default?includeFilters=0&amp;excludeFilters=0&amp;offerFilters=SHOP_LANG_INTERNATIONAL&amp;offerFilters=SHOP_LANG_DOMESTIC&amp;offerpageViewId=0d43c0b5-31c8-4de6-b733-0dff6f45eb22&quot;}]" data-total-offer-count="11" data-shop="{&quot;type&quot;:&quot;GENERAL&quot;}" data-mtrx-click="{&quot;shop_name&quot;:&quot;pccomponentes.de&quot;,&quot;products&quot;:[{&quot;id&quot;:202332264,&quot;category&quot;:4552,&quot;name&quot;:&quot;Corsair Vengeance 48GB Kit DDR5-5600 CL40 (CMK48GX5M2B5600C40)&quot;,&quot;price&quot;:1245.07}],&quot;event&quot;:&quot;leadout&quot;}">
+<div class="small-24 medium-24 large-24 larger-5 xlarge-4 productOffers-listItemTitleWrapper" data-offerlist-column="title">
+<a class="productOffers-listItemTitle">
+<span class="productOffers-listItemTitleInner " title="Ar­beits­spei­cher RAM Corsair Vengeance DDR5 48GB 2x24GB 5600MHz CL40 Aluminium Intel XMP 3.0"> Ar­beits­spei­cher RAM Corsair Vengeance DDR5 48GB 2x24GB 5600MHz CL40 Aluminium Intel XMP 3.0</span>
+</a>
+</div>
+<div class="productOffers-listItemOffer small-8 medium-8 large-9 larger-8 xlarge-8 columns" data-offerlist-column="price">
+<div class="row">
+<div class="column small-24 large-12 larger-12 xlarge-12 price-column">
+<div class="price-and-badge-wrapper">
+<a class="productOffers-listItemOfferPrice"> 1.245,07&nbsp;€</a>
+<div class="best-total-price">
+</div>
+<div class="line-offer-view productOffers-listItemOfferShippingDetails show-for-large">
+<a>
+<div class="productOffers-listItemOfferShippingDetails" title="1.245,07&nbsp;€ inkl. Versand"> 1.245,07&nbsp;€ inkl. Versand</div>
+</a>
+</div>
+</div>
+</div>
+<div class="column large-12 larger-12 xlarge-12 show-for-large payment-column">
+<div class="productOffers-listItemOfferShippingDetailsRight">
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/paypal-c038cb02ad0744a542c4.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/visa-ac94b93bc9a9921b1f11.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+<a>
+<span>
+<img class="offerImage" src="payment-icons/2x/mastercard-2e81fe3d252402ab0358.png" title=""></span>
+</a>
+</span>
+<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Vorkasse">
+<a>
+<span> Vorkasse</span>
+</a>
+</span>
+</div>
+</div>
+</div>
+</div>
+<ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="delivery">
+<a>
+<li>
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Mo. 23.11.</span>
+</p>
+</li>
+</a>
+</ul>
+<div class="small-8 medium-8 large-6 larger-4 xlarge-4 xlarge-text-left large-text-center small-text-center productOffers-listItemOfferShopV2Block va-middle-xlarge-up" data-offerlist-column="shop">
+<div class="productOffers-listItemOfferShopV2">
+<div class="productOffers-listItemOfferShopV2LogoContainer">
+<div class="productOffers-listItemOfferShopV2Logo">
+<a class="productOffers-listItemOfferShopV2LogoLink" data-shop-name="pccomponentes.de - Shop aus Alhama de Murcia">
+<img alt="pccomponentes.de - Shop aus Alhama de Murcia">
+</a>
+</div>
+<a>
+<div class="show-for-medium productOffers-listItemOfferShopV2MarketPlace"> Marktplatz</div>
+</a>
+</div>
+<div class="productOffers-listItemOfferShopV2RatingsContainer">
+<a class="productOffers-listItemOfferShopV2RatingsNoRatings" href="https://www.idealo.de/preisvergleich/Shop/338942.html"> ohne Bewertung</a>
+</div>
+</div>
+<div class="productOffers-listItemOfferShopV2MarketPlaceSoldThrough"> Verkauf durch:</div>
+<div class="productOffers-listItemOfferShopV2MarketPlaceMerchantName">
+<a data-shop-name="pccomponentes.de" title="Pc Componentes DE"> Pc Componentes DE</a>
+</div>
+</div>
+<div class="productOffers-listItemOfferCtaHolder small-8 medium-8 large-4 larger-4 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="leadoutbutton">
+<ul class="productOffers-listItemOfferCta">
+<li>
+<a class="productOffers-listItemOfferCtaLeadout button button--leadout" data-shop-name="pccomponentes.de" aria-label="Zum pccomponentes.de Shop"> Zum Shop<img alt="Corsair Vengeance 48GB Kit DDR5-5600 CL40 (CMK48GX5M2B5600C40) bestellen: preiswerte RAM bei pccomponentes.de">
+</a>
+</li>
+</ul>
+</div>
+<div class="productOffers-listItemOfferDetailsMobile ">
+<div class="productOffers-listItemOfferDetails"> Details</div>
+<div class="vertical-separator"></div>
+<div class="productOffers-listItemOfferDelivery delivery delivery--medium svg-icon">
+<a>
+</a>
+</div>
+<span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile">
+<a>
+<span class="productOffers-listItemOfferDeliveryStatusMobileText">
+<p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+<span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
+<span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Mo. 23.11.</span>
+</p>
+</span>
+</a>
+</span>
+</div>
+<a class="productOffers-listItemOfferLink" data-shop-name="pccomponentes.de">
+</a>
+</li>
+</ul>
+</body></html>

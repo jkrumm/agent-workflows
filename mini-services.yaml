@@ -39,3 +39,11 @@ services:
           keepalive-poll: 'the loop supervises a GUI Chrome, not a schedule: Chrome hands a second launch on the same profile to the running instance and exits 0, so a plain KeepAlive agent would respawn and open a tab every ThrottleInterval while another Chrome holds 9222',
         },
     }
+  - {
+      name: agent-workflows-shop-watch,
+      kind: launchd,
+      tier: on-demand,
+      label: com.jkrumm.agent-workflows-shop-watch,
+      memory_mib: 150,
+      note: "schedule: agw shop watch every 6 h under jobrun; the reads and the research Chrome are the host's, so this job holds only the agw client between runs (budget is a first guess: read make mini-ps after the first runs)",
+    }
