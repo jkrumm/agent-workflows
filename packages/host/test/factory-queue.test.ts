@@ -1,5 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { factoryQueueInput, guardQueue } from '@agent-workflows/capabilities'
+import {
+  type FactoryQueueOutput,
+  factoryQueueInput,
+  factoryQueueOutput,
+  guardQueue,
+} from '@agent-workflows/capabilities'
 import { messageResponse, startFakeGateway } from '@agent-workflows/testing/gateway'
 import { createFactoryQueue } from '../src/workflows/factory-queue/index.ts'
 import queueModule from '../src/workflows/factory-queue/module.ts'
@@ -7,9 +12,9 @@ import fixture from './fixtures/software-factory-loops.json'
 import { type Body, startTestHost, type TestHost } from './support.ts'
 
 const input = factoryQueueInput.parse(fixture.queue.input)
-const { output } = fixture.queue
+const output: FactoryQueueOutput = factoryQueueOutput.parse(fixture.queue.output)
 const tokens = { input_tokens: 900, output_tokens: 80 }
-const none = { edges: [], order: [] }
+const none = { edges: [], drop: [], order: [] }
 
 const promptOf = (request: { body: Record<string, unknown> } | undefined) =>
   String(((request?.body.messages ?? []) as Body[])[0]?.content)
@@ -123,6 +128,18 @@ describe('the guard through the workflow', () => {
     }
   })
 
+  test('a drop of an edge the Issue has comes through, one it does not have is discarded', async () => {
+    const own = { issue: 'issue_22', after: 'issue_12', reason: 'the layout work never touches the total' }
+    answers({ ...output, drop: [own, { ...own, issue: 'issue_20' }] })
+    try {
+      const { body } = await run()
+      expect(body.output).toMatchObject({ drop: [own], edges: output.edges, order: output.order })
+      expect(body.output.reason).toContain('guard: a drop names an edge the Issue does not have')
+    } finally {
+      answers(output)
+    }
+  })
+
   test('the prompt lists the queued ids under Routing', async () => {
     await run()
     const prompt = promptOf(t.iu.requests.at(-1))
@@ -180,7 +197,7 @@ describe('guardQueue', () => {
       ...input,
       issues: input.issues.map((i) => (i.id === 'issue_20' ? { ...i, after: ['issue_22'] } : i)),
     }
-    const closed = guardQueue({ edges: [edge('issue_22', 'issue_20')], order: [], reason: 'x' }, chained)
+    const closed = guardQueue({ edges: [edge('issue_22', 'issue_20')], drop: [], order: [], reason: 'x' }, chained)
     expect(closed.reason).toContain('cycle')
   })
 
@@ -197,6 +214,43 @@ describe('guardQueue', () => {
     const result = guard({ edges: [edge('issue_12', 'issue_15')] })
     expect(result.edges).toEqual([])
     expect(result.order).toEqual(output.order)
+  })
+
+  test("drop: a queued Issue's own edge stands, with the edges and the order", () => {
+    const drop = [edge('issue_22', 'issue_12')]
+    expect(guard({ drop })).toEqual({ ...output, drop })
+    // a drop alone survives: the answer is not the empty one
+    const alone = guard({ edges: [], drop, order: [] })
+    expect(alone.drop).toEqual(drop)
+  })
+
+  test('drop: an edge the Issue does not have, a running Issue and a second naming are dropped, the rest stands', () => {
+    const own = edge('issue_22', 'issue_12')
+    const result = guard({ drop: [edge('issue_20', 'issue_12'), edge('issue_12', 'issue_15'), own, own] })
+    expect(result.drop).toEqual([own])
+    expect(result.edges).toEqual(output.edges)
+    expect(result.order).toEqual(output.order)
+    expect(result.reason).toContain('an edge the Issue does not have')
+    expect(result.reason).toContain('not queued')
+    expect(result.reason).toContain('twice')
+    refused({ drop: [edge('issue_20', 'issue_12')] }, 'does not have')
+  })
+
+  test('drop: a dropped edge still binds the order, the factory decides whether it goes', () => {
+    // issue_20 waits for issue_22; the drop proposes to free it, an order that starts issue_20 first stays refused
+    const chained = {
+      ...input,
+      issues: input.issues.map((i) => (i.id === 'issue_20' ? { ...i, after: ['issue_22'] } : i)),
+    }
+    const drop = [edge('issue_20', 'issue_22')]
+    const answer = { edges: [], drop, order: ['issue_20', 'issue_22', 'issue_21', 'issue_15'], reason: 'x' }
+    const result = guardQueue(answer, chained)
+    expect(result.drop).toEqual(drop)
+    expect(result.order).toEqual([])
+  })
+
+  test('drop: the model may leave it out; the answer carries []', () => {
+    expect(factoryQueueOutput.parse({ edges: [], order: [], reason: 'x' }).drop).toEqual([])
   })
 
   test('order: a wrong order is [] and the valid edges stand', () => {

@@ -13,7 +13,7 @@ export type QueueCaller = Pick<HostRegistry, 'call'>
 
 /**
  * `factory-queue`: software-factory's queue loop asks, when the order of a repo's open Issues is unclear, for `after` edges
- * the work implies and an order for the queued ones. One journaled step, one tool-free `factory.queue` call on its route; the
+ * the work implies, existing edges to take back and an order for the queued ones. One journaled step, one tool-free `factory.queue` call on its route; the
  * answer is schema-checked and then held to `guardQueue`: only Issues the request showed, no cycle, the owner's priority
  * untouched. Fails closed to the empty answer (no edges, the factory's order) instead of failing the run.
  */
@@ -41,7 +41,7 @@ export function createFactoryQueue(deps: { registry: QueueCaller }): HostWorkflo
   return {
     workflow,
     summary:
-      "Propose `after` edges and an order for a repo's queued Issues, never against the owner's priority; the queue JSON comes on stdin",
+      "Propose `after` edges, edges to take back and an order for a repo's queued Issues, never against the owner's priority; the queue JSON comes on stdin",
     cli: { stdin: 'queue', defaultFormat: 'json', serverOnly: true },
   }
 }
