@@ -60,11 +60,21 @@ export function summarize(findings: { tag: string }[]): string {
   return parts.length === 0 ? 'Nothing needs fixing.' : `${parts.join(', ')}.`
 }
 
-/** A binary file has no diff lines to read: the reply may list it or leave it out. */
-function binaryPaths(route: Job['route']): Set<string> {
+/**
+ * A binary file has no diff lines to read, and a deleted file holds only removed lines (prepare lists those in
+ * `deleted.txt`, not `stat.txt`): the reply may list either or leave it out, and a left-out one is never `unreviewed`.
+ */
+function optionalPaths(route: Job['route']): Set<string> {
   const changes = Array.isArray(route.changes) ? (route.changes as Partial<FileChange>[]) : []
-  return new Set(changes.flatMap((c) => (c.binary && c.path ? [c.path] : [])))
+  return new Set(changes.flatMap((c) => ((c.binary || c.deleted) && c.path ? [c.path] : [])))
 }
+
+const MAX_NAMED = 20
+/** A refusal names the first paths only: a 977-file diff must not echo every path back into the caller's context. */
+const named = (paths: string[]): string =>
+  paths.length <= MAX_NAMED
+    ? paths.join(', ')
+    : `${paths.slice(0, MAX_NAMED).join(', ')} (+${paths.length - MAX_NAMED} more)`
 
 /**
  * The reply's files against stat.txt. A path the reply echoes that stat.txt does not hold is an error (the reviewer read
@@ -82,11 +92,11 @@ function checkFiles(
   const required = expected.filter((p) => !optional.has(p))
   const missing = required.filter((p) => !got.has(p))
   if (extra.length > 0) {
-    return { problem: `the reply files are not all in stat.txt; re-ask the reviewer; extra: ${extra.join(', ')}` }
+    return { problem: `the reply files are not all in stat.txt; re-ask the reviewer; extra: ${named(extra)}` }
   }
   if (required.length > 0 && missing.length === required.length) {
     return {
-      problem: `the reply echoes none of the files in stat.txt; re-ask the reviewer; missing: ${missing.join(', ')}`,
+      problem: `the reply echoes none of the files in stat.txt; re-ask the reviewer; missing: ${named(missing)}`,
     }
   }
   return { unreviewed: missing }
@@ -110,7 +120,7 @@ export async function submit(
   const stored = refuseState(known, input.attempt)
   if (stored) return stored
   const reply = parseReply(input.reply)
-  const checked = checkFiles(known.files, reply.files, binaryPaths(known.route))
+  const checked = checkFiles(known.files, reply.files, optionalPaths(known.route))
   if ('problem' in checked) throw new ReviewError(checked.problem)
 
   const anchoring = await anchorFindings({ worktree: known.worktree, jobDir: known.jobDir, findings: reply.findings })

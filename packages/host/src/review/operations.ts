@@ -141,7 +141,7 @@ export function reviewOperations(service: ReviewService): Record<(typeof OPERATI
       {
         summary: "Submit the reviewer agent's JSON reply (stdin); prints REVIEW_OUTPUT v4",
         description:
-          'Idempotent per (job, attempt). Refused for an abandoned job, another attempt of a submitted one, or a files list with a path that is not in stat.txt (nothing is written: re-ask the agent). A list that leaves stat.txt paths out is accepted: they are recorded as `unreviewed`, `covered` does not count them, the next prepare on the thread reads them. A list that echoes none of them is refused.',
+          'Idempotent per (job, attempt). Refused for an abandoned job, another attempt of a submitted one, or a files list with a path that is not in stat.txt (nothing is written: re-ask the agent). A list may omit binary and wholly deleted files (deleted.txt). A list that leaves other stat.txt paths out is accepted: they are recorded as `unreviewed`, `covered` does not count them, the next prepare on the thread reads them. A list that echoes none of them is refused.',
         cli: { mutating: true, positional: ['jobId'], stdin: 'reply' },
         input: SubmitInput,
         output: ReviewOutputV4,

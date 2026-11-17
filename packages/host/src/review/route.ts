@@ -128,6 +128,8 @@ export interface FileChange {
   removed: number
   /** numstat prints `-` for both counts: the diff has no lines to read (an image, an archive). */
   binary?: true
+  /** The whole file is removed in the range: the reviewer's reply need not list it (it has nothing to read but removed lines). */
+  deleted?: true
 }
 export interface RouteFacts {
   files: number
@@ -238,7 +240,7 @@ export const gitRunner: GitRunner = async (cwd, args) => {
 function parseNumstat(out: string): FileChange[] {
   return out
     .split('\n')
-    .filter(Boolean)
+    .filter((line) => line.includes('\t'))
     .map((line) => {
       const [added = '-', removed = '-', ...rest] = line.split('\t')
       return {
@@ -264,11 +266,13 @@ export async function routeRange(input: {
   const { git, repo, base, head } = input
   const range = `${base}..${head}`
   const [numstat, ignoringWhitespace, reviewMd] = await Promise.all([
-    git(repo, ['diff', '--numstat', '--no-renames', range]),
+    // --summary adds " delete mode <mode> <path>" lines after the numstat ones: the whole-file deletions, in one process
+    git(repo, ['diff', '--numstat', '--summary', '--no-renames', range]),
     git(repo, ['diff', '--numstat', '-M', '-w', '--ignore-blank-lines', range]),
     git(repo, ['show', `${input.configAt ?? base}:REVIEW.md`]).catch(() => null),
   ])
-  const changes = parseNumstat(numstat)
+  const deleted = new Set([...numstat.matchAll(/^ delete mode \d+ (.+)$/gm)].map((m) => m[1]))
+  const changes = parseNumstat(numstat).map((c) => (deleted.has(c.path) ? { ...c, deleted: true as const } : c))
   const { config, warning } = parseReviewMd(reviewMd)
   const decided = decide({
     changes,

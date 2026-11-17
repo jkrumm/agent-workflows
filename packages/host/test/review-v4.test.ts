@@ -382,6 +382,35 @@ describe('submit', () => {
     await rejects(s.submit({ jobId: third.jobId, attempt: 1, reply: text }), /missing: src\/a\.ts/)
   })
 
+  test('a deleted file is listed in deleted.txt, not stat.txt: the reply may list it or leave it out, never unreviewed', async () => {
+    const del = async () => {
+      write(root, 'src/a.ts', lines(3 + ++n))
+      write(root, `gone/${n}.ts`, lines(2))
+      git(root, 'add', '-A')
+      git(root, 'commit', '-qm', 'add gone')
+      git(root, 'rm', '-q', `gone/${n}.ts`)
+      return ready(s.prepare({ cwd: root, thread: `deleted-${crypto.randomUUID()}` }))
+    }
+    const first = await del()
+    const gone = `gone/${n}.ts`
+    expect(first.files).toContain(gone)
+    expect(readFileSync(join(first.jobDir, 'stat.txt'), 'utf8')).not.toContain(gone)
+    expect(readFileSync(join(first.jobDir, 'deleted.txt'), 'utf8')).toContain(gone)
+    const left = await s.submit({ jobId: first.jobId, attempt: 1, reply: fakeReviewer(first.jobDir) })
+    expect(left.unreviewed).toBeUndefined()
+
+    const second = await del()
+    const listed = fakeReviewer(second.jobDir, [], { files: second.files ?? [] })
+    expect((await s.submit({ jobId: second.jobId, attempt: 1, reply: listed })).unreviewed).toBeUndefined()
+  })
+
+  test('a refusal names at most twenty paths', async () => {
+    const job = await prepareChange()
+    const extra = Array.from({ length: 30 }, (_, i) => `nope/${i}.ts`)
+    const reply = fakeReviewer(job.jobDir, [], { files: ['src/a.ts', ...extra] })
+    await rejects(s.submit({ jobId: job.jobId, attempt: 1, reply }), /nope\/19\.ts \(\+10 more\)/)
+  })
+
   test('code computes summary, outcome and tier; nits capped by REVIEW.md; same attempt idempotent, another refused', async () => {
     const job = await prepareChange()
     const reply = fakeReviewer(job.jobDir, [
