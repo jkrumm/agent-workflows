@@ -739,6 +739,27 @@ describe('covered', () => {
       expect(out.commits[0]).toMatchObject({ sha: squash, coveredBy: job.jobId })
     })
 
+    test('a squash of a two-round thread of real commits is covered by the last round', async () => {
+      const s = service()
+      const root = repo({ 'REVIEW.md': '---\nnone: [docs/**]\n---\n', 'src/a.ts': body })
+      const start = git(root, 'rev-parse', 'HEAD')
+      const roundTwo = edited.replace('line15 = 15', 'line15 = 150')
+      git(root, 'checkout', '-q', '-b', 'feature')
+      commit(root, { 'src/a.ts': edited }, 'round one')
+      const r1 = await ready(s.prepare({ cwd: root, scope: `${start}..HEAD` }))
+      await s.submit({ jobId: r1.jobId, attempt: 1, reply: fakeReviewer(r1.jobDir) })
+      commit(root, { 'src/a.ts': roundTwo }, 'round two')
+      const r2 = await ready(s.prepare({ cwd: root, scope: `${start}..HEAD` }))
+      expect(r2).toMatchObject({ thread: r1.thread, round: 2, diffBase: r1.head })
+      await s.submit({ jobId: r2.jobId, attempt: 1, reply: fakeReviewer(r2.jobDir) })
+      git(root, 'checkout', '-q', '-b', 'landed', start)
+      const upstream = commit(root, { 'src/a.ts': moved(body), 'src/other.ts': lines(2) }, 'unrelated')
+      const squash = commit(root, { 'src/a.ts': moved(roundTwo) }, 'squash')
+      const out = await s.covered({ cwd: root, range: `${upstream}..${squash}` })
+      expect(out.covered).toBe(true)
+      expect(out.commits[0]).toMatchObject({ sha: squash, coveredBy: r2.jobId })
+    })
+
     test('an edit after the last submitted round leaves it uncovered', async () => {
       const { s, root, upstream } = await reviewed()
       const squash = commit(root, { 'src/a.ts': `${moved(edited)}export const afterReview = 1\n` }, 'squash plus fix')
