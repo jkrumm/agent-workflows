@@ -23,8 +23,8 @@ import {
   watchFileSchema,
 } from './shop-watch-rules.ts'
 
-// `shop.watch`: one run of the price watch. For each product of the owner's list it reads the idealo and geizhals offers
-// (and the amazon.de item where an ASIN is given), appends one row to the record, and sends one ntfy message when the
+// `shop.watch`: one run of the price watch. For each product of the owner's list it reads the idealo and geizhals offers,
+// those of the tech shops Alternate, Mindfactory and Caseking (their own pages) and the amazon.de item where an ASIN is given, appends one row to the record, and sends one ntfy message when the
 // lowest qualifying offer changed state (shop-watch-rules.ts). Files live in one directory on the host.
 
 const NTFY_TOPIC = 'updates'

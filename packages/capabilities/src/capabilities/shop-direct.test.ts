@@ -18,7 +18,16 @@ import {
   parseMindfactorySearch,
 } from './shop-direct-parse.ts'
 import { geizhalsSearchUrl, idealoSearchUrl } from './shop-offers-parse.ts'
-import { failure, fixture, GEIZHALS_CMK, IDEALO_CATEGORY, IDEALO_CMK, rig, type Served } from './shop-rig.test.ts'
+import {
+  failure,
+  fixture,
+  GEIZHALS_CMK,
+  IDEALO_CATEGORY,
+  IDEALO_CMK,
+  idealoPages,
+  rig,
+  type Served,
+} from './shop-rig.test.ts'
 import { watchEntrySchema, qualifyingOffer } from './shop-watch-rules.ts'
 
 const ENTRY = { mpn: 'CMK48GX5M2B5600C40', label: 'Corsair 2x24 5600', ceilingEur: 600 }
@@ -118,6 +127,7 @@ describe('caseking.de parsers', () => {
           url: CASEKING_PVV,
           name: 'Patriot Viper Venom DDR5-5600 RAM, CL40, XMP/EXPO - 64 GB Dual-Kit, schwarz',
           mpn: null,
+          mpnOnPage: true,
         },
       ],
     })
@@ -195,6 +205,9 @@ async function shopRig() {
   const alternateProduct = await fixture('alternate-product-cmk')
   const direct: string[] = []
   const pages: Record<string, Served> = {
+    ...(await idealoPages()),
+    [geizhalsSearchUrl('CMK48GX5M2B5600C40')]: { html: await fixture('geizhals-search-cmk') },
+    [GEIZHALS_CMK]: { html: await fixture('geizhals-product-cmk') },
     [mindfactorySearchUrl('CMK48GX5M2B5600C40')]: {
       html: await fixture('mindfactory-product-cmk'),
       finalUrl: MINDFACTORY_LANDED,
@@ -264,6 +277,29 @@ describe('shop.offers from the tech shops', () => {
     const out = await r.offers.call({ product: 'CMK48GX5M2B5600C40', source: 'shops' }, r.options)
     expect(out.results.map((x) => x.source)).toEqual(['alternate', 'mindfactory'])
     expect(out.errors).toEqual([expect.objectContaining({ source: 'caseking', code: 'NOT_FOUND' })])
+  })
+
+  test('`all` stays the two aggregators, `everything` reads all five', async () => {
+    const r = await shopRig()
+    const some = await r.offers.call({ product: 'CMK48GX5M2B5600C40', source: 'all' }, r.options)
+    expect(some.errors.map((e) => e.source)).not.toContain('alternate')
+    const every = await r.offers.call({ product: 'CMK48GX5M2B5600C40', source: 'everything' }, r.options)
+    const named = [...every.results.map((x) => x.source), ...every.errors.map((e) => e.source)].sort()
+    expect(named).toEqual(['alternate', 'caseking', 'geizhals', 'idealo', 'mindfactory'])
+  })
+
+  test('several tiles with no part number are an error, not "the shop does not list it"', async () => {
+    const tile = (await fixture('caseking-search-pvv')).match(
+      /<div class="product h-100 w-100"[\s\S]*<\/div>\n<\/div>\n<\/body>/,
+    )![0]
+    const doubled = (await fixture('caseking-search-pvv')).replace(
+      tile,
+      `${tile.replace('</div>\n</body>', '')}${tile.replaceAll('MEPM-140', 'MEPM-141').replace('</div>\n</body>', '')}</div>\n</body>`,
+    )
+    const r = rig({ pages: { [casekingSearchUrl('PVV564G560C40K')]: { html: doubled } } })
+    const error = await failure(r.offers.call({ product: 'PVV564G560C40K', source: 'caseking' }, r.options))
+    expect(error.code).toBe('UPSTREAM_ERROR')
+    expect(error.message).toContain('2 products with no part number on the card')
   })
 
   test('a product page URL of a shop names its own source', async () => {
