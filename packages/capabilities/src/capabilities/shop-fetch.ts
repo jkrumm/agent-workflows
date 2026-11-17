@@ -4,7 +4,8 @@ import { type ResolvedWebDeps, webUsage, within } from '../web/deps.ts'
 import { assertPublicUrl, publicOnlyPolicy } from '../web/ssrf.ts'
 import { AMAZON_ORIGIN, type BlockKind, detectBlock } from './shop-parse.ts'
 
-// The one place the shop doors touch the network. Conduct, in code (docs/shop.md §Conduct): one request at a time, a
+// The one place the shop doors touch the network (amazon.de direct; idealo.de and geizhals.de in the research Chrome from the
+// first request, because they turn a plain client away). Conduct, in code (docs/shop.md §Conduct): one request at a time, a
 // jittered pause of 2-5 s between two page fetches, a search kept 1 h and an item page 24 h, a 429, captcha or sign-in
 // wall ends the call with `blocked (<reason>)`: no retry, no second identity, no proxy, no login, no solving. A robot
 // check alone gets one read in the headed research Chrome, and when that meets the check too the call ends blocked
@@ -43,7 +44,19 @@ const defaultSleep = (ms: number, signal: AbortSignal) =>
     signal.addEventListener('abort', done, { once: true })
   })
 
-/** `https://www.amazon.de/...` only, no credentials, default port: the shop doors read nothing else. */
+/**
+ * The three hosts the shop doors read and how. amazon.de answers a plain client (the direct leg first; a robot check goes
+ * to the research Chrome once). idealo.de and geizhals.de turn every plain client away (a 403, Cloudflare's check:
+ * measured 2026-11-17, docs/shop.md), so they are read in the research Chrome from the first request: a direct request
+ * would be one guaranteed refusal and would start the cooldown for nothing.
+ */
+const HOSTS: Record<string, 'direct' | 'browser'> = {
+  'www.amazon.de': 'direct',
+  'www.idealo.de': 'browser',
+  'geizhals.de': 'browser',
+}
+
+/** An https URL on one of the shop hosts, no credentials, default port: the shop doors read nothing else. */
 export function assertShopUrl(raw: string): URL {
   let url: URL
   try {
@@ -51,8 +64,11 @@ export function assertShopUrl(raw: string): URL {
   } catch {
     throw fail('URL_REFUSED', `shop.fetch: not a URL: ${raw.slice(0, 80)}`)
   }
-  if (url.protocol !== 'https:' || url.hostname !== 'www.amazon.de' || url.username || url.password || url.port)
-    throw fail('URL_REFUSED', `shop.fetch: only ${AMAZON_ORIGIN} is read, not ${url.origin}`)
+  if (url.protocol !== 'https:' || !(url.hostname in HOSTS) || url.username || url.password || url.port)
+    throw fail(
+      'URL_REFUSED',
+      `shop.fetch: only ${AMAZON_ORIGIN}, https://www.idealo.de and https://geizhals.de are read, not ${url.origin}`,
+    )
   return url
 }
 
@@ -74,6 +90,14 @@ interface Entry {
   ttlMs: number
 }
 
+interface Fetched {
+  status: number
+  html: string
+  finalUrl: string
+}
+
+type PageContext = { signal: AbortSignal; addUsage: (usage: ReturnType<typeof webUsage>) => void }
+
 export interface PageRead<T> {
   value: T
   cached: boolean
@@ -89,7 +113,8 @@ export function createShopFetch(web: ResolvedWebDeps, pace: ShopPace = {}) {
   const policy = publicOnlyPolicy(web, 'shop.fetch')
   let tail: Promise<unknown> = Promise.resolve()
   let lastEnd = 0
-  let blockedUntil = 0
+  /** Per host: a wall at one shop does not lock the others. */
+  const blockedUntil = new Map<string, number>()
 
   const fresh = (entry: Entry | undefined): entry is Entry => entry !== undefined && now() - entry.at < entry.ttlMs
 
@@ -100,7 +125,7 @@ export function createShopFetch(web: ResolvedWebDeps, pace: ShopPace = {}) {
     return run
   }
 
-  async function read(url: string, signal: AbortSignal): Promise<{ status: number; html: string; finalUrl: string }> {
+  async function read(url: string, signal: AbortSignal): Promise<Fetched> {
     let current = assertShopUrl(url).toString()
     for (let hop = 0; ; hop++) {
       const pin = await assertPublicUrl(web, 'shop.fetch', current)
@@ -139,26 +164,39 @@ export function createShopFetch(web: ResolvedWebDeps, pace: ShopPace = {}) {
     }
   }
 
+  /** What a failed browser read means: "not found" for a page the site answers 404, else an upstream error or a wall. */
+  function browserFailure(error: unknown, label: string, first: boolean, signal: AbortSignal): never {
+    if (signal.aborted) throw fail('CANCELLED', 'cancelled')
+    if (!(error instanceof BrowserFailure || error instanceof BrowserRefused)) throw error
+    web.warn(`shop.fetch: the browser read failed: ${error.message}`)
+    // The browser leg reports an HTTP error status of the page as a failure; a 404 is "not found", as on the direct leg.
+    const status = Number(error.message.match(/answered HTTP (4\d\d)/)?.[1])
+    if (status === 404 || status === 410)
+      throw fail('UPSTREAM_ERROR', `shop.fetch: ${label} not found (HTTP ${status})`, { status })
+    if (first)
+      throw fail('UPSTREAM_ERROR', `shop.fetch: the research Chrome could not read ${label}: ${error.message}`, {})
+    throw blocked('bot-protection', `robot check on ${label}; the research Chrome could not read it either`)
+  }
+
   /**
-   * The robot-checked page read once in the research Chrome: its HTML, or `undefined` when no browser is configured.
-   * A challenge the browser meets too ends the call as blocked (`bot-protection`): the owner is not asked and the agent
-   * solves nothing. A browser that fails or is refused leaves the original wall standing.
+   * One page read in the research Chrome: its HTML and final URL, or `undefined` when no browser is configured. For amazon
+   * this is the second read of a robot-checked page; for idealo and geizhals it is the only read. A challenge the browser
+   * meets ends the call as blocked (`bot-protection`): the owner is not asked and the agent solves nothing. A browser
+   * that fails or is refused leaves the original wall standing (amazon) or is an upstream error (no wall was seen).
    */
   async function readInBrowser(
     key: string,
     label: string,
-    ctx: { signal: AbortSignal; addUsage: (usage: ReturnType<typeof webUsage>) => void },
-  ): Promise<string | undefined> {
+    ctx: PageContext,
+    first: boolean,
+  ): Promise<Fetched | undefined> {
     const browser = web.browser(policy)
     if (!browser) return undefined
     let page: Awaited<ReturnType<typeof browser>>
     try {
       page = await browser(key, ctx.signal, { html: true })
     } catch (error) {
-      if (ctx.signal.aborted) throw fail('CANCELLED', 'cancelled')
-      if (!(error instanceof BrowserFailure || error instanceof BrowserRefused)) throw error
-      web.warn(`shop.fetch: the browser read failed: ${error.message}`)
-      throw blocked('bot-protection', `robot check on ${label}; the research Chrome could not read it either`)
+      browserFailure(error, label, first, ctx.signal)
     } finally {
       lastEnd = now()
     }
@@ -168,14 +206,81 @@ export function createShopFetch(web: ResolvedWebDeps, pace: ShopPace = {}) {
     try {
       finalUrl = assertShopUrl(page.finalUrl).toString()
     } catch {
-      throw blocked('bot-protection', `robot check on ${label}; the research Chrome ended off amazon.de`)
+      throw blocked(
+        'bot-protection',
+        `${first ? 'the page' : 'robot check'} on ${label}; the research Chrome ended off the shop hosts`,
+      )
     }
-    const wall = detectBlock({ status: 200, html, finalUrl })
+    const wall = HOSTS[new URL(key).hostname] === 'direct' ? detectBlock({ status: 200, html, finalUrl }) : null
     if (wall === 'login-required') throw blocked(wall, 'the shop asks for a sign-in')
     if (page.challenge || wall) {
       throw blocked('bot-protection', `robot check on ${label} in the research Chrome too (needs-human)`)
     }
-    return html
+    return { status: 200, html, finalUrl }
+  }
+
+  /**
+   * The page's response by the host's way in: idealo and geizhals in the research Chrome from the first request, amazon
+   * direct with one browser read for a robot check. A wall throws `blocked (<reason>)`.
+   */
+  async function obtain(key: string, host: string, label: string, ctx: PageContext): Promise<Fetched> {
+    if (HOSTS[host] === 'browser') {
+      const read = await readInBrowser(key, label, ctx, true)
+      if (read === undefined)
+        throw fail(
+          'NOT_CONFIGURED',
+          `shop.fetch: ${host} turns plain clients away and is read in the research Chrome, but AGW_BROWSER_CDP_URL is not set (make research-chrome)`,
+        )
+      return read
+    }
+    let response: Fetched
+    try {
+      response = await read(key, ctx.signal)
+    } finally {
+      lastEnd = now()
+    }
+    ctx.addUsage(webUsage('shop-direct', 0))
+    const wall = detectBlock(response)
+    // Only a robot check goes to the browser: a 429 or a sign-in wall stops as ever.
+    if (wall === 'bot-protection') {
+      const second = await readInBrowser(key, label, ctx, false)
+      if (second !== undefined) return { ...second, finalUrl: key }
+    }
+    if (wall) throw blocked(wall, `HTTP ${response.status} on ${label}`, response.status)
+    return response
+  }
+
+  /** A 404 or any other error status is an upstream error: the page is not there, or the shop is failing. */
+  function assertPage(response: Fetched, label: string): void {
+    if (response.status === 404 || response.status === 410)
+      throw fail('UPSTREAM_ERROR', `shop.fetch: ${label} not found (HTTP ${response.status})`, {
+        status: response.status,
+      })
+    if (response.status >= 400)
+      throw fail('UPSTREAM_ERROR', `shop.fetch: ${label} answered HTTP ${response.status}`, {
+        status: response.status,
+      })
+  }
+
+  /** The jittered pause of 2-5 s between two page reads. */
+  async function pause(signal: AbortSignal): Promise<void> {
+    if (lastEnd > 0) {
+      const wait = lastEnd + MIN_PAUSE_MS + random() * (MAX_PAUSE_MS - MIN_PAUSE_MS) - now()
+      if (wait > 0) await sleep(wait, signal)
+    }
+    if (signal.aborted) throw fail('CANCELLED', 'cancelled')
+  }
+
+  /** Keeps a parsed page, the oldest entries dropping out past the cap; the time it was read. */
+  function remember(key: string, value: unknown, ttlMs: number): string {
+    const at = now()
+    cache.delete(key)
+    cache.set(key, { value, at, ttlMs })
+    for (const oldest of cache.keys()) {
+      if (cache.size <= CACHE_MAX_ENTRIES) break
+      cache.delete(oldest)
+    }
+    return new Date(at).toISOString()
   }
 
   async function readBody(res: Response, signal: AbortSignal): Promise<string> {
@@ -219,8 +324,8 @@ export function createShopFetch(web: ResolvedWebDeps, pace: ShopPace = {}) {
      * Only a successful parse is cached, so a wall or an odd page is never served back.
      */
     page<T>(
-      args: { url: string; ttlMs: number; fresh: boolean; label: string; parse: (html: string) => T },
-      ctx: { signal: AbortSignal; addUsage: (usage: ReturnType<typeof webUsage>) => void },
+      args: { url: string; ttlMs: number; fresh: boolean; label: string; parse: (html: string, finalUrl: string) => T },
+      ctx: PageContext,
     ): Promise<PageRead<T>> {
       const key = assertShopUrl(args.url).toString()
       const hit = () => {
@@ -235,55 +340,22 @@ export function createShopFetch(web: ResolvedWebDeps, pace: ShopPace = {}) {
         // A call queued behind one that read the same page finds it cached now.
         const queued = hit()
         if (queued) return queued
-        if (now() < blockedUntil)
-          throw blocked(
-            'cooldown',
-            `the shop turned this process away ${Math.ceil((blockedUntil - now()) / 60_000)} min ago`,
-          )
-        if (lastEnd > 0) {
-          const wait = lastEnd + MIN_PAUSE_MS + random() * (MAX_PAUSE_MS - MIN_PAUSE_MS) - now()
-          if (wait > 0) await sleep(wait, ctx.signal)
-        }
-        if (ctx.signal.aborted) throw fail('CANCELLED', 'cancelled')
-        let response: Awaited<ReturnType<typeof read>>
+        const host = new URL(key).hostname
+        const until = blockedUntil.get(host) ?? 0
+        if (now() < until)
+          throw blocked('cooldown', `${host} turned this process away ${Math.ceil((until - now()) / 60_000)} min ago`)
+        await pause(ctx.signal)
+        let response: Fetched
         try {
-          response = await read(key, ctx.signal)
+          response = await obtain(key, host, args.label, ctx)
         } catch (error) {
-          if (isBlockedError(error)) blockedUntil = now() + cooldownMs
+          if (isBlockedError(error)) blockedUntil.set(host, now() + cooldownMs)
           throw error
-        } finally {
-          lastEnd = now()
         }
-        ctx.addUsage(webUsage('shop-direct', 0))
-        let wall = detectBlock(response)
-        // Only a robot check goes to the browser: a 429 or a sign-in wall stops as ever.
-        if (wall === 'bot-protection') {
-          try {
-            const html = await readInBrowser(key, args.label, ctx)
-            if (html !== undefined) {
-              response = { status: 200, html, finalUrl: key }
-              wall = null
-            }
-          } catch (error) {
-            if (isBlockedError(error)) blockedUntil = now() + cooldownMs
-            throw error
-          }
-        }
-        if (wall) {
-          blockedUntil = now() + cooldownMs
-          throw blocked(wall, `HTTP ${response.status} on ${args.label}`, response.status)
-        }
-        if (response.status === 404 || response.status === 410)
-          throw fail('UPSTREAM_ERROR', `shop.fetch: ${args.label} not found (HTTP ${response.status})`, {
-            status: response.status,
-          })
-        if (response.status >= 400)
-          throw fail('UPSTREAM_ERROR', `shop.fetch: ${args.label} answered HTTP ${response.status}`, {
-            status: response.status,
-          })
+        assertPage(response, args.label)
         let value: T
         try {
-          value = args.parse(response.html)
+          value = args.parse(response.html, response.finalUrl)
         } catch (error) {
           throw fail(
             'UPSTREAM_ERROR',
@@ -291,14 +363,7 @@ export function createShopFetch(web: ResolvedWebDeps, pace: ShopPace = {}) {
             {},
           )
         }
-        const at = now()
-        cache.delete(key)
-        cache.set(key, { value, at, ttlMs: args.ttlMs })
-        for (const oldest of cache.keys()) {
-          if (cache.size <= CACHE_MAX_ENTRIES) break
-          cache.delete(oldest)
-        }
-        return { value, cached: false, fetchedAt: new Date(at).toISOString() }
+        return { value, cached: false, fetchedAt: remember(key, value, args.ttlMs) }
       })
     },
   }

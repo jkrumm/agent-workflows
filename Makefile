@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help check test-timings fmt deploy verify version live-routes install-opencode research-chrome hyperdx-apply hyperdx-export
+.PHONY: help check test-timings fmt deploy verify version live-routes install-opencode research-chrome shop-watch-setup shop-watch-teardown hyperdx-apply hyperdx-export
 
 help:
 	@echo "make check   mini-registry lint (when the dotfiles checkout is present), oxfmt check, oxlint type-aware, tsc, bun test --parallel (the merge gate; TEST_WORKERS=n sets the workers)"
@@ -8,6 +8,7 @@ help:
 	@echo "make deploy  deploy origin/master on the mini: release, LaunchAgents host and audio, the gateway as a third (restarted only when its build changed), health, agw on PATH (DRY_RUN=1 prints the plan)"
 	@echo "make install-opencode  install the pinned OpenCode build, link opencode and opencode-safe into ~/.local/bin from the main checkout (never restarts the host)"
 	@echo "make research-chrome  install and start the headed Chrome (LaunchAgent, DevTools on loopback) web.fetch reads bot-walled pages with"
+	@echo "make shop-watch-setup  install the price watch LaunchAgent (every 6 h, under jobrun) and run it once now; shop-watch-teardown removes it"
 	@echo "make live-routes one real call per route (anthropic, opencode, iu-openai text; ROUTES='a b' narrows), proved by its gateway usage row and run row; costs cents"
 	@echo "make hyperdx-apply  upsert the HyperDX dashboard agw and its alerts from packages/hyperdx/definitions (ARGS='--dry-run' prints the plan); hyperdx-export writes the live ones back"
 	@echo "make version print the deployed commit sha (data/deployed-sha), one line, read-only"
@@ -119,3 +120,24 @@ research-chrome:
 		fi; \
 		for i in 1 2 3 4 5 6 7 8 9 10; do probe && { echo "research-chrome: DevTools answers on 127.0.0.1:9222"; exit 0; }; sleep 1; done; \
 		echo "research-chrome: loaded, but DevTools does not answer on 127.0.0.1:9222" >&2; exit 1
+
+# The price watch (docs/shop.md §Watch): `agw shop watch` every six hours under jobrun. Not a release artifact: it only asks
+# the deployed host, so it is installed once per machine from this checkout's template. Idempotent. The first run happens
+# here, where someone is present, so a missing or invalid ~/.agent-workflows/data/shop/watch.json fails now and not at 3 a.m.
+SHOP_WATCH_LABEL := com.jkrumm.agent-workflows-shop-watch
+shop-watch-setup:
+	@plist="$$HOME/Library/LaunchAgents/$(SHOP_WATCH_LABEL).plist"; tmp="$$plist.tmp.$$$$"; target="gui/$$(id -u)/$(SHOP_WATCH_LABEL)"; \
+		mkdir -p "$$HOME/Library/LaunchAgents" "$$HOME/Library/Logs"; \
+		/usr/bin/sed -e "s|__HOME__|$$HOME|g" deploy/$(SHOP_WATCH_LABEL).plist.template > "$$tmp" \
+			&& plutil -lint "$$tmp" >/dev/null || { rm -f "$$tmp"; echo "shop-watch: rendering the plist failed" >&2; exit 1; }; \
+		if launchctl print "$$target" >/dev/null 2>&1 && cmp -s "$$tmp" "$$plist"; then rm -f "$$tmp"; \
+		else \
+			mv -f "$$tmp" "$$plist"; launchctl bootout "$$target" 2>/dev/null; \
+			for i in 1 2 3 4 5 6 7 8 9 10; do launchctl print "$$target" >/dev/null 2>&1 || break; sleep 1; done; \
+			launchctl bootstrap "gui/$$(id -u)" "$$plist" || exit 1; \
+		fi; \
+		echo "shop-watch: loaded $(SHOP_WATCH_LABEL); first run:"; \
+		AGW_CALLER=shop-watch "$$HOME/.local/bin/jobrun" $(SHOP_WATCH_LABEL) --owner agent-workflows --every 21600 --timeout 1800 -- "$$HOME/.local/bin/agw" shop watch --commit
+
+shop-watch-teardown:
+	@launchctl bootout "gui/$$(id -u)/$(SHOP_WATCH_LABEL)" 2>/dev/null; rm -f "$$HOME/Library/LaunchAgents/$(SHOP_WATCH_LABEL).plist" "$$HOME/.local/state/jobs/$(SHOP_WATCH_LABEL).json"; echo "shop-watch: removed $(SHOP_WATCH_LABEL)"

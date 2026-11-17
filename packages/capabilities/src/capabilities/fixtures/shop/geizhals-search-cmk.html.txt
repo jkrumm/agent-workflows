@@ -1,0 +1,38 @@
+<html><head><title>CMK48GX5M2B5600C40 Geizhals Deutschland</title></head><body>
+<div class="galleryview">
+<article class="galleryview__item card galleryview__item--single">
+<div class="galleryview__image-wrapper">
+<a href="https://geizhals.de/corsair-vengeance-schwarz-dimm-kit-48gb-cmk48gx5m2b5600c40-a2900586.html" class="galleryview__image-link">
+<img alt="Corsair Vengeance schwarz UDIMM 48GB Kit, DDR5-5600, CL40-40-40-77 (CMK48GX5M2B5600C40)" title="Corsair Vengeance schwarz UDIMM 48GB Kit, DDR5-5600, CL40-40-40-77 (CMK48GX5M2B5600C40)">
+</a>
+</div>
+<h3 class="galleryview__name">
+<a href="https://geizhals.de/corsair-vengeance-schwarz-dimm-kit-48gb-cmk48gx5m2b5600c40-a2900586.html" class="galleryview__name-link" title="Corsair Vengeance schwarz UDIMM 48GB Kit, DDR5-5600, CL40-40-40-77"> Corsair Vengeance schwarz UDIMM 48GB Kit, DDR5-5600, CL40-40-40-77 </a>
+</h3>
+<span class="galleryview__mpn"> CMK48GX5M2B5600C40 </span>
+<div class="galleryview__bottom-wrapper">
+<div class="galleryview__rating-wrapper">
+<div class="galleryview__offercount ">
+<a href="https://geizhals.de/corsair-vengeance-schwarz-dimm-kit-48gb-cmk48gx5m2b5600c40-a2900586.html" class="galleryview__offercount-link"> 9 Angebote </a>
+</div>
+</div>
+<div class="galleryview__offer-wrapper">
+<div class="galleryview__offer">
+<div class="galleryview__price">
+<span class="galleryview__price-before"> ab </span>
+<a href="https://geizhals.de/corsair-vengeance-schwarz-dimm-kit-48gb-cmk48gx5m2b5600c40-a2900586.html" class="galleryview__price-link">
+<span class="price">€ 770,07</span>
+</a>
+<span class="availability availability--available" aria-label="lagernd beim Händler" data-tooltip-pos="up-right"></span>
+</div>
+<div class="galleryview__ppu"> (€ 16,04 / GB) </div>
+</div>
+</div>
+</div>
+<div class="galleryview__options">
+<div class="dots-dropdown" data-product-id="2900586" data-product-name="Corsair Vengeance schwarz UDIMM 48GB Kit, DDR5-5600, CL40-40-40-77" data-deeplink="https://geizhals.de/corsair-vengeance-schwarz-dimm-kit-48gb-cmk48gx5m2b5600c40-a2900586.html" data-image-thumb="https://gzhls.at/pix/16/5e/165e783e5752d581-s.webp" data-track-category="SERP.Result" data-dotsdropdown-initialized="true"><button type="button" class="dots-dropdown__button" aria-label="Optionen" aria-haspopup="menu" aria-controls="dotsdropdown-0" popovertarget="dotsdropdown-0" data-name="Corsair Vengeance schwarz UDIMM 48GB Kit, DDR5-5600, CL40-40-40-77" data-href="https://geizhals.de/corsair-vengeance-schwarz-dimm-kit-48gb-cmk48gx5m2b5600c40-a2900586.html" data-id="2900586" data-img="https://gzhls.at/pix/16/5e/165e783e5752d581-s.webp"></button>
+</div>
+</div>
+</article>
+</div>
+</body></html>

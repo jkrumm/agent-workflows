@@ -27,7 +27,7 @@ export const searchResultSchema = z.object({
 })
 export type SearchResult = z.infer<typeof searchResultSchema>
 
-export const specSchema = z.object({ name: z.string(), value: z.string() })
+const specSchema = z.object({ name: z.string(), value: z.string() })
 
 export const itemSchema = z.object({
   asin: z.string(),
@@ -45,7 +45,13 @@ export const itemSchema = z.object({
     .nullable()
     .describe('The product-overview and technical-details tables, in page order; null when the page has none'),
   images: z.array(z.string()).nullable().describe('Full-size image URLs, main image first'),
-  seller: z.string().nullable(),
+  seller: z
+    .string()
+    .nullable()
+    .describe('The seller the page names ("Amazon" when amazon.de itself sells); null only when the page names none'),
+  soldByAmazon: z
+    .boolean()
+    .describe('The page names Amazon itself as seller and shipper; false is "someone else or unknown"'),
 })
 export type Item = z.infer<typeof itemSchema>
 
@@ -67,7 +73,7 @@ const ENTITIES: Record<string, string> = {
   hellip: '…',
 }
 
-function decode(text: string): string {
+export function decode(text: string): string {
   return text.replace(/&(#x[0-9a-f]{1,6}|#\d{1,7}|[a-z]{2,8});/gi, (whole, body: string) => {
     if (body[0] === '#') {
       const code =
@@ -92,14 +98,14 @@ export function textOf(fragment: string): string {
 }
 
 /** An attribute's decoded value out of one opening tag, either quote style; undefined when absent. */
-function attr(tag: string, name: string): string | undefined {
+export function attr(tag: string, name: string): string | undefined {
   const match = tag.match(new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, 'i'))
   const value = match?.[1] ?? match?.[2]
   return value === undefined ? undefined : decode(value)
 }
 
 /** The end of the element whose opening tag starts at `start`, counting nested tags of the same name. */
-function elementEnd(html: string, start: number, tag: string): number {
+export function elementEnd(html: string, start: number, tag: string): number {
   const re = new RegExp(`<(/?)${tag}\\b[^>]*>`, 'gi')
   re.lastIndex = start
   let depth = 0
@@ -134,7 +140,7 @@ function parseRating(text: string | undefined): number | null {
 }
 
 /** "7.795" or "(207)" → 7795 / 207 */
-function parseCount(text: string | undefined): number | null {
+export function parseCount(text: string | undefined): number | null {
   const match = text?.match(/^\(?(\d{1,3}(?:\.\d{3})+|\d+)\)?(?:\s|$)/)
   return match ? Number(match[1]!.replace(/\./g, '')) : null
 }
@@ -151,7 +157,7 @@ const ROBOT_MARKERS =
   /\/errors\/validateCaptcha|Geben Sie die angezeigten Zeichen|Enter the characters you see below|kein Roboter|not a robot/i
 
 /** True when this is a page the parsers know how to read (a search page, or a product page with a title). */
-export function isKnownPage(html: string): boolean {
+function isKnownPage(html: string): boolean {
   return /\bs-main-slot\b/.test(html) || /\bid=["']productTitle["']/.test(html)
 }
 
@@ -245,6 +251,19 @@ function imageUrls(html: string): string[] {
   }
 }
 
+/**
+ * The seller of the featured offer: the third-party seller's profile link, else the merchant line of the buy box
+ * ("Versender / Verkäufer": plain text, no link, when Amazon sells). Null when the page names neither.
+ */
+function sellerOf(html: string): string | null {
+  const profile = textOf(html.match(/\bid=['"]sellerProfileTriggerId['"][^>]*>([^<]*)</)?.[1] ?? '')
+  if (profile) return profile
+  const merchant = html.match(
+    /data-csa-c-slot-id="odf-feature-text-desktop-merchant-info"[^>]*>[\s\S]*?offer-display-feature-text-message">([^<]*)</,
+  )?.[1]
+  return merchant ? textOf(merchant) || null : null
+}
+
 /** The product page's fields. Throws on a page with no product title (a layout the parser does not know). */
 export function parseItem(html: string, asin: string): Item {
   const titleHtml = elementById(html, 'productTitle')
@@ -276,6 +295,7 @@ export function parseItem(html: string, asin: string): Item {
     .map((m) => textOf(m[1]!))
     .filter(Boolean)
   const images = imageUrls(html)
+  const seller = sellerOf(html)
 
   return {
     asin,
@@ -291,6 +311,7 @@ export function parseItem(html: string, asin: string): Item {
     bullets: bullets.length > 0 ? bullets : null,
     specs: specs.length > 0 ? specs : null,
     images: images.length > 0 ? images : null,
-    seller: textOf(html.match(/\bid=['"]sellerProfileTriggerId['"][^>]*>([^<]*)</)?.[1] ?? '') || null,
+    seller,
+    soldByAmazon: seller !== null && /^Amazon(?:\.de)?$/i.test(seller),
   }
 }
