@@ -52,6 +52,19 @@ describe('createLogShipper', () => {
     expect(records[0]?.resource.attributes).toMatchObject({
       'service.name': 'agw-gateway',
       'service.version': 'abc123',
+      'service.namespace': 'agw',
+      'deployment.environment.name': 'prod',
+    })
+  })
+
+  test('a run no deploy started is dev, and the machine is host.name', async () => {
+    const exporter = collector()
+    const shipper = createLogShipper({ env: {}, version: 'dev', machine: 'mini', exporter, scheduledDelayMillis: 1 })
+    shipper.wrap(sink()).warn('dev run')
+    await shipper.shutdown()
+    expect(exporter.records[0]?.resource.attributes).toMatchObject({
+      'deployment.environment.name': 'dev',
+      'host.name': 'mini',
     })
   })
 

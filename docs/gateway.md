@@ -323,7 +323,7 @@ row.
 One span per request, service `agw-gateway` (`gen_ai.*` attributes, pool, cache read/write tokens, time to the first
 body byte, `agw.gateway.route` and `agw.gateway.effort` when the caller sent them), parented by `traceparent`. Every
 response carries `x-agw-request-id`, the row's `source_id`, and `x-agw-pool`. The resource carries `service.name` and
-`service.version` (the deployed sha, `AGW_VERSION`), and warn and error log lines go to the same collector as OTLP logs
+`service.version` (the deployed sha, `AGW_VERSION`), `service.namespace=agw`, `deployment.environment.name` (`prod` when a deploy started it, `dev` otherwise) and `host.name` (`AGW_MACHINE`), and warn and error log lines go to the same collector as OTLP logs
 (service `agw-gateway`; the stderr file stays).
 
 **Dropping the probes.** `agw.gateway.caller` is the door caller on every span (`agw`, `agw-opencode`, `hermes`, `oc`,

@@ -12,6 +12,7 @@ import {
   type ReadableLogRecord,
 } from '@opentelemetry/sdk-logs'
 import { errorMessage } from './db.ts'
+import { resourceAttributes } from './resource.ts'
 
 /** A shipped attribute value longer than this is cut: a log line is an event, not a payload. */
 const MAX_VALUE_CHARS = 2000
@@ -22,6 +23,8 @@ export type LogShipperOptions = {
   serviceName: string
   /** `service.version`, the deployed sha. */
   version: string
+  /** `host.name`, the same as the process's spans (`AGW_MACHINE`). */
+  machine?: string
   /** Replaces the env's OTLP exporter (tests). */
   exporter?: LogRecordExporter
   /** Batch delay. Default 1000 ms. */
@@ -97,10 +100,9 @@ export function createLogShipper(options: LogShipperOptions): LogShipper {
   const exporter = options.exporter ?? exporterFor(options.env)
   if (exporter === null) return { wrap: (base) => base, shutdown: async () => {} }
   const provider = new LoggerProvider({
-    resource: resourceFromAttributes({
-      'service.name': options.serviceName,
-      'service.version': options.version,
-    }),
+    resource: resourceFromAttributes(
+      resourceAttributes({ serviceName: options.serviceName, version: options.version, machine: options.machine }),
+    ),
     processors: [
       new BatchLogRecordProcessor({
         exporter: new StderrReportingExporter(exporter),

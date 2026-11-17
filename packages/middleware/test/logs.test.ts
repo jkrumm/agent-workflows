@@ -96,3 +96,26 @@ describe('service.version', () => {
     expect(await resourceOf({})).not.toHaveProperty('service.version')
   })
 })
+
+describe('deployment resource attributes', () => {
+  const resourceOf = async (options: { version?: string; machine?: string }) => {
+    const spans = new InMemorySpanExporter()
+    const t = new Telemetry({ logger: quiet, exporter: spans, scheduledDelayMillis: 1, ...options })
+    t.provider.getTracer('test').startSpan('s').end()
+    await t.flush()
+    const attributes = spans.getFinishedSpans()[0]?.resource.attributes
+    await t.shutdown()
+    return attributes
+  }
+
+  test('a deployed sha is prod; the dev sentinel or no version is dev', async () => {
+    expect(await resourceOf({ version: 'abc123', machine: 'mini' })).toMatchObject({
+      'service.namespace': 'agw',
+      'deployment.environment.name': 'prod',
+      'host.name': 'mini',
+    })
+    expect(await resourceOf({ version: 'dev' })).toMatchObject({ 'deployment.environment.name': 'dev' })
+    expect(await resourceOf({})).toMatchObject({ 'deployment.environment.name': 'dev' })
+    expect(await resourceOf({})).not.toHaveProperty('host.name')
+  })
+})
