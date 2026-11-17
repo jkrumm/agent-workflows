@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { Offer } from './shop-offers-parse.ts'
+import { DIRECT_SHOPS, isDirectShop, type Offer, type OfferSource } from './shop-offers-parse.ts'
 
 // The watch's decisions as pure functions: which offer qualifies, and when a price is worth a message. No file, no
 // network, no clock: `shop-watch.ts` reads the pages, keeps the record and sends the message.
@@ -22,6 +22,12 @@ export const watchEntrySchema = z.object({
     .max(90)
     .default(5)
     .describe('A message when the lowest qualifying total falls this far below the last alerted price or recent runs'),
+  shops: z
+    .array(z.enum(DIRECT_SHOPS))
+    .default([...DIRECT_SHOPS])
+    .describe(
+      "Tech shops whose own page is read besides idealo and geizhals (by part number; the page found is kept). Their offers have no shop rating and count as a known retailer's own price; [] reads none",
+    ),
 })
 export type WatchEntry = z.infer<typeof watchEntrySchema>
 
@@ -29,7 +35,7 @@ export const watchFileSchema = z.object({ products: z.array(watchEntrySchema).mi
 
 /** A price from one source, in the shape the rules read. `amazon` has no shop rating: it counts when Amazon sells. */
 export interface WatchCandidate {
-  source: 'idealo' | 'geizhals' | 'amazon'
+  source: OfferSource | 'amazon'
   shop: string | null
   rating: number | null
   ratingCount: number | null
@@ -37,17 +43,23 @@ export interface WatchCandidate {
   url: string
 }
 
-/** The candidate an idealo or geizhals offer gives under this entry's prepayment rule, or null when it does not qualify. */
+/**
+ * The candidate an offer gives under this entry's rules, or null when it does not qualify. An aggregator's offer needs the
+ * shop rating and count floors; a tech shop's own page has no rating and counts as the known retailer it is (as Amazon does
+ * when it sells itself), but never without a total, which needs a stated shipping cost, and never when unavailable.
+ */
 export function qualifyingOffer(
   entry: WatchEntry,
-  source: 'idealo' | 'geizhals',
+  source: OfferSource,
   offer: Offer,
   url: string,
 ): WatchCandidate | null {
   const total = entry.allowPrepayment ? offer.totalEur : offer.totalEurNoPrepayment
   if (total === null || offer.inStock === false) return null
-  if (offer.rating === null || offer.rating < entry.minRating) return null
-  if (offer.ratingCount === null || offer.ratingCount < entry.minRatings) return null
+  if (!isDirectShop(source)) {
+    if (offer.rating === null || offer.rating < entry.minRating) return null
+    if (offer.ratingCount === null || offer.ratingCount < entry.minRatings) return null
+  }
   return { source, shop: offer.shop, rating: offer.rating, ratingCount: offer.ratingCount, totalEur: total, url }
 }
 
@@ -61,8 +73,8 @@ export function cheapest(candidates: WatchCandidate[]): WatchCandidate | null {
 
 /** What the watch remembers of one product between runs. */
 export interface WatchState {
-  idealoUrl: string | null
-  geizhalsUrl: string | null
+  /** The product page each source was found at, by source; null (or absent) searches by part number again. */
+  pageUrls: Partial<Record<OfferSource, string | null>>
   /** The lowest qualifying total was at or under the ceiling at the last run. */
   underCeiling: boolean
   /** The price of the last message, while the price has not risen above it since; null re-arms the recent-runs rule. */
@@ -72,8 +84,7 @@ export interface WatchState {
 }
 
 export const emptyState = (): WatchState => ({
-  idealoUrl: null,
-  geizhalsUrl: null,
+  pageUrls: {},
   underCeiling: false,
   lastAlertedEur: null,
   recent: [],

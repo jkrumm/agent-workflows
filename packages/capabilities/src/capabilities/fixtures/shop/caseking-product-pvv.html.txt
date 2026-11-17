@@ -1,0 +1,45 @@
+<html><head>
+<script type="application/ld+json">{"@context":"https://schema.org/","@type":"Product","name":"Patriot Viper Venom DDR5-5600 RAM, CL40, XMP/EXPO - 64 GB Dual-Kit, schwarz","description":"DDR5 RAM Kit mit 64 GB (2x 32 GB), 5.600 MHz Takt, CL40 Latenzen, Low-Profile-Kühlkörper ohne Beleuchtung, Intel XMP 3.0 & AMD EXPO Support","mpn":"MEPM-140","sku":"MEPM-140","brand":{"@type":"Brand","name":"Patriot"},"gtin":"4711378423693","image":["https://www.caseking.de/dw/image/v2/BKRR_PRD/on/demandware.static/-/Sites-master-catalog-caseking/default/dw507e85b0/images/data/product/MEPM/MEPM-140/MEPM-140_4c7a4c0e2e9f649ceaeb05be044b566da4f784bc.jpg?sw=672"],"offers":{"url":"https://www.caseking.de/patriot-viper-venom-ddr5-5600-ram-cl40-xmp-expo-64-gb-dual-kit-schwarz/MEPM-140.html","@type":"Offer","price":"899.90","priceSpecification":{"@type":"UnitPriceSpecification","priceType":"https://schema.org/StrikethroughPrice","price":"1049.90","priceCurrency":"EUR"},"priceCurrency":"EUR","availability":"https://schema.org/InStock"}}</script>
+</head><body>
+<div class="product-detail-attributes text-body-secondary my-7 mt-lg-0 pt-lg-6">
+                            
+<div class="product-attributes d-flex gap-3 flex-wrap">
+    <div class="d-inline-flex small">
+        <span class="product-attributes-label me-1">SKU</span>
+        <span class="product-attributes-value me-3" data-qa="pdp-pid">MEPM-140</span>
+        <span class="product-attributes-separator">|</span>
+    </div>
+    
+        <div class="d-inline-flex small">
+            <span class="product-attributes-label me-1">EAN</span>
+            <span class="product-attributes-value me-3">4711378423693</span>
+            <span class="product-attributes-separator">|</span>
+        </div>
+    
+    
+        <div class="d-inline-flex small">
+            <span class="product-attributes-label me-1">MPN</span>
+            <span class="product-attributes-value me-3">PVV564G560C40K</span>
+            <span class="product-attributes-separator">|</span>
+        </div>
+    
+    
+    
+        <div class="d-inline-flex small">
+            <span class="product-attributes-value">
+                
+                    <a href="/marken/patriot" aria-current="page" class="text-transform-none text-inherit">Patriot</a>
+                
+            </span>
+        </div>
+    
+</div>
+
+                        </div>
+                        <di
+</div></div>
+<div class="product-delivery">
+                            Auf Lager
+</div>
+<div class="small">Inkl. MwSt., zzgl. Versandkosten ab 4,99€</div>
+</body></html>

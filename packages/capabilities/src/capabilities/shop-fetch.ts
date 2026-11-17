@@ -4,8 +4,8 @@ import { type ResolvedWebDeps, webUsage, within } from '../web/deps.ts'
 import { assertPublicUrl, publicOnlyPolicy } from '../web/ssrf.ts'
 import { AMAZON_ORIGIN, type BlockKind, detectBlock } from './shop-parse.ts'
 
-// The one place the shop doors touch the network (amazon.de direct; idealo.de and geizhals.de in the research Chrome from the
-// first request, because they turn a plain client away). Conduct, in code (docs/shop.md §Conduct): one request at a time, a
+// The one place the shop doors touch the network (amazon.de and alternate.de direct; idealo.de, geizhals.de, caseking.de and mindfactory.de
+// in the research Chrome from the first request, because they turn a plain client away). Conduct, in code (docs/shop.md §Conduct): one request at a time, a
 // jittered pause of 2-5 s between two page fetches, a search kept 1 h and an item page 24 h, a 429, captcha or sign-in
 // wall ends the call with `blocked (<reason>)`: no retry, no second identity, no proxy, no login, no solving. A robot
 // check alone gets one read in the headed research Chrome, and when that meets the check too the call ends blocked
@@ -45,15 +45,19 @@ const defaultSleep = (ms: number, signal: AbortSignal) =>
   })
 
 /**
- * The three hosts the shop doors read and how. amazon.de answers a plain client (the direct leg first; a robot check goes
- * to the research Chrome once). idealo.de and geizhals.de turn every plain client away (a 403, Cloudflare's check:
- * measured 2026-11-17, docs/shop.md), so they are read in the research Chrome from the first request: a direct request
- * would be one guaranteed refusal and would start the cooldown for nothing.
+ * The hosts the shop doors read and how. amazon.de and alternate.de answer a plain client (the direct leg first; a robot
+ * check goes to the research Chrome once). idealo.de, geizhals.de, caseking.de (Cloudflare's check) and mindfactory.de (a
+ * 403 "Datenbank-Update" page for the product page) turn a plain client away (measured 2026-11-17, docs/shop.md), so they
+ * are read in the research Chrome from the first request: a direct request would be one guaranteed refusal and would start
+ * the cooldown for nothing.
  */
 const HOSTS: Record<string, 'direct' | 'browser'> = {
   'www.amazon.de': 'direct',
+  'www.alternate.de': 'direct',
   'www.idealo.de': 'browser',
   'geizhals.de': 'browser',
+  'www.caseking.de': 'browser',
+  'www.mindfactory.de': 'browser',
 }
 
 /** An https URL on one of the shop hosts, no credentials, default port: the shop doors read nothing else. */
@@ -67,7 +71,7 @@ export function assertShopUrl(raw: string): URL {
   if (url.protocol !== 'https:' || !(url.hostname in HOSTS) || url.username || url.password || url.port)
     throw fail(
       'URL_REFUSED',
-      `shop.fetch: only ${AMAZON_ORIGIN}, https://www.idealo.de and https://geizhals.de are read, not ${url.origin}`,
+      `shop.fetch: only ${AMAZON_ORIGIN} and the shop hosts (${Object.keys(HOSTS).join(', ')}) are read, not ${url.origin}`,
     )
   return url
 }

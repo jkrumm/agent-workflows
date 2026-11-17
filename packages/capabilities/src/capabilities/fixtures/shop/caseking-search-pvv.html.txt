@@ -1,0 +1,136 @@
+<html><body>
+<div class="product-grid js-product-grid product-grid-sidebar" data-tile-container-id="search-results-product-list">
+<div class="product h-100 w-100" data-pid="MEPM-140">
+<div class="product-tile" role="article" aria-label="Patriot Viper Venom DDR5-5600 RAM, CL40, XMP/EXPO - 64 GB Dual-Kit, schwarz" data-qa="product-tile" data-tracking-product-tile="{&quot;affiliation&quot;:&quot;caseking.de&quot;,&quot;item_id&quot;:&quot;MEPM-140&quot;,&quot;item_name&quot;:&quot;Patriot Viper Venom DDR5-5600 RAM, CL40, XMP/EXPO - 64 GB Dual-Kit, schwarz&quot;,&quot;stock_status&quot;:&quot;in_stock&quot;,&quot;quantity&quot;:1,&quot;discount&quot;:126.05,&quot;price&quot;:756.22,&quot;item_brand&quot;:&quot;Patriot&quot;,&quot;brand_id&quot;:&quot;patriot&quot;,&quot;item_category&quot;:&quot;PC-Komponenten&quot;,&quot;item_category2&quot;:&quot;Arbeitsspeicher&quot;,&quot;item_category3&quot;:&quot;DDR5&quot;,&quot;is_sponsored&quot;:false}" data-tracking-click-event="select_item" data-tracking-event-payload="{&quot;currency&quot;:&quot;EUR&quot;,&quot;value&quot;:756.22,&quot;items&quot;:[{&quot;affiliation&quot;:&quot;caseking.de&quot;,&quot;item_id&quot;:&quot;MEPM-140&quot;,&quot;item_name&quot;:&quot;Patriot Viper Venom DDR5-5600 RAM, CL40, XMP/EXPO - 64 GB Dual-Kit, schwarz&quot;,&quot;stock_status&quot;:&quot;in_stock&quot;,&quot;quantity&quot;:1,&quot;discount&quot;:126.05,&quot;price&quot;:756.22,&quot;item_brand&quot;:&quot;Patriot&quot;,&quot;brand_id&quot;:&quot;patriot&quot;,&quot;item_category&quot;:&quot;PC-Komponenten&quot;,&quot;item_category2&quot;:&quot;Arbeitsspeicher&quot;,&quot;item_category3&quot;:&quot;DDR5&quot;}]}" data-tracking-product-tile-processed="true">
+    <button class="wishlist-tile btn btn-outline-primary p-2 lh-1" type="button" data-add-url="/addtowishlist" data-remove-url="/on/demandware.store/Sites-Caseking-Site/de_DE/Wishlist-RemoveProduct" title="Wunschliste" aria-label="Wunschliste" data-qa="plp-add-to-wishlist-button">
+<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 0 24 24" width="24">
+<path d="M0 0h24v24H0z" fill="none"></path>
+<path class="icon-path-inner" d="M16.5 3C14.76 3 13.09 3.81 12 5.09C10.91 3.81 9.24 3 7.5 3C4.42 3 2 5.42 2 8.5C2 12.28 5.4 15.36 10.55 20.04L12 21.35L13.45 20.03C18.6 15.36 22 12.28 22 8.5C22 5.42 19.58 3 16.5 3Z" fill="transparent"></path>
+<path class="icon-path-outter" d="M16.5 3C14.76 3 13.09 3.81 12 5.09C10.91 3.81 9.24 3 7.5 3C4.42 3 2 5.42 2 8.5C2 12.28 5.4 15.36 10.55 20.04L12 21.35L13.45 20.03C18.6 15.36 22 12.28 22 8.5C22 5.42 19.58 3 16.5 3ZM12.1 18.55L12 18.65L11.9 18.55C7.14 14.24 4 11.39 4 8.5C4 6.5 5.5 5 7.5 5C9.04 5 10.54 5.99 11.07 7.36H12.94C13.46 5.99 14.96 5 16.5 5C18.5 5 20 6.5 20 8.5C20 11.39 16.86 14.24 12.1 18.55Z"></path>
+</svg>
+    </button>
+        <div class="badge-group-wrapper pe-none">
+    <div class="badge-group js-badge-group d-flex flex-wrap gap-1 hide-children-after-3">
+                        <span class="badge badge-sale">
+                            Spare 14%
+                        </span>
+    </div>
+        </div>
+    <div class="product-tile-row">
+        <div class="product-tile-col pos-0">
+    <div class="image-container js-image-container position-relative">
+            <a href="/patriot-viper-venom-ddr5-5600-ram-cl40-xmp-expo-64-gb-dual-kit-schwarz/MEPM-140.html" tabindex="0">
+                <div class="img-wrapper-ratio-1x1 bg-product-img">
+    <img src="https://www.caseking.de/dw/image/v2/BKRR_PRD/on/demandware.static/-/Sites-master-catalog-caseking/default/dw507e85b0/images/data/product/MEPM/MEPM-140/MEPM-140_4c7a4c0e2e9f649ceaeb05be044b566da4f784bc.jpg?sw=200" alt="Patriot Viper Venom DDR5-5600 RAM, CL40, XMP/EXPO - 64 GB Dual-Kit, schwarz" title="Patriot Viper Venom DDR5-5600 RAM, CL40, XMP/EXPO - 64 GB Dual-Kit, schwarz" loading="lazy" fetchpriority="auto" width="230" height="230" sizes="(min-width: 1400px) 200px, (min-width: 1200px) 230px, (min-width: 768px) 200px, (min-width: 576px) 224px, 45vw" srcset="https://www.caseking.de/dw/image/v2/BKRR_PRD/on/demandware.static/-/Sites-master-catalog-caseking/default/dw507e85b0/images/data/product/MEPM/MEPM-140/MEPM-140_4c7a4c0e2e9f649ceaeb05be044b566da4f784bc.jpg?sw=200 200w,https://www.caseking.de/dw/image/v2/BKRR_PRD/on/demandware.static/-/Sites-master-catalog-caseking/default/dw507e85b0/images/data/product/MEPM/MEPM-140/MEPM-140_4c7a4c0e2e9f649ceaeb05be044b566da4f784bc.jpg?sw=230 230w,https://www.caseking.de/dw/image/v2/BKRR_PRD/on/demandware.static/-/Sites-master-catalog-caseking/default/dw507e85b0/images/data/product/MEPM/MEPM-140/MEPM-140_4c7a4c0e2e9f649ceaeb05be044b566da4f784bc.jpg?sw=400 400w,https://www.caseking.de/dw/image/v2/BKRR_PRD/on/demandware.static/-/Sites-master-catalog-caseking/default/dw507e85b0/images/data/product/MEPM/MEPM-140/MEPM-140_4c7a4c0e2e9f649ceaeb05be044b566da4f784bc.jpg?sw=460 460w">
+                </div>
+            </a>
+    </div>
+<div class="image-container-bottom pe-none d-flex flex-column row-gap-1">
+    <div class="d-flex column-gap-2 justify-content-between align-items-end">
+        <div class="badge-group-wrapper-2 ms-auto">
+    <div class="badge-group js-badge-group d-flex flex-wrap gap-1 hide-children-after-3">
+    </div>
+        </div>
+    </div>
+</div>
+        </div>
+        <div class="product-tile-col pos-1">
+            <div class="product-tile-product-name pdp-link">
+        <a class="link d-block" href="/patriot-viper-venom-ddr5-5600-ram-cl40-xmp-expo-64-gb-dual-kit-schwarz/MEPM-140.html" tabindex="-1" data-qa="product-tile-name-link">
+        Patriot Viper Venom DDR5-5600 RAM, CL40, XMP/EXPO - 64 GB Dual-Kit, schwarz
+        </a>
+</div>
+                <div class="d-block text-body-secondary small pt-2" aria-label="SKU: MEPM-140">
+    MEPM-140
+</div>
+        <a class="product-tile-ratings position-relative d-inline-block mt-2" href="/patriot-viper-venom-ddr5-5600-ram-cl40-xmp-expo-64-gb-dual-kit-schwarz/MEPM-140.html" aria-label="Patriot Viper Venom DDR5-5600 RAM, CL40, XMP/EXPO - 64 GB Dual-Kit, schwarz" tabindex="-1">
+            <div class="d-flex gap-1 align-items-center">
+<div class="d-inline-flex">
+        <div class="material-icon-wrapper-small svg-wrapper-rating lh-1">
+<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 0 24 24" width="24"><path d="M0 0h24v24H0z" fill="none"></path><path d="M22 9.24l-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.63-7.03L22 9.24zM12 15.4l-3.76 2.27 1-4.28-3.32-2.88 4.38-.38L12 6.1l1.71 4.04 4.38.38-3.32 2.88 1 4.28L12 15.4z"></path></svg>
+        </div>
+        <div class="material-icon-wrapper-small svg-wrapper-rating lh-1">
+<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 0 24 24" width="24"><path d="M0 0h24v24H0z" fill="none"></path><path d="M22 9.24l-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.63-7.03L22 9.24zM12 15.4l-3.76 2.27 1-4.28-3.32-2.88 4.38-.38L12 6.1l1.71 4.04 4.38.38-3.32 2.88 1 4.28L12 15.4z"></path></svg>
+        </div>
+        <div class="material-icon-wrapper-small svg-wrapper-rating lh-1">
+<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 0 24 24" width="24"><path d="M0 0h24v24H0z" fill="none"></path><path d="M22 9.24l-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.63-7.03L22 9.24zM12 15.4l-3.76 2.27 1-4.28-3.32-2.88 4.38-.38L12 6.1l1.71 4.04 4.38.38-3.32 2.88 1 4.28L12 15.4z"></path></svg>
+        </div>
+        <div class="material-icon-wrapper-small svg-wrapper-rating lh-1">
+<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 0 24 24" width="24"><path d="M0 0h24v24H0z" fill="none"></path><path d="M22 9.24l-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.63-7.03L22 9.24zM12 15.4l-3.76 2.27 1-4.28-3.32-2.88 4.38-.38L12 6.1l1.71 4.04 4.38.38-3.32 2.88 1 4.28L12 15.4z"></path></svg>
+        </div>
+        <div class="material-icon-wrapper-small svg-wrapper-rating lh-1">
+<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 0 24 24" width="24"><path d="M0 0h24v24H0z" fill="none"></path><path d="M22 9.24l-7.19-.62L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.63-7.03L22 9.24zM12 15.4l-3.76 2.27 1-4.28-3.32-2.88 4.38-.38L12 6.1l1.71 4.04 4.38.38-3.32 2.88 1 4.28L12 15.4z"></path></svg>
+        </div>
+</div>
+    <div class="small text-body">(0)</div>
+</div>
+        </a>
+    <div class="product-short-description small">
+        DDR5 RAM Kit mit 64 GB (2x 32 GB), 5.600 MHz Takt, CL40 Latenzen, Low-Profile-Kühlkörper ohne Beleuchtung, Intel XMP 3.0 &amp; AMD EXPO Support
+    </div>
+        </div>
+        <div class="product-tile-col pos-2">
+                    <div class="mb-2">
+    <div class="price js-price">
+        <span>
+        <span class="sales-original">
+                <span class="text-body-secondary"></span>
+                <del>
+                    <span class="strike-through list">
+                        <span class="value" content="1049.90">
+                            <span class="sr-only">
+                                Preis reduziert von
+                            </span>
+                            <span class="js-unit-price" data-qa="product-unit-price-value">1.049,90 €</span>
+                            <span class="sr-only">
+                                bis
+                            </span>
+                        </span>
+                    </span>
+                </del>
+        </span>
+    <span class="sales js-sales">
+            <span class="value" content="899.90">
+        <span class="js-unit-price" data-qa="product-unit-price-value">899,90 €</span>
+        </span>
+    </span>
+</span>
+    </div>
+                        <div>
+                            <span class="text-body-secondary x-small">
+Inkl. MwSt., zzgl. Versandkosten
+</span>
+                        </div>
+                    </div>
+    <div class="product-availability availability-MEPM-140 " data-ready-to-order="null" data-available="in-stock">
+                    <span class="product-availability-message availability-msg product-availability-message-in-stock mw-100">
+                        <span class="text-truncate" data-qa="pdp-availability-status-value">
+                            Auf Lager
+                        </span>
+                            <button class="btn-reset text-inherit p-0 lh-1" aria-label="Auf Lager" data-bs-toggle="popover" data-bs-trigger="hover focus" data-bs-placement="auto" data-bs-html="true" data-bs-container="body" data-bs-content="Der Artikel befindet sich in unserem Lager und kann ausgeliefert werden. Die Lieferung erfolgt innerhalb von 2-3 Werktagen. Die gewählte Versand- und Zahlungsmethode kann den Liefertermin ggf. verzögern.&lt;br/&gt;Bei Versand mit Spedition erfolgt die Lieferung innerhalb von 3-8 Werktagen.&lt;br/&gt;Alle Liefertermine gelten innerhalb Deutschlands und ab Zahlungseingang." data-bs-original-title="Auf Lager">
+                                <span class="svg-wrapper-body-secondary material-icon-wrapper-x-small">
+<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 0 24 24" width="24"><path d="M0 0h24v24H0V0z" fill="none"></path><path d="M11 7h2v2h-2zm0 4h2v6h-2zm1-9C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"></path></svg>
+                                </span>
+                            </button>
+                    </span>
+    </div>
+<div class="mt-2">
+<div class="cart-and-ipay" data-qa="add-to-cart-button">
+    <input type="hidden" class="add-to-cart-url" value="/on/demandware.store/Sites-Caseking-Site/de_DE/Cart-AddProduct">
+    <button class="add-to-cart-global text-truncate btn btn-block btn-lg btn-in-stock" data-pid="MEPM-140" data-url="/on/demandware.store/Sites-Caseking-Site/de_DE/Cart-AddProduct" data-child-products="[]">
+        <div class="js-add-to-cart-loader spinner-border spinner-border-sm d-none" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+        <span class="js-add-to-cart-icon">
+<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 0 24 24" width="24"><path d="M0 0h24v24H0zm18.31 6l-2.76 5z" fill="none"></path><path d="M11 9h2V6h3V4h-3V1h-2v3H8v2h3v3zm-4 9c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zm10 0c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2zm-9.83-3.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.86-7.01L19.42 4h-.01l-1.1 2-2.76 5H8.53l-.13-.27L6.16 6l-.95-2-.94-2H1v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.13 0-.25-.11-.25-.25z"></path></svg>
+        </span>
+            In den Warenkorb
+    </button>
+</div>
+</div>
+        </div>
+    </div>
+</div>
+</div>
+</div>
+</body></html>

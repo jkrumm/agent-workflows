@@ -9,6 +9,7 @@ import type { Env } from '../transports/config.ts'
 import { keyOf, type ResolvedWebDeps } from '../web/deps.ts'
 import { ITEM_TTL_MS, isBlockedError, type ShopFetch } from './shop-fetch.ts'
 import { isMissingPage, readSource } from './shop-offers.ts'
+import { isDirectShop, OFFER_SOURCES, type OfferSource } from './shop-offers-parse.ts'
 import { itemUrl, parseItem } from './shop-parse.ts'
 import {
   type AlertReason,
@@ -44,7 +45,8 @@ const watchInput = z.object({
     .describe('Read the pages and report what would be recorded and sent; write nothing, send nothing'),
 })
 
-const sourceErrorSchema = z.object({ source: z.enum(['idealo', 'geizhals', 'amazon']), message: z.string() })
+const SOURCES = [...OFFER_SOURCES, 'amazon'] as const
+const sourceErrorSchema = z.object({ source: z.enum(SOURCES), message: z.string() })
 
 const recordRowSchema = z.object({
   ts: z.string(),
@@ -52,7 +54,7 @@ const recordRowSchema = z.object({
   label: z.string(),
   ceilingEur: z.number(),
   lowestTotalEur: z.number().nullable().describe('The cheapest total among the qualifying offers'),
-  source: z.enum(['idealo', 'geizhals', 'amazon']).nullable(),
+  source: z.enum(SOURCES).nullable(),
   shop: z.string().nullable(),
   rating: z.number().nullable(),
   ratingCount: z.int().nullable(),
@@ -90,7 +92,7 @@ function noticeFor(entry: WatchEntry, best: WatchCandidate, reason: AlertReason,
   const eur = (n: number) => n.toFixed(2)
   const lines = [
     `${entry.label}: ${eur(best.totalEur!)} EUR with shipping, ${REASON_TEXT[reason]} (ceiling ${eur(entry.ceilingEur)} EUR)`,
-    `${best.shop ?? best.source} via ${best.source}${best.rating === null ? '' : `, rating ${best.rating} from ${best.ratingCount ?? '?'}`}`,
+    `${best.shop ?? best.source}${isDirectShop(best.source) ? "'s own page" : ` via ${best.source}`}${best.rating === null ? '' : `, rating ${best.rating} from ${best.ratingCount ?? '?'}`}`,
     ...(baseline === null ? [] : [`was ${eur(baseline)} EUR`]),
   ]
   return { title: `Price: ${entry.label}`.replace(/[^\x20-\x7e]/g, '?'), body: lines.join('\n'), click: best.url }
@@ -132,15 +134,26 @@ async function readJson(path: string): Promise<unknown | undefined> {
   }
 }
 
+/** The state file; a file written before the tech shops (`idealoUrl`, `geizhalsUrl`) reads as `pageUrls`. */
 const stateFileSchema = z.record(
   z.string(),
-  z.object({
-    idealoUrl: z.string().nullable(),
-    geizhalsUrl: z.string().nullable(),
-    underCeiling: z.boolean(),
-    lastAlertedEur: z.number().nullable(),
-    recent: z.array(z.number()),
-  }),
+  z
+    .object({
+      pageUrls: z.record(z.string(), z.string().nullable()).optional(),
+      idealoUrl: z.string().nullable().optional(),
+      geizhalsUrl: z.string().nullable().optional(),
+      underCeiling: z.boolean(),
+      lastAlertedEur: z.number().nullable(),
+      recent: z.array(z.number()),
+    })
+    .transform(({ idealoUrl, geizhalsUrl, pageUrls, ...rest }) => ({
+      ...rest,
+      pageUrls: {
+        ...(idealoUrl ? { idealo: idealoUrl } : {}),
+        ...(geizhalsUrl ? { geizhals: geizhalsUrl } : {}),
+        ...pageUrls,
+      },
+    })),
 )
 
 const renderRows = (rows: RecordRow[], sent: number, dryRun: boolean) =>
@@ -176,16 +189,15 @@ interface Gathered {
 async function gatherSite(
   shop: ShopFetch,
   entry: WatchEntry,
-  source: 'idealo' | 'geizhals',
+  source: OfferSource,
   g: Gathered,
   ctx: PageCtx,
 ): Promise<void> {
-  const key = source === 'idealo' ? 'idealoUrl' : 'geizhalsUrl'
-  const stored = g.state[key]
+  const stored = g.state.pageUrls[source] ?? null
   try {
     const read = await readSource(shop, { source, ref: stored ?? entry.mpn, expectMpn: entry.mpn, fresh: true }, ctx)
     g.reads++
-    g.state = { ...g.state, [key]: read.product.url }
+    g.state = { ...g.state, pageUrls: { ...g.state.pageUrls, [source]: read.product.url } }
     g.offers[source] = read.offers.length
     for (const offer of read.offers) {
       const candidate = qualifyingOffer(entry, source, offer, read.product.url)
@@ -193,11 +205,18 @@ async function gatherSite(
     }
   } catch (error) {
     if (ctx.signal.aborted) throw fail('CANCELLED', 'cancelled')
-    g.failures.push(error)
-    g.errors.push({ source, message: errorMessage(error) })
+    const notListed = error instanceof CapabilityError && error.code === 'NOT_FOUND'
+    // A tech shop that does not list the part number answered: no offer, no error (it is searched again next run).
+    if (isDirectShop(source) && notListed) {
+      g.reads++
+      g.offers[source] = 0
+    } else {
+      g.failures.push(error)
+      g.errors.push({ source, message: errorMessage(error) })
+    }
     // A stored product page that is gone or no longer names this part number is searched for again next run.
-    const gone = isMissingPage(error) || (error instanceof CapabilityError && error.code === 'NOT_FOUND')
-    if (stored && gone) g.state = { ...g.state, [key]: null }
+    if (stored && (isMissingPage(error) || notListed))
+      g.state = { ...g.state, pageUrls: { ...g.state.pageUrls, [source]: null } }
   }
 }
 
@@ -237,6 +256,7 @@ async function gather(shop: ShopFetch, entry: WatchEntry, state: WatchState, ctx
   const g: Gathered = { state, candidates: [], offers: {}, errors: [], failures: [], reads: 0 }
   await gatherSite(shop, entry, 'idealo', g, ctx)
   await gatherSite(shop, entry, 'geizhals', g, ctx)
+  for (const direct of entry.shops) await gatherSite(shop, entry, direct, g, ctx)
   if (entry.asin) await gatherAmazon(shop, entry.asin, g, ctx)
   return g
 }
@@ -307,7 +327,7 @@ export const createShopWatch = (shop: ShopFetch, web: ResolvedWebDeps, now: () =
   defineCapability({
     id: 'shop.watch',
     summary:
-      'One run of the price watch: read the offers of every product in the watch list (idealo, geizhals, amazon.de), append a row per product to the record, send one ntfy message per product whose lowest qualifying offer changed state',
+      'One run of the price watch: read the offers of every product in the watch list (idealo, geizhals, the tech shops Alternate, Mindfactory and Caseking, amazon.de), append a row per product to the record, send one ntfy message per product whose lowest qualifying offer changed state',
     input: watchInput,
     output: watchOutput,
     cli: { defaultFormat: 'plain', plainField: 'text', mutating: true },

@@ -1,0 +1,120 @@
+<html><head>
+<script type="application/ld+json">
+        [
+  {
+    "@context": "https://www.schema.org",
+    "@type": "Product",
+    "name": "DIMM 48 GB DDR5-5600 (2x 24 GB) Dual-Kit, Arbeitsspeicher",
+    "description": "Das Corsair CMK48GX5M2B5600C40 ist ein Kit aus zwei 24-GB-DDR5-5600-Speichermodulen (PC5-44800) aus der Vengeance Serie. Die Gesamtkapazität beträgt 48 GB. Die 288-Pin Module unterstützen eine Latenz von 40-40-40-77 bei 5600 MHz und benötigen 1,25 Volt Spannung. XMP Version 3.0 wird unterstützt. ",
+    "brand": {
+      "@type": "Brand",
+      "name": "Corsair"
+    },
+    "category": "DDR5",
+    "image": "https://www.alternate.de/p/600x600/0/1/Corsair_DIMM_48_GB_DDR5_5600__2x_24_GB__Dual_Kit__Arbeitsspeicher@@1900210_1.jpg",
+    "sku": 1900210,
+    "gtin8": "0840006665021",
+    "offers": {
+      "@type": "Offer",
+      "url": "https://www.alternate.de/Corsair/DIMM-48-GB-DDR5-5600-2x-24-GB-Dual-Kit-Arbeitsspeicher/html/product/1900210",
+      "priceCurrency": "EUR",
+      "price": "730.0",
+      "itemCondition": "NewCondition",
+      "availability": "OutOfStock",
+      "name": "DIMM 48 GB DDR5-5600 (2x 24 GB) Dual-Kit, Arbeitsspeicher",
+      "seller": {
+        "@type": "Organization",
+        "name": "ALTERNATE GmbH"
+      },
+      "hasMerchantReturnPolicy": {
+        "@type": "MerchantReturnPolicy",
+        "applicableCountry": "DE",
+        "returnPolicyCategory": "https://schema.org/MerchantReturnFiniteReturnWindow",
+        "merchantReturnDays": 30,
+        "returnMethod": "https://schema.org/ReturnByMail"
+      },
+      "shippingDetails": {
+        "@type": "OfferShippingDetails",
+        "shippingDestination": {
+          "@type": "DefinedRegion",
+          "addressCountry": "DE"
+        },
+        "shippingRate": {
+          "@type": "MonetaryAmount",
+          "currency": "EUR",
+          "value": 7.99
+        }
+      }
+    },
+    "hasEnergyConsumptionDetails": {
+      "@type": "EnergyConsumptionDetails"
+    },
+    "logo": "https://logos.tlecdn.net/100x30/m_957_corsair_7.png",
+    "mpn": "CMK48GX5M2B5600C40"
+  },
+  {
+    "@context": "https://www.schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {
+        "@type": "ListItem",
+        "position": 0,
+        "item": {
+          "@id": "https://www.alternate.de/",
+          "name": "Startseite"
+        }
+      },
+      {
+        "@type": "ListItem",
+        "position": 1,
+        "item": {
+          "@id": "https://www.alternate.de/Hardware",
+          "name": "Hardware"
+        }
+      },
+      {
+        "@type": "ListItem",
+        "position": 2,
+        "item": {
+          "@id": "https://www.alternate.de/Hardware/PC-Komponenten",
+          "name": "PC-Komponenten"
+        }
+      },
+      {
+        "@type": "ListItem",
+        "position": 3,
+        "item": {
+          "@id": "https://www.alternate.de/Arbeitsspeicher",
+          "name": "Arbeitsspeicher"
+        }
+      },
+      {
+        "@type": "ListItem",
+        "position": 4,
+        "item": {
+          "@id": "https://www.alternate.de/Arbeitsspeicher/RAM-Marken",
+          "name": "RAM-Marken"
+        }
+      },
+      {
+        "@type": "ListItem",
+        "position": 5,
+        "item": {
+          "@id": "https://www.alternate.de/Arbeitsspeicher/Corsair-RAM",
+          "name": "Corsair RAM"
+        }
+      },
+      {
+        "@type": "ListItem",
+        "position": 6,
+        "item": {
+          "name": "Corsair DIMM 48 GB DDR5-5600 (2x 24 GB) Dual-Kit, Arbeitsspeicher"
+        }
+      }
+    ]
+  }
+]
+      </script>
+</head><body>
+<div class="font-weight-bold text-center mt-3">Artikel kann derzeit nicht gekauft werden</div>
+</body></html>
