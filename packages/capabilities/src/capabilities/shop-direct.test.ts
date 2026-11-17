@@ -292,10 +292,12 @@ describe('shop.offers from the tech shops', () => {
     const tile = (await fixture('caseking-search-pvv')).match(
       /<div class="product h-100 w-100"[\s\S]*<\/div>\n<\/div>\n<\/body>/,
     )![0]
-    const doubled = (await fixture('caseking-search-pvv')).replace(
-      tile,
-      `${tile.replace('</div>\n</body>', '')}${tile.replaceAll('MEPM-140', 'MEPM-141').replace('</div>\n</body>', '')}</div>\n</body>`,
-    )
+    const doubled = `<html><body>${'<p>navigation</p>'.repeat(2000)}`
+      .concat(await fixture('caseking-search-pvv'))
+      .replace(
+        tile,
+        `${tile.replace('</div>\n</body>', '')}${tile.replaceAll('MEPM-140', 'MEPM-141').replace('</div>\n</body>', '')}</div>\n</body>`,
+      )
     const r = rig({ pages: { [casekingSearchUrl('PVV564G560C40K')]: { html: doubled } } })
     const error = await failure(r.offers.call({ product: 'PVV564G560C40K', source: 'caseking' }, r.options))
     expect(error.code).toBe('UPSTREAM_ERROR')
