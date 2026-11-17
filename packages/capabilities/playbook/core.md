@@ -1,6 +1,6 @@
 # Core Principles
 
-Cross-cutting prompting doctrine that applies regardless of the detected intent. `composePlaybookSystemPrompt` (`shared/src/playbook.ts`) always leads with this file, then `settings.md`, then `policy.md`, then the files for the detected/requested intent (`icons.md`, `hero.md`, `painterly.md`, `technical.md`, `article.md`, `diagram.md`, `figure-art.md`).
+Cross-cutting prompting doctrine that applies regardless of the detected intent. `composePlaybook` (`packages/capabilities/src/image/playbook.ts`) always leads with this file, then `settings.md`, then `policy.md`, then the files for the detected/requested intent (`icons.md`, `hero.md`, `painterly.md`, `technical.md`, `article.md`, `diagram.md`, `figure-art.md`, `texture.md`).
 
 ## Core principles
 

@@ -1,6 +1,6 @@
 # Settings Derivation
 
-This studio's rules for turning a brief into concrete generation settings. The enhancer derives these; every derived value surfaces as an editable control, never hidden. Explicit user values are echoed verbatim and never overridden — see `overrides` in the `/enhance` v2 contract (`shared/src/plan.ts`).
+This studio's rules for turning a brief into concrete generation settings. The enhancer derives these; every derived value surfaces as an editable control, never hidden. Explicit user values are echoed verbatim and never overridden — see `overrides` in the `/enhance` v2 contract (`packages/capabilities/src/image/enhance.ts`).
 
 ## Quality and n — draft-first by default
 
@@ -50,7 +50,7 @@ Both generatable models accept **arbitrary custom sizes on both generate and edi
 - total area **655,360–8,294,400 px**
 - longest edge **< 3840**
 
-Derive the size the brief actually wants and let `shared/src/rules.ts` snap it if it lands off-grid.
+Derive the size the brief actually wants and let `snapSize` (`packages/capabilities/src/image/size.ts`) snap it if it lands off-grid.
 
 ## The rest
 
@@ -64,7 +64,7 @@ These derive from the brief's _shape_, independent of the quality decision above
 | Transparency ("transparent", "cutout", "no background") | derive `background: "transparent"` with `output_format: "png"` (or `"webp"`) — see "Background treatment"                                                                                                         |
 | Edit with identity/product fidelity concerns            | nothing to derive — **never send `input_fidelity`**. Neither generatable model accepts the parameter (hard 400) and both are locked to high fidelity internally, so the behaviour you want is already the default |
 
-The capability matrix is enforced by `shared/src/rules.ts`, not here — this table only describes what to _derive_; `rules.ts` disposes.
+The capability matrix is enforced upstream in image-gateway, not here — this table only describes what to _derive_; the size rules in `packages/capabilities/src/image/size.ts` dispose of the size.
 
 ## Background treatment: transparency is AVAILABLE
 
@@ -85,4 +85,4 @@ Apple Vision matting (`docs/research/transparency-and-vector.md`) was the interi
 
 ## Cost anchors
 
-Cost anchors (probe-measured 2026-09-23, per generatable model @ 1024×1024): low $0.006, medium $0.013, high $0.053, xhigh $0.094, max $0.211 per image. Streaming preview overhead is per-model — flare emits zero partial frames (no overhead), sunburst adds a flat ~+$0.002 per streamed request. Implemented as `estimateCost()` in `shared/src/cost.ts`, which scales these anchors linearly with pixel count relative to 1024×1024.
+Cost anchors (probe-measured 2026-09-23, per generatable model @ 1024×1024): low $0.006, medium $0.013, high $0.053, xhigh $0.094, max $0.211 per image. Streaming preview overhead is per-model — flare emits zero partial frames (no overhead), sunburst adds a flat ~+$0.002 per streamed request. Implemented as `estimateCost()` in `packages/capabilities/src/image/estimate.ts`, which scales these anchors linearly with pixel count relative to 1024×1024.
