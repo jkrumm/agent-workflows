@@ -206,7 +206,7 @@ function idealoShop(open: string): { shop: string | null; marketplace: boolean; 
   const shopType = attr(open, 'data-shop')?.match(/"type"\s*:\s*"([A-Z]+)"/)?.[1]
   return {
     shop: name?.replace(/\s*\(Marktplatzhändler\)\s*$/i, '') || null,
-    marketplace: /\(Marktplatzhändler\)/i.test(name ?? '') || shopType === 'EBYDE',
+    marketplace: /\(Marktplatzhändler\)|\bMarketplace\b/i.test(name ?? '') || shopType === 'EBYDE',
     jsonPrice,
   }
 }
@@ -244,7 +244,10 @@ function idealoOffer(block: string): Offer {
     shippingEur: total !== null && price !== null ? Math.max(0, round2(total - price)) : null,
     totalEur: total,
     totalEurNoPrepayment: hasNonPrepayment(methods) ? total : null,
-    rating: ratingOf(block.match(/starAndRatingWrapper"[^>]*>\s*(?:<span>\s*)?<b>(\d(?:,\d)?)<\/b>/)?.[1], /,/),
+    rating: ratingOf(
+      block.match(/starAndRatingWrapper"[^>]*>(?:(?!<li\b)[\s\S]){0,800}?<b>(\d(?:,\d)?)<\/b>/)?.[1],
+      /,/,
+    ),
     ratingCount: parseCount(block.match(/numberOfRatings">\s*([\d.]+)/)?.[1]),
     paymentMethods: methods,
     prepaymentOnly: prepaymentOnly(methods),

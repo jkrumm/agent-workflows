@@ -89,6 +89,7 @@
 <ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="delivery">
 <a>
 <li>
+<svg></svg>
 <p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
 <span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
 <span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Do. 19.11.</span>
@@ -112,6 +113,7 @@
 <a class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/321919.html">
 <div class="productOffers-listItemOfferShopV2Stars rating-single-star">
 <div class="starAndRatingWrapper">
+<svg></svg>
 <span>
 <b>4,7</b>
 </span>
@@ -138,6 +140,7 @@
 <div class="vertical-separator"></div>
 <div class="productOffers-listItemOfferDelivery delivery delivery--short svg-icon">
 <a>
+<svg></svg>
 </a>
 </div>
 <span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile">
@@ -222,12 +225,14 @@
 <ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="delivery">
 <a>
 <li>
+<svg></svg>
 <p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
 <span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
 <span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Fr. 20.11.</span>
 </p>
 </li>
 <li>
+<svg></svg>
 <div class="productOffers-listItemOfferDeliveryRetourText">
 <span>Rücksendung 14 Tage kostenfrei</span>
 </div>
@@ -250,6 +255,7 @@
 <a class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/26895.html">
 <div class="productOffers-listItemOfferShopV2Stars rating-single-star">
 <div class="starAndRatingWrapper">
+<svg></svg>
 <span>
 <b>4,5</b>
 </span>
@@ -279,6 +285,7 @@
 <div class="vertical-separator"></div>
 <div class="productOffers-listItemOfferDelivery delivery delivery--short svg-icon">
 <a>
+<svg></svg>
 </a>
 </div>
 <span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile">
@@ -363,6 +370,7 @@
 <ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="delivery">
 <a>
 <li>
+<svg></svg>
 <p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
 <span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
 <span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Fr. 20.11.</span>
@@ -375,6 +383,7 @@
 </div>
 </li>
 <li>
+<svg></svg>
 <div class="productOffers-listItemOfferDeliveryRetourText">
 <span>Rücksendung 30 Tage kostenfrei</span>
 </div>
@@ -397,6 +406,7 @@
 <a class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/322802.html">
 <div class="productOffers-listItemOfferShopV2Stars rating-single-star">
 <div class="starAndRatingWrapper">
+<svg></svg>
 <span>
 <b>2,2</b>
 </span>
@@ -426,6 +436,7 @@
 <div class="vertical-separator"></div>
 <div class="productOffers-listItemOfferDelivery delivery delivery--short svg-icon">
 <a>
+<svg></svg>
 </a>
 </div>
 <span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile">
@@ -505,6 +516,7 @@
 <ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="delivery">
 <a>
 <li>
+<svg></svg>
 <p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
 <span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
 <span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Do. 19.11.</span>
@@ -531,6 +543,7 @@
 <a class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/28156.html">
 <div class="productOffers-listItemOfferShopV2Stars rating-single-star">
 <div class="starAndRatingWrapper">
+<svg></svg>
 <span>
 <b>3,6</b>
 </span>
@@ -557,6 +570,7 @@
 <div class="vertical-separator"></div>
 <div class="productOffers-listItemOfferDelivery delivery delivery--short svg-icon">
 <a>
+<svg></svg>
 </a>
 </div>
 <span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile">
@@ -654,6 +668,7 @@
 <ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="delivery">
 <a>
 <li>
+<svg></svg>
 <p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
 <span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
 <span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Fr. 20.11.</span>
@@ -678,6 +693,7 @@
 <a class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/20481.html">
 <div class="productOffers-listItemOfferShopV2Stars rating-single-star">
 <div class="starAndRatingWrapper">
+<svg></svg>
 <span>
 <b>4,8</b>
 </span>
@@ -704,6 +720,7 @@
 <div class="vertical-separator"></div>
 <div class="productOffers-listItemOfferDelivery delivery delivery--short svg-icon">
 <a>
+<svg></svg>
 </a>
 </div>
 <span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile">
@@ -800,6 +817,7 @@
 <ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="delivery">
 <a>
 <li>
+<svg></svg>
 <p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
 <span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
 <span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Do. 19.11.</span>
@@ -812,6 +830,7 @@
 </div>
 </li>
 <li>
+<svg></svg>
 <div class="productOffers-listItemOfferDeliveryRetourText">
 <span>Rücksendung 30 Tage kostenfrei</span>
 </div>
@@ -831,6 +850,7 @@
 <a class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/316826.html">
 <div class="productOffers-listItemOfferShopV2Stars rating-single-star">
 <div class="starAndRatingWrapper">
+<svg></svg>
 <span>
 <b>3,8</b>
 </span>
@@ -857,6 +877,7 @@
 <div class="vertical-separator"></div>
 <div class="productOffers-listItemOfferDelivery delivery delivery--short svg-icon">
 <a>
+<svg></svg>
 </a>
 </div>
 <span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile">
@@ -936,6 +957,7 @@
 <ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="delivery">
 <a>
 <li>
+<svg></svg>
 <p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
 <span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
 <span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Mo. 23.11.</span>
@@ -960,6 +982,7 @@
 <a class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/302342.html">
 <div class="productOffers-listItemOfferShopV2Stars rating-single-star">
 <div class="starAndRatingWrapper">
+<svg></svg>
 <span>
 <b>4,8</b>
 </span>
@@ -986,6 +1009,7 @@
 <div class="vertical-separator"></div>
 <div class="productOffers-listItemOfferDelivery delivery delivery--medium svg-icon">
 <a>
+<svg></svg>
 </a>
 </div>
 <span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile">
@@ -1060,6 +1084,7 @@
 <ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="delivery">
 <a>
 <li>
+<svg></svg>
 <p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
 <span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
 <span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Sa. 21.11.</span>
@@ -1072,6 +1097,7 @@
 </div>
 </li>
 <li>
+<svg></svg>
 <div class="productOffers-listItemOfferDeliveryRetourText">
 <span>Rücksendung 30 Tage kostenfrei</span>
 </div>
@@ -1094,6 +1120,7 @@
 <a class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/329021.html">
 <div class="productOffers-listItemOfferShopV2Stars rating-single-star">
 <div class="starAndRatingWrapper">
+<svg></svg>
 <span>
 <b>5,0</b>
 </span>
@@ -1123,6 +1150,7 @@
 <div class="vertical-separator"></div>
 <div class="productOffers-listItemOfferDelivery delivery delivery--medium svg-icon">
 <a>
+<svg></svg>
 </a>
 </div>
 <span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile">
@@ -1186,12 +1214,14 @@
 <ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="delivery">
 <a>
 <li>
+<svg></svg>
 <p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
 <span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
 <span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Do. 19.11.</span>
 </p>
 </li>
 <li>
+<svg></svg>
 <div class="productOffers-listItemOfferDeliveryRetourText">
 <span>Rücksendung 30 Tage kostenfrei</span>
 </div>
@@ -1214,6 +1244,7 @@
 <a class="productOffers-listItemOfferShopV2StarsLink">
 <div class="productOffers-listItemOfferShopV2Stars rating-single-star">
 <div class="starAndRatingWrapper">
+<svg></svg>
 <span>
 <b>5,0</b>
 </span>
@@ -1243,6 +1274,7 @@
 <div class="vertical-separator"></div>
 <div class="productOffers-listItemOfferDelivery delivery delivery--short svg-icon">
 <a>
+<svg></svg>
 </a>
 </div>
 <span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile">
@@ -1338,6 +1370,7 @@
 <ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="delivery">
 <a>
 <li>
+<svg></svg>
 <p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
 <span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
 <span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Fr. 20.11.</span>
@@ -1361,6 +1394,7 @@
 <a class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/333157.html">
 <div class="productOffers-listItemOfferShopV2Stars rating-single-star">
 <div class="starAndRatingWrapper">
+<svg></svg>
 <span>
 <b>4,7</b>
 </span>
@@ -1387,6 +1421,7 @@
 <div class="vertical-separator"></div>
 <div class="productOffers-listItemOfferDelivery delivery delivery--long svg-icon">
 <a>
+<svg></svg>
 </a>
 </div>
 <span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile">
@@ -1455,6 +1490,7 @@
 <ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="delivery">
 <a>
 <li>
+<svg></svg>
 <p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
 <span class="productOffers-listItemOfferDeliveryStatusDatesTitle"> Lieferung: </span>
 <span class="productOffers-listItemOfferDeliveryStatusDatesRange"> bis Mo. 23.11.</span>
@@ -1496,6 +1532,7 @@
 <div class="vertical-separator"></div>
 <div class="productOffers-listItemOfferDelivery delivery delivery--medium svg-icon">
 <a>
+<svg></svg>
 </a>
 </div>
 <span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile">

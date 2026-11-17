@@ -6,7 +6,8 @@
 <div class="offer offer--shortly offer--odd" id="offer-index-0">
 <div class="offer__price offer-cell">
 <span class="gh_price">€ 770,07</span>
-<div class="offer__clickout"><a href="https://geizhals.de/redir/BAAAAAff964o6a9DvDrB-CjnKu5xd1vwXNYdd-MO3wTxHS-Ilx0B_Ot5plFIoiKwXLrmgPSn8g8RuSNCgb8daRTU9SdVvk06PgiqPc26B9hxV5HBp_fYssxzoBnQT3YrpRsWc3TmE9yTG-EM7BJ5GXeChZ3ma0wTY-_VsY8NdH6nCy4qn7kkWU73dZCgzU7PzvmgD3ktXPBNkL7eldX6zJ_EaDCbhWb7hfUgyjL2Ax0EXmBC2UHd3tPLgmA1328Xlzho6w" class="offer_bt" data-merchant-name="25now"> zum Angebot </a>
+<div class="offer__clickout"><a href="https://geizhals.de/redir/BAAAAAff964o6a9DvDrB-CjnKu5xd1vwXNYdd-MO3wTxHS-Ilx0B_Ot5plFIoiKwXLrmgPSn8g8RuSNCgb8daRTU9SdVvk06PgiqPc26B9hxV5HBp_fYssxzoBnQT3YrpRsWc3TmE9yTG-EM7BJ5GXeChZ3ma0wTY-_VsY8NdH6nCy4qn7kkWU73dZCgzU7PzvmgD3ktXPBNkL7eldX6zJ_EaDCbhWb7hfUgyjL2Ax0EXmBC2UHd3tPLgmA1328Xlzho6w" class="offer_bt" data-merchant-name="25now"> zum Angebot <svg></svg>
+</a>
 </div>
 <div class="offer__payment-options">
 <span class="offer__payment-icon-wrapper">
@@ -42,7 +43,7 @@
 </span>
 </a>
 <p aria-label="Die Note errechnet sich aus den Bewertungen der letzten 12 Monate. Wurden innerhalb eines Jahres weniger als drei Bewertungen abgegeben, werden sämtliche Bewertungen zur Berechnung herangezogen. Die Gesamtanzahl der Bewertungen bezieht sich auf alle abgegebenen Bewertungen." data-tooltip-pos="down" data-tooltip-length="large">
-</p>
+<svg></svg></p>
 </div>
 <div class="offer__delivery offer-cell">
 <div class="offer__delivery-time">1-3 Werktage </div>
@@ -60,7 +61,8 @@
 <div class="offer offer--shortly " id="offer-index-1">
 <div class="offer__price offer-cell">
 <span class="gh_price">€ 825,33</span>
-<div class="offer__clickout"><a href="https://geizhals.de/redir/BAAAAFUNlEa9YW-A7QTqg9wNIG4z4Yhdnd7F-LrS0M81FLig3L6Zi0tbj6fphdoOwLLAt7QYDCxWcfsm7VjjG4nDK3cBemzC_3BTtvVG4R8wHmRM_S3QhBU2ZxrTmo-vDcIjuphZqGoSDn7GCGljvPF_fAF4bNWBdCNZhRevYCDfwh71Mjx3_F_AB8heJKxuJ8rZl7-ig-lFEsxWBPz5HDezMHM" class="offer_bt" data-merchant-name="electronis.de"> zum Angebot </a>
+<div class="offer__clickout"><a href="https://geizhals.de/redir/BAAAAFUNlEa9YW-A7QTqg9wNIG4z4Yhdnd7F-LrS0M81FLig3L6Zi0tbj6fphdoOwLLAt7QYDCxWcfsm7VjjG4nDK3cBemzC_3BTtvVG4R8wHmRM_S3QhBU2ZxrTmo-vDcIjuphZqGoSDn7GCGljvPF_fAF4bNWBdCNZhRevYCDfwh71Mjx3_F_AB8heJKxuJ8rZl7-ig-lFEsxWBPz5HDezMHM" class="offer_bt" data-merchant-name="electronis.de"> zum Angebot <svg></svg>
+</a>
 </div>
 <div class="offer__payment-options">
 <span class="offer__payment-icon-wrapper">
@@ -108,7 +110,7 @@
 </span>
 </a>
 <p aria-label="Die Note errechnet sich aus den Bewertungen der letzten 12 Monate. Wurden innerhalb eines Jahres weniger als drei Bewertungen abgegeben, werden sämtliche Bewertungen zur Berechnung herangezogen. Die Gesamtanzahl der Bewertungen bezieht sich auf alle abgegebenen Bewertungen." data-tooltip-pos="down" data-tooltip-length="large">
-</p>
+<svg></svg></p>
 </div>
 <div class="offer__delivery offer-cell">
 <div class="offer__delivery-time">2-4 Tage </div>
@@ -126,7 +128,8 @@
 <div class="offer offer--available offer--odd" id="offer-index-2">
 <div class="offer__price offer-cell">
 <span class="gh_price">€ 825,34</span>
-<div class="offer__clickout"><a href="https://geizhals.de/redir/BAAAABVMBF4mthwgfTvH0BdpcTDpYqXHdnItO4XEoI2abFiVNtIHVeawLqijonLqoWHLXUBFEJETPK-tJx8xUW-vL42WUn5eTwWIqgbSUiCy6EQ3-yGCMN1cf6owrsfELyKLQpiV65bn4ockt-B9oU--NRG0ssaY9Ed3GOoaZNhxIhX0VIMG_1dJt8vnm2bbnDWvEzgzF2CiNVzREdOVRyy7QophRhVhcttElpyM6wjqluuxy3cx-EUEzxD6YLZIh97FaReuFoofc8QFBnxrArF2xvWIU6QXABxgE4hq5w6yzd9H" class="offer_bt" data-merchant-name="JB-Computer"> zum Angebot </a>
+<div class="offer__clickout"><a href="https://geizhals.de/redir/BAAAABVMBF4mthwgfTvH0BdpcTDpYqXHdnItO4XEoI2abFiVNtIHVeawLqijonLqoWHLXUBFEJETPK-tJx8xUW-vL42WUn5eTwWIqgbSUiCy6EQ3-yGCMN1cf6owrsfELyKLQpiV65bn4ockt-B9oU--NRG0ssaY9Ed3GOoaZNhxIhX0VIMG_1dJt8vnm2bbnDWvEzgzF2CiNVzREdOVRyy7QophRhVhcttElpyM6wjqluuxy3cx-EUEzxD6YLZIh97FaReuFoofc8QFBnxrArF2xvWIU6QXABxgE4hq5w6yzd9H" class="offer_bt" data-merchant-name="JB-Computer"> zum Angebot <svg></svg>
+</a>
 </div>
 <div class="offer__payment-options">
 <span class="offer__payment-icon-wrapper">
@@ -177,7 +180,7 @@
 </span>
 </a>
 <p aria-label="Die Note errechnet sich aus den Bewertungen der letzten 12 Monate. Wurden innerhalb eines Jahres weniger als drei Bewertungen abgegeben, werden sämtliche Bewertungen zur Berechnung herangezogen. Die Gesamtanzahl der Bewertungen bezieht sich auf alle abgegebenen Bewertungen." data-tooltip-pos="down" data-tooltip-length="large">
-</p>
+<svg></svg></p>
 </div>
 <div class="offer__delivery offer-cell">
 <div class="offer__delivery-time">Auf Lager, sofort versandfertig Lieferzeit 1-2 Werktage </div>
@@ -195,7 +198,8 @@
 <div class="offer offer--shortly " id="offer-index-3">
 <div class="offer__price offer-cell">
 <span class="gh_price">€ 851,89</span>
-<div class="offer__clickout"><a href="https://geizhals.de/redir/BAAAALpFcgNVADZJ91mOqceiffvmeDEcIG9K73V5RC6uSPzFWPU6XJ67Dmw1jMQhD--VZd0pesG7FqwnKJM-pQiDK6700A-5fVEy41BBkCBdJ_yZCR9INYMwbc_pshWeRYEQxhNF2fH8RGItYZ14elQkL9awfu-XQHFMSuJCC5RlsX2YwDFXbO6cGC8o5aXG0cFOh3EwxG04ncAxZO11dPyk9_Y" class="offer_bt" data-merchant-name="Mindfactory"> zum Angebot </a>
+<div class="offer__clickout"><a href="https://geizhals.de/redir/BAAAALpFcgNVADZJ91mOqceiffvmeDEcIG9K73V5RC6uSPzFWPU6XJ67Dmw1jMQhD--VZd0pesG7FqwnKJM-pQiDK6700A-5fVEy41BBkCBdJ_yZCR9INYMwbc_pshWeRYEQxhNF2fH8RGItYZ14elQkL9awfu-XQHFMSuJCC5RlsX2YwDFXbO6cGC8o5aXG0cFOh3EwxG04ncAxZO11dPyk9_Y" class="offer_bt" data-merchant-name="Mindfactory"> zum Angebot <svg></svg>
+</a>
 </div>
 <div class="offer__payment-options">
 <span class="offer__payment-icon-wrapper">
@@ -249,7 +253,7 @@
 </span>
 </a>
 <p aria-label="Die Note errechnet sich aus den Bewertungen der letzten 12 Monate. Wurden innerhalb eines Jahres weniger als drei Bewertungen abgegeben, werden sämtliche Bewertungen zur Berechnung herangezogen. Die Gesamtanzahl der Bewertungen bezieht sich auf alle abgegebenen Bewertungen." data-tooltip-pos="down" data-tooltip-length="large">
-</p>
+<svg></svg></p>
 </div>
 <div class="offer__delivery offer-cell">
 <div class="offer__delivery-time">Lagernd im Außenlager, Lieferung 2-3 Werktage<br>Stand: <time datetime="2026-11-17T16:12+0100" title="Datumsformat: Tag.Monat.Jahr">17.11.2026, 16:12</time>
@@ -268,7 +272,8 @@
 <div class="offer offer--shortly offer--odd" id="offer-index-4">
 <div class="offer__price offer-cell">
 <span class="gh_price">€ 851,94</span>
-<div class="offer__clickout"><a href="https://geizhals.de/redir/BAAAAD5-XnBOl4dRmBzC-QdktyECmG0h6TWqSIo98uVzHgs1G0Dulv-brxt2ANg1wrouLplZn1A9CfdUVH6Wdl2gWGQhrrYY09Fi293HrgAjRTK2wo71icW-PRCmlh4j0uCKeCJy4tUo343JNpu_CbcsyBAoD5tj9v58wQCesPrpJmwt7ovrQFpwTFtB_gvlcTGkzA" class="offer_bt" data-merchant-name="barax"> zum Angebot </a>
+<div class="offer__clickout"><a href="https://geizhals.de/redir/BAAAAD5-XnBOl4dRmBzC-QdktyECmG0h6TWqSIo98uVzHgs1G0Dulv-brxt2ANg1wrouLplZn1A9CfdUVH6Wdl2gWGQhrrYY09Fi293HrgAjRTK2wo71icW-PRCmlh4j0uCKeCJy4tUo343JNpu_CbcsyBAoD5tj9v58wQCesPrpJmwt7ovrQFpwTFtB_gvlcTGkzA" class="offer_bt" data-merchant-name="barax"> zum Angebot <svg></svg>
+</a>
 </div>
 <div class="offer__payment-options">
 <span class="offer__payment-icon-wrapper">
@@ -307,7 +312,7 @@
 </span>
 </a>
 <p aria-label="Die Note errechnet sich aus den Bewertungen der letzten 12 Monate. Wurden innerhalb eines Jahres weniger als drei Bewertungen abgegeben, werden sämtliche Bewertungen zur Berechnung herangezogen. Die Gesamtanzahl der Bewertungen bezieht sich auf alle abgegebenen Bewertungen." data-tooltip-pos="down" data-tooltip-length="large">
-</p>
+<svg></svg></p>
 </div>
 <div class="offer__delivery offer-cell">
 <div class="offer__delivery-time">Ab Lager lieferbar - Lieferzeit 1-3 Werktage </div>
@@ -325,7 +330,8 @@
 <div class="offer offer--shortly " id="offer-index-5">
 <div class="offer__price offer-cell">
 <span class="gh_price">€ 856,92</span>
-<div class="offer__clickout"><a href="https://geizhals.de/redir/BAAAAFy98lB6Wa-53SvMw2cgslG0C2EnkuGYnf8vjMf5SmijVow_PDSiaO3jSs5cRkZU_SDZYBvjiDd0RBanLv9eK7Zg65J7KkVcdu0aEW9D5lhkeVRuEZV4iSFyZlNh665E7lLiB7noiQdMf5mF1wgdWjcyxjHGWX1T4VNf9Z1V1NuOI7H9WtliNhF16SANkVF7lqMAFCnr97zn5l-K0aeh9DnecCe-lAwk2d9nhkt5qTrke_Az9vmPKeRtSvwSKbNPQg" class="offer_bt" data-merchant-name="edigitech"> zum Angebot </a>
+<div class="offer__clickout"><a href="https://geizhals.de/redir/BAAAAFy98lB6Wa-53SvMw2cgslG0C2EnkuGYnf8vjMf5SmijVow_PDSiaO3jSs5cRkZU_SDZYBvjiDd0RBanLv9eK7Zg65J7KkVcdu0aEW9D5lhkeVRuEZV4iSFyZlNh665E7lLiB7noiQdMf5mF1wgdWjcyxjHGWX1T4VNf9Z1V1NuOI7H9WtliNhF16SANkVF7lqMAFCnr97zn5l-K0aeh9DnecCe-lAwk2d9nhkt5qTrke_Az9vmPKeRtSvwSKbNPQg" class="offer_bt" data-merchant-name="edigitech"> zum Angebot <svg></svg>
+</a>
 </div>
 <div class="offer__payment-options">
 <span class="offer__payment-icon-wrapper">
@@ -364,7 +370,7 @@
 </span>
 </a>
 <p aria-label="Die Note errechnet sich aus den Bewertungen der letzten 12 Monate. Wurden innerhalb eines Jahres weniger als drei Bewertungen abgegeben, werden sämtliche Bewertungen zur Berechnung herangezogen. Die Gesamtanzahl der Bewertungen bezieht sich auf alle abgegebenen Bewertungen." data-tooltip-pos="down" data-tooltip-length="large">
-</p>
+<svg></svg></p>
 </div>
 <div class="offer__delivery offer-cell">
 <div class="offer__delivery-time">Sofort versandfertig, Lieferzeit ca. 1-3 Werktage </div>
@@ -382,7 +388,8 @@
 <div class="offer offer--shortly offer--odd" id="offer-index-6">
 <div class="offer__price offer-cell">
 <span class="gh_price">€ 870,09</span>
-<div class="offer__clickout"><a href="https://geizhals.de/redir/BAAAAKlNM8KW5kl6oRwdCBklLzUHEJghN65TevBKDkEIBRaIzHFqNrYopUgSN_UBA26xX7KPSp1sc7wJrLKQMMZ_vh6gOYCQ4miCRdryzlRhNb6LFW2XCfr4j7HG8c0mYmbCXquHc5iM1XC-_7uBkSkIbmL5ZrnX3OYwrJcguh90O4CqNbLpT9xVPdH5PyxV__DiuKyFiL73fuDoQ-rCDD1NweLup6pNz6GwOl_01azAKvU2f3FQeqOr2ZhZkWXGH2RqxvDtOiP3h0TPVUEa5hkm4xWHV3HwICTm_KQcCtDanzaEIa62GNPRYtvdx64AI0UytvoJr-I-1uLUs0Bk2yqFOAkicuLVKN-NyTabvwm3LMgQKA-bY_b-fMEAnrD66SZsLe6L60BacExbQf4L5XExpMw" class="offer_bt" data-merchant-name="grooves.land"> zum Angebot </a>
+<div class="offer__clickout"><a href="https://geizhals.de/redir/BAAAAKlNM8KW5kl6oRwdCBklLzUHEJghN65TevBKDkEIBRaIzHFqNrYopUgSN_UBA26xX7KPSp1sc7wJrLKQMMZ_vh6gOYCQ4miCRdryzlRhNb6LFW2XCfr4j7HG8c0mYmbCXquHc5iM1XC-_7uBkSkIbmL5ZrnX3OYwrJcguh90O4CqNbLpT9xVPdH5PyxV__DiuKyFiL73fuDoQ-rCDD1NweLup6pNz6GwOl_01azAKvU2f3FQeqOr2ZhZkWXGH2RqxvDtOiP3h0TPVUEa5hkm4xWHV3HwICTm_KQcCtDanzaEIa62GNPRYtvdx64AI0UytvoJr-I-1uLUs0Bk2yqFOAkicuLVKN-NyTabvwm3LMgQKA-bY_b-fMEAnrD66SZsLe6L60BacExbQf4L5XExpMw" class="offer_bt" data-merchant-name="grooves.land"> zum Angebot <svg></svg>
+</a>
 </div>
 <div class="offer__payment-options">
 <span class="offer__payment-icon-wrapper">
@@ -430,7 +437,7 @@
 </span>
 </a>
 <p aria-label="Die Note errechnet sich aus den Bewertungen der letzten 12 Monate. Wurden innerhalb eines Jahres weniger als drei Bewertungen abgegeben, werden sämtliche Bewertungen zur Berechnung herangezogen. Die Gesamtanzahl der Bewertungen bezieht sich auf alle abgegebenen Bewertungen." data-tooltip-pos="down" data-tooltip-length="large">
-</p>
+<svg></svg></p>
 </div>
 <div class="offer__delivery offer-cell">
 <div class="offer__delivery-time">lagernd, Lieferzeit: 1-4 Werktage </div>
@@ -448,7 +455,8 @@
 <div class="offer offer--unavailable " id="offer-index-7">
 <div class="offer__price offer-cell">
 <span class="gh_price">€ 871,76</span>
-<div class="offer__clickout"><a href="https://geizhals.de/redir/BAAAAL1OORIaRbHzzYCrxaUADw663USyUzP3nhL0Yq-MHlXB3NNpSI_Q4yWXa7PJLdY1Kp9RPCdyi9MEdXLY1d9OQ2rn0Fl4K18MygFnkQrmJYQ-7jJTAgIBhaTSb5FPv6ypcsmT3eitocN-5BwpzBF63bWhpEgX8tHZfMPE_hv88Jua1qdn1HWyEKdl_Lq4ThPS0cw7_koXNFzOmrf0xkwFkEzIGDvMcAbQMMi3Ac8ofOWlMsYxxll9U-FTX_WdVdTbjulHZ83c-LmAZhGpgYDGS0gicuLVKN-NyTabvwm3LMgQKA-bY_b-fMEAnrD66SZsLe6L60BacExbQf4L5XExpMw" class="offer_bt" data-merchant-name="Proshop.de"> zum Angebot </a>
+<div class="offer__clickout"><a href="https://geizhals.de/redir/BAAAAL1OORIaRbHzzYCrxaUADw663USyUzP3nhL0Yq-MHlXB3NNpSI_Q4yWXa7PJLdY1Kp9RPCdyi9MEdXLY1d9OQ2rn0Fl4K18MygFnkQrmJYQ-7jJTAgIBhaTSb5FPv6ypcsmT3eitocN-5BwpzBF63bWhpEgX8tHZfMPE_hv88Jua1qdn1HWyEKdl_Lq4ThPS0cw7_koXNFzOmrf0xkwFkEzIGDvMcAbQMMi3Ac8ofOWlMsYxxll9U-FTX_WdVdTbjulHZ83c-LmAZhGpgYDGS0gicuLVKN-NyTabvwm3LMgQKA-bY_b-fMEAnrD66SZsLe6L60BacExbQf4L5XExpMw" class="offer_bt" data-merchant-name="Proshop.de"> zum Angebot <svg></svg>
+</a>
 </div>
 <div class="offer__payment-options">
 <span class="offer__payment-icon-wrapper">
@@ -500,7 +508,7 @@
 </span>
 </a>
 <p aria-label="Die Note errechnet sich aus den Bewertungen der letzten 12 Monate. Wurden innerhalb eines Jahres weniger als drei Bewertungen abgegeben, werden sämtliche Bewertungen zur Berechnung herangezogen. Die Gesamtanzahl der Bewertungen bezieht sich auf alle abgegebenen Bewertungen." data-tooltip-pos="down" data-tooltip-length="large">
-</p>
+<svg></svg></p>
 </div>
 <div class="offer__delivery offer-cell">
 <div class="offer__delivery-time">Verfügbar - 5-7 Werktage Lieferzeit </div>
@@ -518,7 +526,8 @@
 <div class="offer offer--available offer--odd" id="offer-index-8">
 <div class="offer__price offer-cell">
 <span class="gh_price">€ 981,43</span>
-<div class="offer__clickout"><a href="https://geizhals.de/redir/BAAAABMVxCMR9yPbsDFkFUHFUg0tB3lPb3fNmBuOe802ZSj29B8cBwYf9-cS_xHj0T9W2jhFHHRusk4rbj1YFXyHTt_SHZG3O3GvytIfiX9ctToY9kZR4HmqO0ZZFmReTHurT7MaEWM91WMB5nvEg1aHhHgBGhSYGCYHkdB_qP031kkGEPtAqQWo9_yztp8SeOL-ltPIR9QVT9dYWMbblbzm5eJCacLkiPAtsLfmHaQbycFden-RfkF__yIIr52RYpV1sFO1_nPRuUB1t-faWmTIEMA" class="offer_bt" data-merchant-name="jb-vertrieb"> zum Angebot </a>
+<div class="offer__clickout"><a href="https://geizhals.de/redir/BAAAABMVxCMR9yPbsDFkFUHFUg0tB3lPb3fNmBuOe802ZSj29B8cBwYf9-cS_xHj0T9W2jhFHHRusk4rbj1YFXyHTt_SHZG3O3GvytIfiX9ctToY9kZR4HmqO0ZZFmReTHurT7MaEWM91WMB5nvEg1aHhHgBGhSYGCYHkdB_qP031kkGEPtAqQWo9_yztp8SeOL-ltPIR9QVT9dYWMbblbzm5eJCacLkiPAtsLfmHaQbycFden-RfkF__yIIr52RYpV1sFO1_nPRuUB1t-faWmTIEMA" class="offer_bt" data-merchant-name="jb-vertrieb"> zum Angebot <svg></svg>
+</a>
 </div>
 <div class="offer__payment-options">
 <span class="offer__payment-icon-wrapper">
@@ -561,7 +570,7 @@
 </span>
 </a>
 <p aria-label="Die Note errechnet sich aus den Bewertungen der letzten 12 Monate. Wurden innerhalb eines Jahres weniger als drei Bewertungen abgegeben, werden sämtliche Bewertungen zur Berechnung herangezogen. Die Gesamtanzahl der Bewertungen bezieht sich auf alle abgegebenen Bewertungen." data-tooltip-pos="down" data-tooltip-length="large">
-</p>
+<svg></svg></p>
 </div>
 <div class="offer__delivery offer-cell">
 <div class="offer__delivery-time">lagernd </div>

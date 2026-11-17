@@ -30,7 +30,7 @@
 </div>
 </div>
 <div class="galleryview__options">
-<div class="dots-dropdown" data-product-id="2900586" data-product-name="Corsair Vengeance schwarz UDIMM 48GB Kit, DDR5-5600, CL40-40-40-77" data-deeplink="https://geizhals.de/corsair-vengeance-schwarz-dimm-kit-48gb-cmk48gx5m2b5600c40-a2900586.html" data-image-thumb="https://gzhls.at/pix/16/5e/165e783e5752d581-s.webp" data-track-category="SERP.Result" data-dotsdropdown-initialized="true"><button type="button" class="dots-dropdown__button" aria-label="Optionen" aria-haspopup="menu" aria-controls="dotsdropdown-0" popovertarget="dotsdropdown-0" data-name="Corsair Vengeance schwarz UDIMM 48GB Kit, DDR5-5600, CL40-40-40-77" data-href="https://geizhals.de/corsair-vengeance-schwarz-dimm-kit-48gb-cmk48gx5m2b5600c40-a2900586.html" data-id="2900586" data-img="https://gzhls.at/pix/16/5e/165e783e5752d581-s.webp"></button>
+<div class="dots-dropdown" data-product-id="2900586" data-product-name="Corsair Vengeance schwarz UDIMM 48GB Kit, DDR5-5600, CL40-40-40-77" data-deeplink="https://geizhals.de/corsair-vengeance-schwarz-dimm-kit-48gb-cmk48gx5m2b5600c40-a2900586.html" data-image-thumb="https://gzhls.at/pix/16/5e/165e783e5752d581-s.webp" data-track-category="SERP.Result" data-dotsdropdown-initialized="true"><button type="button" class="dots-dropdown__button" aria-label="Optionen" aria-haspopup="menu" aria-controls="dotsdropdown-0" popovertarget="dotsdropdown-0" data-name="Corsair Vengeance schwarz UDIMM 48GB Kit, DDR5-5600, CL40-40-40-77" data-href="https://geizhals.de/corsair-vengeance-schwarz-dimm-kit-48gb-cmk48gx5m2b5600c40-a2900586.html" data-id="2900586" data-img="https://gzhls.at/pix/16/5e/165e783e5752d581-s.webp"><svg></svg></button>
 </div>
 </div>
 </article>
