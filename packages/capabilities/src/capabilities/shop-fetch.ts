@@ -6,7 +6,7 @@ import type { ReadBudget, ReadCount } from './shop-budget.ts'
 import { AMAZON_ORIGIN, type BlockKind, detectBlock } from './shop-parse.ts'
 import { SHOPIFY_HOSTS } from './shop-shopify-parse.ts'
 
-// The one place the shop doors touch the network (amazon.de and alternate.de direct; idealo.de, geizhals.de, caseking.de and mindfactory.de
+// The one place the shop doors touch the network (amazon.de, alternate.de and the listed Shopify stores direct; idealo.de, geizhals.de, caseking.de and mindfactory.de
 // in the research Chrome from the first request, because they turn a plain client away). Conduct, in code (docs/shop.md §Conduct): one request at a time, a
 // jittered pause of 2-5 s between two page fetches, a search kept 1 h and an item page 24 h, a 429, captcha or sign-in
 // wall ends the call with `blocked (<reason>)`: no retry, no second identity, no proxy, no login, no solving. A robot
@@ -48,7 +48,7 @@ const defaultSleep = (ms: number, signal: AbortSignal) =>
   })
 
 /**
- * The hosts the shop doors read and how. amazon.de and alternate.de answer a plain client (the direct leg first; a robot
+ * The hosts the shop doors read and how. amazon.de, alternate.de and the listed Shopify stores answer a plain client (the direct leg first; a robot
  * check goes to the research Chrome once). idealo.de, geizhals.de, caseking.de (Cloudflare's check) and mindfactory.de (a
  * 403 "Datenbank-Update" page for the product page) turn a plain client away (measured 2026-11-17, docs/shop.md), so they
  * are read in the research Chrome from the first request: a direct request would be one guaranteed refusal and would start
