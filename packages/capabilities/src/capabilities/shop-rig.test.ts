@@ -1,10 +1,15 @@
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fakeTransports } from '@agent-workflows/testing/transports'
 import { expect } from 'bun:test'
 import type { Usage } from '../context.ts'
 import { CapabilityCallError } from '../errors.ts'
 import { BrowserFailure, type BrowserRead } from '../web/browser.ts'
 import type { WebDeps } from '../web/deps.ts'
+import { resolveWebDeps } from '../web/deps.ts'
 import { createShopCapabilities } from './shop-capabilities.ts'
+import { createShopFetch } from './shop-fetch.ts'
 import { idealoSearchUrl } from './shop-offers-parse.ts'
 
 // A fake research Chrome and the shop capabilities built over it, for the offers and watch tests.
@@ -69,9 +74,11 @@ export interface Rig {
   watch?: { dir: string; notifyFetch?: typeof fetch }
   /** false: no research Chrome is configured. */
   browser?: boolean
+  /** The shop data directory (the read counter); default a fresh temp directory. */
+  dir?: string
 }
 
-export function rig({ pages = {}, env = {}, directFetch, watch, browser = true }: Rig = {}) {
+export function rig({ pages = {}, env = {}, directFetch, watch, browser = true, dir }: Rig = {}) {
   const chrome = fakeChrome(pages)
   const direct: string[] = []
   const web: WebDeps = {
@@ -88,13 +95,17 @@ export function rig({ pages = {}, env = {}, directFetch, watch, browser = true }
       }),
   }
   const time = clock()
+  const shopDir = dir ?? mkdtempSync(join(tmpdir(), 'shop-reads-'))
   const caps = createShopCapabilities({ transports: fakeTransports({}), env: {}, warn: () => {} }, web, {
     pace: time,
+    dir: shopDir,
     ...(watch ? { watch } : {}),
   })
   const usage: Usage[] = []
-  const options = { addUsage: (u: Usage) => usage.push(u) }
-  return { chrome, direct, time, offers: caps[4], watch: caps[5], usage, options }
+  const options = { addUsage: (u: Usage) => usage.push(u), signal: new AbortController().signal }
+  /** A second fetcher over the same research Chrome, for tests that call `readSource` directly. */
+  const fetcher = createShopFetch(resolveWebDeps(web), time)
+  return { chrome, direct, time, fetcher, dir: shopDir, offers: caps[4], list: caps[5], watch: caps[6], usage, options }
 }
 
 export async function failure(promise: Promise<unknown>) {

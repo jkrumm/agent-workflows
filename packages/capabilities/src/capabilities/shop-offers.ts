@@ -37,6 +37,7 @@ import {
   parseGeizhalsSearch,
   parseIdealoHistory,
   parseIdealoProduct,
+  pageNamesMpn,
   parseIdealoSearch,
   type Product,
   productSchema,
@@ -155,8 +156,19 @@ export interface ReadArgs {
   fresh: boolean
 }
 
+/** Product pages of an idealo search whose cards name no part number are read to look for it, at most this many (one request each). */
+const MAX_PROBES = 2
+
+interface Located {
+  url: string
+  /** The page itself when the site redirected straight to it. */
+  landed?: ProductPage
+  /** Product pages to read in order until one names the part number: the cards of a list that carry none (idealo SSDs, CPUs). */
+  probes?: { url: string; name: string }[]
+}
+
 /** The product page a search by part number leads to: its URL, and the page itself when the site redirected straight to it. */
-async function locate(shop: ShopFetch, args: ReadArgs, ctx: PageCtx): Promise<{ url: string; landed?: ProductPage }> {
+async function locate(shop: ShopFetch, args: ReadArgs, ctx: PageCtx): Promise<Located> {
   const site = SITES[args.source]
   if (isUrl(args.ref)) {
     if (!site.productId(args.ref)) throw fail('INVALID_INPUT', `shop.offers: not a ${args.source} product page URL`)
@@ -189,6 +201,13 @@ async function locate(shop: ShopFetch, args: ReadArgs, ctx: PageCtx): Promise<{ 
   // error, not "the shop does not list it": the product may be among them.
   const blind = search.candidates.filter((c) => c.mpnOnPage)
   if (blind.length === 1 && search.candidates.length === 1) return { url: blind[0]!.url }
+  // idealo prints no part number in the name of an SSD or a CPU, so no card can equal it. The search ranks the product that
+  // carries it first, so the first cards without a part number are read and the product page's offer titles decide.
+  const probes = search.candidates
+    .filter((c) => c.probe)
+    .map((c) => ({ url: c.url, name: c.name }))
+    .slice(0, MAX_PROBES)
+  if (probes.length > 0) return { url: probes[0]!.url, probes }
   if (blind.length > 1)
     throw fail(
       'UPSTREAM_ERROR',
@@ -209,25 +228,42 @@ async function locate(shop: ShopFetch, args: ReadArgs, ctx: PageCtx): Promise<{ 
  */
 export async function readSource(shop: ShopFetch, args: ReadArgs, ctx: PageCtx): Promise<SourceResult> {
   const mpn = isUrl(args.ref) ? (args.expectMpn ?? null) : args.ref
-  const { url, landed } = await locate(shop, args, ctx)
-  let page = landed
+  const located = await locate(shop, args, ctx)
+  const tries = located.probes ?? [{ url: located.url, name: '' }]
+  let page: ProductPage | undefined
   let cached = false
   let fetchedAt = new Date().toISOString()
-  if (!page) {
-    const read = await shop.page(
-      {
-        url,
-        ttlMs: OFFERS_TTL_MS,
-        fresh: args.fresh,
-        label: `the ${args.source} product page`,
-        parse: SITES[args.source].parseProduct,
-      },
-      ctx,
-    )
-    ;({ value: page, cached, fetchedAt } = read)
+  const read: ProductPage[] = []
+  for (const [index, candidate] of tries.entries()) {
+    const got =
+      located.landed && index === 0
+        ? { value: located.landed, cached: false, fetchedAt }
+        : await shop.page(
+            {
+              url: candidate.url,
+              ttlMs: OFFERS_TTL_MS,
+              fresh: args.fresh,
+              label: `the ${args.source} product page`,
+              parse: SITES[args.source].parseProduct,
+            },
+            ctx,
+          )
+    read.push(got.value)
+    if (mpn === null || pageNamesMpn(got.value, mpn)) {
+      ;({ value: page, cached, fetchedAt } = got)
+      break
+    }
   }
-  if (mpn !== null && (page.product.mpn === null || normMpn(page.product.mpn) !== normMpn(mpn)))
-    throw notFound(`the ${args.source} page names part number ${page.product.mpn ?? 'none'}, not ${mpn}`)
+  if (!page) {
+    if (!located.probes)
+      throw notFound(`the ${args.source} page names part number ${read[0]!.product.mpn ?? 'none'}, not ${mpn}`)
+    throw notFound(
+      `${args.source} has no product with part number ${mpn} (the first ${read.length} search hits without a part number were read and their offer titles do not name it: ${read.map((p) => p.product.name).join(', ')})`,
+    )
+  }
+  // The page names no part number of its own: the offers' titles named the one asked, and the output says so.
+  if (mpn !== null && page.product.mpn === null)
+    page = { ...page, product: { ...page.product, mpn, mpnBasis: 'offer titles' } }
   const history = args.history && args.source === 'idealo' ? await readHistory(shop, page.product.id, args, ctx) : null
   const offers = [...page.offers].sort(cheapestFirst)
   const totals = offers.map((o) => o.totalEur).filter((t): t is number => t !== null)
@@ -276,7 +312,7 @@ function renderOffers(results: SourceResult[]): string {
       const memory = describeMemory(r.product)
       const head = [
         `${r.product.name} [${r.source}]`,
-        `part number ${r.product.mpn ?? 'not stated'}${r.product.gtin ? `, GTIN ${r.product.gtin}` : ''}`,
+        `part number ${r.product.mpn ?? 'not stated'}${r.product.mpnBasis ? ' (named in the offer titles)' : ''}${r.product.gtin ? `, GTIN ${r.product.gtin}` : ''}`,
         ...(memory ? [`memory ${memory}`] : []),
         `${r.product.offerCount} offers (${r.offers.length} listed)`,
         ...(r.product.dataTime ? [`data from ${r.product.dataTime}`] : []),

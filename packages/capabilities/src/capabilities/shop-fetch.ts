@@ -2,6 +2,7 @@ import { fail } from '../errors.ts'
 import { BrowserFailure, BrowserRefused } from '../web/browser.ts'
 import { type ResolvedWebDeps, webUsage, within } from '../web/deps.ts'
 import { assertPublicUrl, publicOnlyPolicy } from '../web/ssrf.ts'
+import type { ReadBudget, ReadCount } from './shop-budget.ts'
 import { AMAZON_ORIGIN, type BlockKind, detectBlock } from './shop-parse.ts'
 
 // The one place the shop doors touch the network (amazon.de and alternate.de direct; idealo.de, geizhals.de, caseking.de and mindfactory.de
@@ -10,7 +11,8 @@ import { AMAZON_ORIGIN, type BlockKind, detectBlock } from './shop-parse.ts'
 // wall ends the call with `blocked (<reason>)`: no retry, no second identity, no proxy, no login, no solving. A robot
 // check alone gets one read in the headed research Chrome, and when that meets the check too the call ends blocked
 // (nobody solves it: the owner is not asked). After a wall the process refuses further page fetches for a cooldown, so a loop of calls
-// cannot lean on it.
+// cannot lean on it. Every network read is also counted per host and day (`shop-budget.ts`); a host with a cap refuses the read
+// past it before anything is sent.
 
 export const SEARCH_TTL_MS = 3_600_000
 export const ITEM_TTL_MS = 24 * 3_600_000
@@ -108,7 +110,8 @@ export interface PageRead<T> {
   fetchedAt: string
 }
 
-export function createShopFetch(web: ResolvedWebDeps, pace: ShopPace = {}) {
+/** `budget` counts the network reads per host and day and refuses past a host's cap (docs/shop.md §Conduct); without one nothing is counted. */
+export function createShopFetch(web: ResolvedWebDeps, pace: ShopPace = {}, budget?: ReadBudget) {
   const sleep = pace.sleep ?? defaultSleep
   const random = pace.random ?? Math.random
   const now = pace.now ?? Date.now
@@ -322,6 +325,10 @@ export function createShopFetch(web: ResolvedWebDeps, pace: ShopPace = {}) {
   }
 
   return {
+    /** The reads of `host` so far today (cache hits excluded) and its daily cap; null when this fetcher keeps no count. */
+    reads(host: string): Promise<ReadCount> | null {
+      return budget?.today(host) ?? null
+    },
     /**
      * The parsed page at `url`: from this process's cache inside `ttlMs`, else one paced read. `parse` throws on a
      * layout it does not know, which is an `UPSTREAM_ERROR` here (the page changed, or it was not the page asked for).
@@ -348,6 +355,7 @@ export function createShopFetch(web: ResolvedWebDeps, pace: ShopPace = {}) {
         const until = blockedUntil.get(host) ?? 0
         if (now() < until)
           throw blocked('cooldown', `${host} turned this process away ${Math.ceil((until - now()) / 60_000)} min ago`)
+        await budget?.take(host)
         await pause(ctx.signal)
         let response: Fetched
         try {

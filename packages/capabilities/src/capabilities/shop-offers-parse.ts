@@ -56,6 +56,12 @@ export const productSchema = z.object({
   url: z.string().describe('The product page'),
   name: z.string(),
   mpn: z.string().nullable().describe('The manufacturer part number the page names'),
+  mpnBasis: z
+    .literal('offer titles')
+    .optional()
+    .describe(
+      'Set when the page names no part number of its own (idealo SSDs and CPUs) and `mpn` is the one asked, which the titles of the offers on the page name; absent when the page names it',
+    ),
   gtin: z.string().nullable(),
   memory: memorySchema
     .nullable()
@@ -88,11 +94,15 @@ export interface SearchCandidate {
   tokens?: string[]
   /** The card carries no part number at all (a shop's tile names its item number): the product page's own part number decides. */
   mpnOnPage?: true
+  /** idealo: the name carries no part number in brackets (every SSD and CPU), but the offers' titles on the product page may name it. */
+  probe?: true
 }
 
 export interface ProductPage {
   product: Product
   offers: Offer[]
+  /** idealo: the titles the shops give the product in their offers, which is where a part number the name lacks is printed. */
+  titles?: string[]
 }
 
 export type SearchPage = { kind: 'list'; candidates: SearchCandidate[] } | { kind: 'product'; page: ProductPage }
@@ -193,7 +203,8 @@ export function parseIdealoSearch(html: string, finalUrl: string): SearchPage {
     const link = card.match(/href="(https:\/\/www\.idealo\.de\/preisvergleich\/OffersOfProduct\/(\d+)_-[^"?#]*\.html)/)
     const name = textOf(card.match(/data-testid="product-summary-title"[^>]*>([\s\S]*?)<\/div>/)?.[1] ?? '')
     if (!link || !name) return
-    candidates.push({ id: link[2]!, url: link[1]!, name, mpn: mpnOfName(name) })
+    const mpn = mpnOfName(name)
+    candidates.push({ id: link[2]!, url: link[1]!, name, mpn, ...(mpn === null ? { probe: true as const } : {}) })
   })
   return { kind: 'list', candidates }
 }
@@ -282,6 +293,11 @@ export function parseIdealoProduct(html: string, finalUrl: string): ProductPage 
   const topAt = html.search(/class="oopStage-productInfoTopItems/)
   const overview = topAt < 0 ? '' : textOf(html.slice(topAt, elementEnd(html, html.lastIndexOf('<div', topAt), 'div')))
   const time = decode(html.match(/data-import-time="([^"]*)"/)?.[1] ?? '').match(GERMAN_DATA_TIME)
+  const titles = [...list.matchAll(/productOffers-listItemTitleInner\s*"\s+title="([^"]*)"/g)].map((m) =>
+    decode(m[1]!)
+      .replace(/\u00ad/g, '')
+      .trim(),
+  )
   return {
     product: {
       source: 'idealo',
@@ -295,7 +311,24 @@ export function parseIdealoProduct(html: string, finalUrl: string): ProductPage 
       dataTime: time ? `${time[3]}-${time[2]}-${time[1]}T${time[4]}:${time[5]}` : null,
     },
     offers,
+    titles,
   }
+}
+
+/**
+ * Whether the page is the product with part number `mpn`: its own part number equals it, or, when the name carries none (idealo
+ * names an SSD "Samsung 990 Pro 2TB"), the titles of the offers on the page name it as a word. A title may print a part number
+ * with other separators, so the comparison ignores them. Few of an SSD page's offers print it (5 of the 20 listed on the page of
+ * the 2 TB WD Black SN850X, 2026-11-18), so the proportion is no test; one shop's sloppy title must not decide either: two
+ * titles must name it (all of them when fewer are listed).
+ */
+export function pageNamesMpn(page: ProductPage, mpn: string): boolean {
+  if (page.product.mpn !== null) return normMpn(page.product.mpn) === normMpn(mpn)
+  const chars = normMpn(mpn).split('')
+  if (chars.length < 6 || !page.titles || page.titles.length === 0) return false
+  const word = new RegExp(`(?<![A-Za-z0-9])${chars.join('[^A-Za-z0-9]?')}(?![A-Za-z0-9])`, 'i')
+  const named = page.titles.filter((title) => word.test(title)).length
+  return named >= Math.min(2, page.titles.length)
 }
 
 /** The history JSON as the research Chrome shows it (`<pre>{…}</pre>`): daily points in cents and the period's statistics. */
