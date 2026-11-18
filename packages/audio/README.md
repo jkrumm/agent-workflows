@@ -174,7 +174,7 @@ the response header `agw-run-id`, so the process must send it on both door route
 
 `speech-roundtrip` (`src/workflows/speech-roundtrip/`) is the eval-only workflow that scores the door's two lanes: it speaks a
 known sentence on a TTS route and transcribes the audio on an STT route, and its scorer reports the word error rate and
-the pace. Internal: not on the door, no HTTP route, no CLI command (host README, `src/workflows/eval/README.md` §Media suites).
+the pace. Internal: not on the door, no HTTP route, no CLI command (host README, `packages/host/src/workflows/eval/README.md` §Media suites).
 
 ## Process
 
