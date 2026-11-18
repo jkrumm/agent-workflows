@@ -164,7 +164,7 @@ reads like an instruction cannot steer the agent into reading other notes and se
 
 ## Registration
 
-`module.ts` registers the workflow in the audio process's tree (host `workflows/registry.ts`, discovered by directory).
+`module.ts` registers the workflow in the audio process's tree (host `packages/host/src/workflows/registry.ts`, discovered by directory).
 Beyond `HostDeps` the process passes `journal: { db, schema }` (its journal pool) for the show's memory and the cost
 step; the module fails at build without it. It is a `last`-phase module so it picks `podcast.produce` up from the
 modules built before it when one is registered; neither imports the other. Research runs carry purpose `prod`.
