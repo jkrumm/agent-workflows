@@ -38,7 +38,7 @@ help:
 TEST_WORKERS ?= 3
 # Memory: a parallel worker keeps the high-water mark of the largest file it ran (a finished file's pages are not given back
 # to the OS), so the files in .heavy-tests (hundreds of MiB each while they run) run in a second pass with HEAVY_WORKERS
-# workers, never next to each other on the four. Both passes together run every test file once.
+# workers, never next to each other on the parallel workers. Both passes together run every test file once.
 HEAVY_WORKERS ?= 1
 HEAVY_TESTS := $(shell sed -e 's/\#.*//' .heavy-tests)
 # The suites that apply the usage-tracker checkout's migrations (a sibling repository only the mini has; they skip visibly without it,

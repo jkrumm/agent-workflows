@@ -16,7 +16,11 @@ if [ -n "${AGW_TEST_PG_URL:-}" ]; then exec "$@"; fi
 
 if command -v secrets-run >/dev/null 2>&1; then
   lock=''
-  if command -v lockf >/dev/null 2>&1; then lock="lockf -t ${CHECK_LOCK_WAIT:-1200} ${CHECK_LOCK:-/tmp/agent-workflows-check.lock}"; fi
+  if command -v lockf >/dev/null 2>&1; then
+    lock="lockf -t ${CHECK_LOCK_WAIT:-1200} ${CHECK_LOCK:-/tmp/agent-workflows-check.lock}"
+  else
+    echo "test-env: lockf is not on PATH: this run takes no lock and may share the role's connections with another check" >&2
+  fi
   # $lock is a command prefix, split into words on purpose.
   # shellcheck disable=SC2086
   exec $lock secrets-run run --env-file=.env.test.tpl -- sh -c '
@@ -50,7 +54,7 @@ fail() {
   || fail "initdb failed"
 port="$(bun -e 'const s = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } }); console.log(s.port); s.stop(true)')" \
   || fail "no free port"
-# Throwaway data: nothing is worth a disk flush. 200 connections: four parallel workers hold a few pools each.
+# Throwaway data: nothing is worth a disk flush. 200 connections: the parallel workers hold a few pools each.
 "$PG_BIN_DIR/pg_ctl" -D "$dir/data" -l "$dir/pg.log" -w -s \
   -o "-c listen_addresses=127.0.0.1 -p $port -c unix_socket_directories=$dir -c fsync=off -c synchronous_commit=off -c full_page_writes=off -c max_connections=200" \
   start || fail "pg_ctl start failed"
