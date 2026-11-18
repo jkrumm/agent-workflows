@@ -1,12 +1,12 @@
 # Show Bible — Brain Sonderausgabe
 
 Binding house style for every script. Injected verbatim into the writer prompts
-(`PODCAST_SHOW_BIBLE`). Written for the models, not for readers; keep it short
+(the `showBible` field of the run's house step, read from this file). Written for the models, not for readers; keep it short
 and concrete — every line here costs prompt tokens on every call.
 
 Die allgemeine Stimme des Autors (Verdict zuerst, Zahlen statt Adjektive, Slop-
 und Phrasenlisten wie Dreier-Aufzählungen, "nicht X, sondern Y", "dive into")
-kommt aus `voice.md` (`PODCAST_VOICE_PATH`) und steht den Writer-Prompts voran;
+kommt aus `voice.md` im Vault-Root (`AGW_BRAIN_DIR`) und steht den Writer-Prompts voran;
 bei Widerspruch gilt diese Datei, denn hier wird gesprochen, nicht gelesen.
 
 Was hier steht, sind Persönlichkeiten und Sprachregeln. Die FORM einer Folge
