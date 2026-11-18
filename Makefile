@@ -1,8 +1,11 @@
 .DEFAULT_GOAL := help
-.PHONY: help check test-timings fmt deploy verify version live-routes install-opencode research-chrome shop-watch-setup shop-watch-teardown hyperdx-apply hyperdx-export
+.PHONY: help check static static-steps test test-steps usage test-timings fmt deploy verify version live-routes install-opencode research-chrome shop-watch-setup shop-watch-teardown hyperdx-apply hyperdx-export
 
 help:
-	@echo "make check   mini-registry lint (when the dotfiles checkout is present), oxfmt check, oxlint type-aware, tsc, bun test --parallel (the merge gate; TEST_WORKERS=n sets the workers; the files of .heavy-tests run after, HEAVY_WORKERS=n)"
+	@echo "make check   install, mini-registry lint (when the dotfiles checkout is present), then make static and make test (the merge gate; TEST_WORKERS=n sets the workers; the files of .heavy-tests run after, HEAVY_WORKERS=n)"
+	@echo "make static  oxfmt check, oxlint type-aware, tsc: one test slot, which the factory may place on its step host"
+	@echo "make test    bun test --parallel against Postgres (the mini's, or a private cluster on the step host): one test slot, which the factory may place on its step host"
+	@echo "make usage   the suites that need the usage-tracker checkout's migrations (USAGE_TESTS); they run where this target runs, never on the step host"
 	@echo "make test-timings  re-record .bun-test-timings.json (how long each test file takes, so the slowest start first); run it on an idle machine and commit the result"
 	@echo "make fmt     apply formatting"
 	@echo "make deploy  deploy origin/master on the mini: release, LaunchAgents host and audio, the gateway as a third (restarted only when its build changed), health, agw on PATH (DRY_RUN=1 prints the plan)"
@@ -34,38 +37,63 @@ TEST_WORKERS ?= 4
 # workers, never next to each other on the four. Both passes together run every test file once.
 HEAVY_WORKERS ?= 1
 HEAVY_TESTS := $(shell sed -e 's/\#.*//' .heavy-tests)
+# The suites that apply the usage-tracker checkout's migrations (a sibling repository only the mini has; they skip visibly without it,
+# as on CI). `make usage` runs them on the mini, so the step host's `make test` leaves them out.
+USAGE_TESTS := packages/middleware/test/usage-pg.test.ts packages/gateway/test/outbox-pg.test.ts
 BUN_TEST_BASE ?= --timings=.bun-test-timings.json
 BUN_TEST_FLAGS ?= --parallel=$(TEST_WORKERS) $(BUN_TEST_BASE)
 # Both passes always run; the exit code is the worst of the two.
-TEST_CMD = rc=0; bun test $(BUN_TEST_FLAGS) $(foreach f,$(HEAVY_TESTS),--path-ignore-patterns=$(f)) || rc=$$?; bun test --parallel=$(HEAVY_WORKERS) $(BUN_TEST_BASE) $(HEAVY_TESTS) || rc=$$?; exit $$rc
+TEST_CMD = rc=0; bun test $(BUN_TEST_FLAGS) $(foreach f,$(HEAVY_TESTS) $(USAGE_TESTS),--path-ignore-patterns=$(f)) || rc=$$?; bun test --parallel=$(HEAVY_WORKERS) $(BUN_TEST_BASE) $(HEAVY_TESTS) || rc=$$?; exit $$rc
+
+# The factory's step host (project.yaml `steps`, docs/architecture.md "Steps off the mini" in software-factory) may run `static` and
+# `test` off the mini when the mini's test line would make them wait. Install and the registry lint stay here: the host
+# installs on its own, and the registry lint needs the dotfiles checkout only the mini has. Without `factory` (CI) the bare command.
+# The step is named after the project, never the worktree directory: the factory learns a step's peak by name.
+SLOT_PROJECT = agent-workflows
+slot = $(if $(shell command -v factory 2>/dev/null),factory slot run --name "$(SLOT_PROJECT) $(1)" --,)
 
 check:
 	@echo "==> install (bun install --frozen-lockfile)"
 	@bun install --frozen-lockfile
 	@echo "==> registry (mini-registry lint: this repo's mini-services.yaml against every other registry; skipped without the dotfiles checkout, as on CI)"
 	@[ ! -f "$$HOME/SourceRoot/dotfiles/scripts/mini-registry.ts" ] || bun "$$HOME/SourceRoot/dotfiles/scripts/mini-registry.ts" lint
+	@$(MAKE) --no-print-directory static
+	@$(MAKE) --no-print-directory test
+	@$(MAKE) --no-print-directory usage
+	@echo "==> check passed"
+
+# The caller's variables do not reach a step that runs on the step host: only what is spelled out in the command does.
+static:
+	@$(call slot,static) $(MAKE) --no-print-directory static-steps
+
+static-steps:
 	@echo "==> format (oxfmt --check)"
 	@bunx --no-install oxfmt --check .
 	@echo "==> lint (oxlint --type-aware)"
 	@bunx --no-install oxlint -c .oxlintrc.json --type-aware packages
 	@echo "==> typecheck (tsc --noEmit)"
 	@bunx --no-install tsc --noEmit
+
+# scripts/test-env.sh gives the command its Postgres: AGW_TEST_PG_URL as set (CI), else the mini's through secrets-run, else a
+# private cluster from PG_BIN_DIR (the step image). TEST_WORKERS and HEAVY_WORKERS are forwarded because the step host does not
+# see the caller's make variables; BUN_TEST_BASE is not (`make test-timings` writes a file on this machine, so it stays here).
+test:
+	@$(call slot,test) sh scripts/test-env.sh $(MAKE) --no-print-directory test-steps TEST_WORKERS=$(TEST_WORKERS) HEAVY_WORKERS=$(HEAVY_WORKERS)
+
+# Home, and no slot: two light files on one worker (a slot would queue it behind a guessed 3.5 GiB first), and the suites need the usage-tracker checkout.
+usage:
+	@echo "==> usage (the suites that need the usage-tracker checkout's migrations)"
+	@sh scripts/test-env.sh bun test --parallel=1 $(USAGE_TESTS)
+
+test-steps:
 	@echo "==> test (bun test --parallel=$(TEST_WORKERS), slowest files first, load-scaled timeout per test file; then the files of .heavy-tests with --parallel=$(HEAVY_WORKERS))"
 	@for f in $(HEAVY_TESTS); do [ -f "$$f" ] || { echo ".heavy-tests names $$f, which is not a file"; exit 1; }; done
-	@if [ -n "$$AGW_TEST_PG_URL" ] || ! command -v secrets-run >/dev/null 2>&1; then \
-		bun packages/testing/src/sweep.ts && sh -c '$(TEST_CMD)'; \
-	else \
-		secrets-run run --env-file=.env.test.tpl -- sh -c \
-			'AGW_TEST_PG_URL="postgres://agent_workflows:$$(bun -e "process.stdout.write(encodeURIComponent(process.env.AGW_TEST_PG_PASSWORD))")@127.0.0.1:5432/agent_workflows"; \
-			USAGE_TEST_PG_URL="postgres://$$(bun -e "process.stdout.write(encodeURIComponent(process.env.USAGE_TEST_PG_USER))"):$$(bun -e "process.stdout.write(encodeURIComponent(process.env.USAGE_TEST_PG_PASSWORD))")@127.0.0.1:5432/postgres"; \
-			export AGW_TEST_PG_URL USAGE_TEST_PG_URL; bun packages/testing/src/sweep.ts; $(TEST_CMD)'; \
-	fi
-	@echo "==> check passed"
+	@bun packages/testing/src/sweep.ts && sh -c '$(TEST_CMD)'
 
-# Re-record how long each test file takes (run on an idle machine, then commit the file): `bun test --parallel` reads it to
+# Re-record how long each test file takes (run on an idle machine, then commit the file; the step stays on the mini, as the file is written here): `bun test --parallel` reads it to
 # start the slowest files first. A file with no entry counts as the median, so a stale record only costs speed.
 test-timings:
-	@$(MAKE) --no-print-directory check BUN_TEST_BASE="$(BUN_TEST_BASE) --update-timings"
+	@FACTORY_SLOT_REMOTE=0 $(MAKE) --no-print-directory check BUN_TEST_BASE="$(BUN_TEST_BASE) --update-timings"
 
 fmt:
 	@bunx --no-install oxfmt --write .
