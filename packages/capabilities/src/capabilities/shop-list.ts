@@ -184,16 +184,26 @@ export const createShopList = (shop: ShopFetch) =>
           break
         }
         const pageUrl = categoryPageUrl(category, sort, index)
-        const got = await shop.page(
-          {
-            url: pageUrl,
-            ttlMs: LIST_TTL_MS,
-            fresh,
-            label: `the idealo category page ${index + 1}`,
-            parse: parseIdealoCategory,
-          },
-          ctx,
-        )
+        let got: Awaited<ReturnType<typeof shop.page<CategoryPage>>>
+        try {
+          got = await shop.page(
+            {
+              url: pageUrl,
+              ttlMs: LIST_TTL_MS,
+              fresh,
+              label: `the idealo category page ${index + 1}`,
+              parse: parseIdealoCategory,
+            },
+            ctx,
+          )
+        } catch (error) {
+          // The daily cap is not a wall: the pages already read are an answer, and the cap's own message says why the rest is not.
+          if (index > 0 && error instanceof Error && error.message.includes('daily read cap reached')) {
+            stopped = error.message
+            break
+          }
+          throw error
+        }
         const kept = got.value.products.filter((p) => !seen.has(p.id))
         if (index > 0 && kept.length === 0) {
           stopped = `page ${index + 1} listed no product that was not on an earlier page`

@@ -367,6 +367,22 @@ describe('shop.list', () => {
     expect(first.chrome.reads).toHaveLength(2)
   })
 
+  test('the cap reached on a later page returns the pages already read, and says why it stopped', async () => {
+    const base = 'https://www.idealo.de/preisvergleich/ProductCategory/14613F994150'
+    const r = rig({
+      env: { AGW_SHOP_DAILY_CAP: 'www.idealo.de=1' },
+      pages: {
+        [`${base}.html`]: { html: await fixture('idealo-category-ssd-m2') },
+        [`${base}I16-15.html`]: { html: await fixture('idealo-category-ssd-used') },
+      },
+    })
+    const out = await r.list.call({ url: SSD_URL, pages: 2 }, r.options)
+    expect(out.pages).toHaveLength(1)
+    expect(out.products.length).toBeGreaterThan(0)
+    expect(out.stopped).toContain('daily read cap reached for www.idealo.de: 1 of 1')
+    expect(r.chrome.reads).toHaveLength(1)
+  })
+
   test('a wall ends the call as blocked, with no retry and no partial list', async () => {
     const r = rig({ pages: { [MEMORY_URL]: { challenge: true, html: '<html>Just a moment</html>' } } })
     const error = await failure(r.list.call({ url: MEMORY_URL }, r.options))
