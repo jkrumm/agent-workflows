@@ -22,7 +22,7 @@ import { join } from 'node:path'
 
 const ROOT = join(import.meta.dir, '../../..')
 // Each test runs the real deploy.sh under zsh with stand-in launchctl and curl: seconds when idle, over the 5 s default at a load
-// average of 20 on the mini (four tests failed there, all green alone). A hang guard, as long as the load-scaled cap.
+// average of 20 on the mini (four tests failed there, all green alone). A fixed 30 s hang guard, above the preload's load-scaled cap.
 setDefaultTimeout(30_000)
 import { describeZsh, ZSH } from '@agent-workflows/testing/zsh'
 const NEW = 'a'.repeat(40)
