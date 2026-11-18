@@ -2,7 +2,7 @@
 .PHONY: help check test-timings fmt deploy verify version live-routes install-opencode research-chrome shop-watch-setup shop-watch-teardown hyperdx-apply hyperdx-export
 
 help:
-	@echo "make check   mini-registry lint (when the dotfiles checkout is present), oxfmt check, oxlint type-aware, tsc, bun test --parallel (the merge gate; TEST_WORKERS=n sets the workers)"
+	@echo "make check   mini-registry lint (when the dotfiles checkout is present), oxfmt check, oxlint type-aware, tsc, bun test --parallel (the merge gate; TEST_WORKERS=n sets the workers; the files of .heavy-tests run after, HEAVY_WORKERS=n)"
 	@echo "make test-timings  re-record .bun-test-timings.json (how long each test file takes, so the slowest start first); run it on an idle machine and commit the result"
 	@echo "make fmt     apply formatting"
 	@echo "make deploy  deploy origin/master on the mini: release, LaunchAgents host and audio, the gateway as a third (restarted only when its build changed), health, agw on PATH (DRY_RUN=1 prints the plan)"
@@ -29,7 +29,15 @@ help:
 # connections: a worker per core on a big machine exhausts the server's slots. 4 matches CI and the mini's headroom.
 # The timings file (.bun-test-timings.json, refreshed by `make test-timings`) orders the files slowest-first.
 TEST_WORKERS ?= 4
-BUN_TEST_FLAGS ?= --parallel=$(TEST_WORKERS) --timings=.bun-test-timings.json
+# Memory: a parallel worker keeps the high-water mark of the largest file it ran (a finished file's pages are not given back
+# to the OS), so the files in .heavy-tests (hundreds of MiB each while they run) run in a second pass with HEAVY_WORKERS
+# workers, never next to each other on the four. Both passes together run every test file once.
+HEAVY_WORKERS ?= 1
+HEAVY_TESTS := $(shell sed -e 's/\#.*//' .heavy-tests)
+BUN_TEST_BASE ?= --timings=.bun-test-timings.json
+BUN_TEST_FLAGS ?= --parallel=$(TEST_WORKERS) $(BUN_TEST_BASE)
+# Both passes always run; the exit code is the worst of the two.
+TEST_CMD = rc=0; bun test $(BUN_TEST_FLAGS) $(foreach f,$(HEAVY_TESTS),--path-ignore-patterns=$(f)) || rc=$$?; bun test --parallel=$(HEAVY_WORKERS) $(BUN_TEST_BASE) $(HEAVY_TESTS) || rc=$$?; exit $$rc
 
 check:
 	@echo "==> install (bun install --frozen-lockfile)"
@@ -42,21 +50,22 @@ check:
 	@bunx --no-install oxlint -c .oxlintrc.json --type-aware packages
 	@echo "==> typecheck (tsc --noEmit)"
 	@bunx --no-install tsc --noEmit
-	@echo "==> test (bun test --parallel=$(TEST_WORKERS), slowest files first, load-scaled timeout per test file)"
+	@echo "==> test (bun test --parallel=$(TEST_WORKERS), slowest files first, load-scaled timeout per test file; then the files of .heavy-tests with --parallel=$(HEAVY_WORKERS))"
+	@for f in $(HEAVY_TESTS); do [ -f "$$f" ] || { echo ".heavy-tests names $$f, which is not a file"; exit 1; }; done
 	@if [ -n "$$AGW_TEST_PG_URL" ] || ! command -v secrets-run >/dev/null 2>&1; then \
-		bun packages/testing/src/sweep.ts && bun test $(BUN_TEST_FLAGS); \
+		bun packages/testing/src/sweep.ts && sh -c '$(TEST_CMD)'; \
 	else \
 		secrets-run run --env-file=.env.test.tpl -- sh -c \
 			'AGW_TEST_PG_URL="postgres://agent_workflows:$$(bun -e "process.stdout.write(encodeURIComponent(process.env.AGW_TEST_PG_PASSWORD))")@127.0.0.1:5432/agent_workflows"; \
 			USAGE_TEST_PG_URL="postgres://$$(bun -e "process.stdout.write(encodeURIComponent(process.env.USAGE_TEST_PG_USER))"):$$(bun -e "process.stdout.write(encodeURIComponent(process.env.USAGE_TEST_PG_PASSWORD))")@127.0.0.1:5432/postgres"; \
-			export AGW_TEST_PG_URL USAGE_TEST_PG_URL; bun packages/testing/src/sweep.ts; exec bun test $(BUN_TEST_FLAGS)'; \
+			export AGW_TEST_PG_URL USAGE_TEST_PG_URL; bun packages/testing/src/sweep.ts; $(TEST_CMD)'; \
 	fi
 	@echo "==> check passed"
 
 # Re-record how long each test file takes (run on an idle machine, then commit the file): `bun test --parallel` reads it to
 # start the slowest files first. A file with no entry counts as the median, so a stale record only costs speed.
 test-timings:
-	@$(MAKE) --no-print-directory check BUN_TEST_FLAGS="$(BUN_TEST_FLAGS) --update-timings"
+	@$(MAKE) --no-print-directory check BUN_TEST_BASE="$(BUN_TEST_BASE) --update-timings"
 
 fmt:
 	@bunx --no-install oxfmt --write .

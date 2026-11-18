@@ -1,0 +1,16 @@
+# Test files that hold hundreds of megabytes while they run (measured one file alone: peak resident size of the process tree >= 300 MiB).
+# `make check` runs them after everything else with HEAVY_WORKERS workers (default 1): a parallel worker keeps the high-water
+# mark of the largest file it ran, so four workers that each met one of these held 3-4 GiB between them.
+# One path per line; a file missing here only costs memory, a path with no file fails `make check`.
+packages/capabilities/src/image/image.test.ts
+packages/capabilities/src/web/web.test.ts
+packages/gateway/test/proxy.test.ts
+packages/gateway/test/start.test.ts
+packages/host/test/brain-opencode.test.ts
+packages/host/test/image-door.test.ts
+packages/host/test/image-icon-pipeline.test.ts
+packages/host/test/image-icon-scorer.test.ts
+packages/host/test/image-icon-tile.test.ts
+packages/host/test/image-icon.test.ts
+packages/host/test/main.test.ts
+packages/host/test/research-opencode.test.ts
