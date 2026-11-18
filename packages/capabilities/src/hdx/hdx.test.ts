@@ -29,50 +29,57 @@ interface Seen {
 /** A fake HyperDX: the MCP endpoint answers SSE like ClickStack does; REST v2 answers JSON. `override` takes a request first. */
 function fakeHyperdx(override?: (seen: Seen, n: number) => Response | undefined) {
   const seen: Seen[] = []
+  const handle = async (req: Request): Promise<Response> => {
+    const url = new URL(req.url)
+    const text = await req.text()
+    const body = text ? JSON.parse(text) : undefined
+    const entry = {
+      method: req.method,
+      path: url.pathname + url.search,
+      auth: req.headers.get('authorization'),
+      body,
+    }
+    seen.push(entry)
+    const custom = override?.(entry, seen.length)
+    if (custom) return custom
+    if (entry.auth !== `Bearer ${KEY}`) return new Response('unauthorized', { status: 401 })
+    if (url.pathname === '/api/mcp') {
+      const { id, method, params } = body
+      const ok = (result: unknown) =>
+        new Response(`: ping\n\n${sse({ jsonrpc: '2.0', id, result })}`, {
+          headers: { 'content-type': 'text/event-stream' },
+        })
+      if (method === 'tools/list') return ok({ tools: TOOL_LIST })
+      if (method === 'initialize') return ok({ instructions: 'Pick the narrowest tool.' })
+      if (method === 'prompts/get')
+        // prod's ClickStack validates the arguments object: undefined is -32602
+        return params.name === 'query_guide' && params.arguments !== null && typeof params.arguments === 'object'
+          ? ok({ messages: [{ role: 'user', content: { type: 'text', text: 'Use mapValue syntax.' } }] })
+          : new Response(sse({ jsonrpc: '2.0', id, error: { code: -32602, message: 'Unknown prompt' } }), {
+              headers: { 'content-type': 'text/event-stream' },
+            })
+      if (method === 'tools/call') {
+        if (params.arguments?.sourceId === 'missing')
+          return ok({ isError: true, content: [{ type: 'text', text: 'source not found' }] })
+        return ok({
+          content: [{ type: 'text', text: JSON.stringify({ tool: params.name, args: params.arguments }) }],
+        })
+      }
+    }
+    if (url.pathname.startsWith('/api/api/v2/')) {
+      if (url.pathname.endsWith('/gone')) return Response.json({ message: 'not found' }, { status: 404 })
+      return Response.json({ method: req.method, path: url.pathname.slice('/api/api/v2'.length), body })
+    }
+    return new Response('not found', { status: 404 })
+  }
   const server = Bun.serve({
     port: 0,
     async fetch(req) {
-      const url = new URL(req.url)
-      const text = await req.text()
-      const body = text ? JSON.parse(text) : undefined
-      const entry = {
-        method: req.method,
-        path: url.pathname + url.search,
-        auth: req.headers.get('authorization'),
-        body,
-      }
-      seen.push(entry)
-      const custom = override?.(entry, seen.length)
-      if (custom) return custom
-      if (entry.auth !== `Bearer ${KEY}`) return new Response('unauthorized', { status: 401 })
-      if (url.pathname === '/api/mcp') {
-        const { id, method, params } = body
-        const ok = (result: unknown) =>
-          new Response(`: ping\n\n${sse({ jsonrpc: '2.0', id, result })}`, {
-            headers: { 'content-type': 'text/event-stream' },
-          })
-        if (method === 'tools/list') return ok({ tools: TOOL_LIST })
-        if (method === 'initialize') return ok({ instructions: 'Pick the narrowest tool.' })
-        if (method === 'prompts/get')
-          // prod's ClickStack validates the arguments object: undefined is -32602
-          return params.name === 'query_guide' && params.arguments !== null && typeof params.arguments === 'object'
-            ? ok({ messages: [{ role: 'user', content: { type: 'text', text: 'Use mapValue syntax.' } }] })
-            : new Response(sse({ jsonrpc: '2.0', id, error: { code: -32602, message: 'Unknown prompt' } }), {
-                headers: { 'content-type': 'text/event-stream' },
-              })
-        if (method === 'tools/call') {
-          if (params.arguments?.sourceId === 'missing')
-            return ok({ isError: true, content: [{ type: 'text', text: 'source not found' }] })
-          return ok({
-            content: [{ type: 'text', text: JSON.stringify({ tool: params.name, args: params.arguments }) }],
-          })
-        }
-      }
-      if (url.pathname.startsWith('/api/api/v2/')) {
-        if (url.pathname.endsWith('/gone')) return Response.json({ message: 'not found' }, { status: 404 })
-        return Response.json({ method: req.method, path: url.pathname.slice('/api/api/v2'.length), body })
-      }
-      return new Response('not found', { status: 404 })
+      // Never keep-alive: a later fake server can be given this port, and a pooled socket to the stopped one would fail its first request.
+      const response = await handle(req)
+      const headers = new Headers(response.headers)
+      headers.set('connection', 'close')
+      return new Response(response.body, { status: response.status, headers })
     },
   })
   return { base: `http://127.0.0.1:${server.port}`, seen, stop: () => server.stop(true) }
