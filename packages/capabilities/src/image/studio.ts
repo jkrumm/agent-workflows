@@ -321,6 +321,8 @@ async function readStream(
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  /** the last character before the next chunk: a blank line may span two chunks */
+  let previousLast = ''
   let previews = 0
 
   const handle = async (text: string): Promise<Answer | null> => {
@@ -365,15 +367,25 @@ async function readStream(
       const { done, value } = await reader.read()
       if (done) break
       onChunk()
-      // Only the new text can hold a separator: a scan from the start would be quadratic on a 40 MB frame.
-      const from = Math.max(0, buffer.length - 1)
-      buffer += decoder.decode(value, { stream: true }).replaceAll('\r', '')
-      for (let end = buffer.indexOf('\n\n', from); end !== -1; end = buffer.indexOf('\n\n')) {
+      // Only the new text can hold a separator, so only it is searched (with the one character before it, which may
+      // start the pair). Searching the joined buffer would flatten it on every chunk: a 40 MB frame of 64 KiB chunks
+      // copied about a gigabyte of string.
+      const text = decoder.decode(value, { stream: true }).replaceAll('\r', '')
+      const joined = previousLast + text
+      previousLast = text.length > 0 ? text.slice(-1) : previousLast
+      buffer += text
+      if (!joined.includes('\n\n')) {
+        if (buffer.length > MAX_FRAME_CHARS) {
+          throw fail('UPSTREAM_ERROR', `image stream frame is over ${MAX_FRAME_CHARS} bytes`, {})
+        }
+        continue
+      }
+      for (let end = buffer.indexOf('\n\n'); end !== -1; end = buffer.indexOf('\n\n')) {
         if (end > MAX_FRAME_CHARS)
           throw fail('UPSTREAM_ERROR', `image stream frame is over ${MAX_FRAME_CHARS} bytes`, {})
-        const text = buffer.slice(0, end)
+        const frame = buffer.slice(0, end)
         buffer = buffer.slice(end + 2)
-        const answer = await handle(text)
+        const answer = await handle(frame)
         if (answer) return answer
       }
       if (buffer.length > MAX_FRAME_CHARS) {
