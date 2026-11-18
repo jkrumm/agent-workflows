@@ -3,7 +3,7 @@
 The runtime's `AgentHost` port (`packages/runtime/src/types.ts`) on one OpenCode 2.0.32 server (concept §3, §8).
 Every agent step attempt is one session, in its agent's location directory, driven over the server's HTTP API.
 Inputs for the design: `docs/spikes/opencode-wedge/REPORT.md` (the wedge and its fix), agent-gateway's measured v2
-API (`docs/opencode-v2.md` there), and the probes in §Measured below.
+API (`docs/opencode-v2.md` in agent-gateway, another repo), and the probes in §Measured below.
 
 ## Shape
 
@@ -410,7 +410,7 @@ models the queued one for that race).
 
 | Rule | Who | Evidence |
 |-|-|-|
-| Reasoning passed back verbatim | OpenCode, on the Anthropic route | assistant messages store `reasoning` parts with the provider `state.signature` (probe, 2.0.32) and replay them from the store. On the chat route (`research.agent`, DeepSeek) a tool-call turn's `reasoning_content` goes back verbatim on the next request, and `prompt_tokens_details.cached_tokens` arrive as cache reads priced at the route's rate (real 2.0.32, scripted fake model: host `test/research-opencode.test.ts`, Wave 6) |
+| Reasoning passed back verbatim | OpenCode, on the Anthropic route | assistant messages store `reasoning` parts with the provider `state.signature` (probe, 2.0.32) and replay them from the store. On the chat route (`research.agent`, DeepSeek) a tool-call turn's `reasoning_content` goes back verbatim on the next request, and `prompt_tokens_details.cached_tokens` arrive as cache reads priced at the route's rate (real 2.0.32, scripted fake model: host `packages/host/test/research-opencode.test.ts`, Wave 6) |
 | History never edited | the host | the host only appends (prompt, steer, synthetic resume); it never calls revert, fork, compact, `PATCH` or delete. OpenCode's own compaction can still summarise a long session: it is OpenCode's, not triggered by the host |
 | System and tool changes appended, not a rewritten head | the host | the head is the location (`AGENTS.md`, skills, `opencode.json`) and the session's permissions. A hash directory never changes and a location in use is never evicted, so a running session keeps its head; a change applies to the next session. A re-attach appends a synthetic note instead of a system change |
 | Cache-read tokens recorded | both | OpenCode reports `tokens.cache.read` and `.write` per assistant message; `usageFromOpenCodeMessages` carries them into `Usage` (live run: 7 095 of 7 691 input tokens were cache reads) |
@@ -428,7 +428,7 @@ plain id), so OpenCode's own `auto` compaction, which runs off the model's windo
 serves every bound, an arm picks one. The key is `modelID`, not `id`: OpenCode 2.0.32's v2 config ignores unknown keys, so
 `id` would silently leave the alias calling the gateway with `claude-haiku-5-5~ctx80000`.
 
-**The rule** (OpenCode 2.0.32, read from the `v2.0.32` tag of sst/opencode: [`packages/core/src/session/compaction.ts`](https://github.com/sst/opencode/blob/v2.0.32/packages/core/src/session/compaction.ts),
+**The rule** (OpenCode 2.0.32, read from the `v2.0.32` tag of sst/opencode, another repo: [`packages/core/src/session/compaction.ts`](https://github.com/sst/opencode/blob/v2.0.32/packages/core/src/session/compaction.ts),
 [`model-request.ts`](https://github.com/sst/opencode/blob/v2.0.32/packages/core/src/session/model-request.ts),
 [`packages/schema/src/config/compaction.ts`](https://github.com/sst/opencode/blob/v2.0.32/packages/schema/src/config/compaction.ts)).
 Before each model call the runner compacts when `estimate >= ceiling`, `ceiling = window - buffer` (`calculateCeiling`).
