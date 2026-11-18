@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { brotliCompressSync, deflateSync, gzipSync, zstdCompressSync } from 'node:zlib'
+import { brotliCompressSync, constants, deflateSync, gzipSync, zstdCompressSync } from 'node:zlib'
 import { ConfigError, loadConfig } from '../src/config.ts'
 import { Ledger } from '../src/ledger.ts'
 import { resolveKeys, secretsRunReader } from '../src/secrets.ts'
@@ -254,13 +254,26 @@ describe('tee', () => {
   })
 
   test.each([
-    ['gzip', gzipSync],
-    ['deflate', deflateSync],
-    ['br', brotliCompressSync],
-    ['zstd', zstdCompressSync],
+    ['gzip', (bytes: Uint8Array) => gzipSync(bytes, { level: 1 })],
+    ['deflate', (bytes: Uint8Array) => deflateSync(bytes, { level: 1 })],
+    [
+      'br',
+      (bytes: Uint8Array) =>
+        brotliCompressSync(bytes, {
+          params: { [constants.BROTLI_PARAM_QUALITY]: 1, [constants.BROTLI_PARAM_SIZE_HINT]: bytes.length },
+        }),
+    ],
+    ['zstd', (bytes: Uint8Array) => zstdCompressSync(bytes, { params: { [constants.ZSTD_c_compressionLevel]: 1 } })],
   ] as const)('a %s body that inflates past the limit is refused, not inflated', (encoding, compress) => {
-    const pad = 'x'.repeat(65 * 1024 * 1024)
-    const bomb = compress(new TextEncoder().encode(`{"usage":{"input_tokens":1,"output_tokens":1},"pad":"${pad}"}`))
+    // Built as bytes at the cheapest compression level: the body only has to inflate past the limit, and a 65 MB string
+    // compressed at each codec's default level held a test worker at hundreds of megabytes for the rest of the run.
+    const bomb = compress(
+      Buffer.concat([
+        Buffer.from('{"usage":{"input_tokens":1,"output_tokens":1},"pad":"'),
+        Buffer.alloc(65 * 1024 * 1024, 'x'),
+        Buffer.from('"}'),
+      ]),
+    )
     expect(() => decodeBody(bomb, encoding)).toThrow()
     const tee = new UsageTee({ contentType: 'application/json', contentEncoding: encoding })
     tee.push(bomb)
