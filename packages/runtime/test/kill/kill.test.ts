@@ -1,6 +1,7 @@
 // Kill harness (spike S1, kept as a regression test against the real runtime). Worker subprocesses SIGKILL
-// themselves at every step boundary (b-*) and mid-step (m-*), SIGTERM-deploy onto changed code, and drive 25
-// concurrent runs through a kill. The ledger proves: every run done, 0 completed steps re-run, each effect
+// themselves at every step boundary (b-*) and mid-step (m-*), SIGTERM-deploy onto changed code, and drive 12
+// concurrent runs through a kill (each concurrent run holds a lease connection: 12 are more than the 2-connection journal
+// pool, the case that matters, and fit the test role's connection limit, see the Makefile). The ledger proves: every run done, 0 completed steps re-run, each effect
 // inserted exactly once, each agent session prompted exactly once.
 import { afterAll, expect, test } from 'bun:test'
 import { resolve } from 'node:path'
@@ -13,7 +14,7 @@ import { HARNESS_SQL } from './world.ts'
 
 const WORKER = resolve(import.meta.dir, 'worker.ts')
 const AGENT_MS = 1200
-const PARALLEL = 5
+const PARALLEL = 3
 
 type Restart = { version: string; audit: boolean }
 type Scenario = {
@@ -49,12 +50,12 @@ const SCENARIOS: Scenario[] = [
   { name: 'deploy-break', kill: `agent|start|${AGENT_MS / 2}|SIGTERM`, restart: v2break, expectVersion: 'v2-break' },
   { name: 'deploy-break-late', kill: 'work|start|0|SIGTERM', restart: v2break, expectVersion: 'v2-break' },
   {
-    name: 'concurrent-25',
-    runs: 25,
-    target: 12,
+    name: 'concurrent-12',
+    runs: 12,
+    target: 6,
     kill: `agent|start|${AGENT_MS / 2}|SIGKILL`,
     expectVersion: 'v1',
-    maxRuns: 30,
+    maxRuns: 14,
     journalPool: 3,
   },
 ]

@@ -29,9 +29,13 @@ help:
 # Before the tests, packages/testing/src/sweep.ts drops test schemas (agw_t_*) older than a day: what a failed or interrupted run left.
 # Test files run in TEST_WORKERS parallel processes (bun test --parallel, which implies --isolate; see
 # bun.com/docs/test/parallel). Every file brings its own Postgres schema, so files do not collide, but each holds
-# connections: a worker per core on a big machine exhausts the server's slots. 4 matches CI and the mini's headroom.
+# connections: a worker per core on a big machine exhausts the server's slots.
+# Measured on the mini (pg_stat_activity of the role every 500 ms through a full check): the live processes hold 10-20 of the role's
+# 48 (rolconnlimit), the kill harness and the 30-run concurrency test held 25-30 each, and one check peaked at 48, so any second
+# check (another lead's) or a bad overlap failed tests with "too many connections for role". Hence 3 workers, those two files in the
+# second pass (.heavy-tests) at 12 concurrent runs, and scripts/test-env.sh takes a lock on the mini so only one check runs there: the peak is now 35.
 # The timings file (.bun-test-timings.json, refreshed by `make test-timings`) orders the files slowest-first.
-TEST_WORKERS ?= 4
+TEST_WORKERS ?= 3
 # Memory: a parallel worker keeps the high-water mark of the largest file it ran (a finished file's pages are not given back
 # to the OS), so the files in .heavy-tests (hundreds of MiB each while they run) run in a second pass with HEAVY_WORKERS
 # workers, never next to each other on the four. Both passes together run every test file once.

@@ -145,7 +145,7 @@ describe('concurrency', () => {
     }
   })
 
-  test('30 concurrent runs on a 2-connection journal pool finish (the spike pool deadlock)', async () => {
+  test('12 concurrent runs on a 2-connection journal pool finish (the spike pool deadlock)', async () => {
     const g = gauge()
     const wf = defineWorkflow({
       id: 'conc.pool',
@@ -158,13 +158,13 @@ describe('concurrency', () => {
         return {}
       },
     })
-    const rt = testRuntime({ schema: db.schema, workflows: [wf], journalPoolSize: 2, maxConcurrentRuns: 30 })
+    const rt = testRuntime({ schema: db.schema, workflows: [wf], journalPoolSize: 2, maxConcurrentRuns: 12 })
     await rt.open()
     try {
-      const ids = await Promise.all(Array.from({ length: 30 }, () => rt.start(wf, {}, { purpose: 'build' })))
+      const ids = await Promise.all(Array.from({ length: 12 }, () => rt.start(wf, {}, { purpose: 'build' })))
       const results = await Promise.all(ids.map(({ runId }) => rt.wait(runId, { pollMs: 50 })))
       expect(results.every((r) => r.status === 'done')).toBe(true)
-      expect(g.peak).toBeGreaterThanOrEqual(25)
+      expect(g.peak).toBeGreaterThanOrEqual(10)
     } finally {
       await rt.close()
     }

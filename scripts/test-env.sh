@@ -2,7 +2,10 @@
 # usage: scripts/test-env.sh <command...>
 # Runs the command with the tests' Postgres in its environment (AGW_TEST_PG_URL, USAGE_TEST_PG_URL), from the first of:
 #   1. AGW_TEST_PG_URL already set (CI's service container, a developer's own database): the command runs as it is.
-#   2. secrets-run on PATH (the mini): the maintained Postgres, with the role from .env.test.tpl.
+#   2. secrets-run on PATH (the mini): the maintained Postgres, with the role from .env.test.tpl. One command at a time holds
+#      /tmp/agent-workflows-check.lock (lockf, CHECK_LOCK_WAIT seconds, exit 75 when it passes): the role's 48 connections are
+#      shared with the live processes, and a full test run alone peaks at 35. Inside a factory slot already held, the wait
+#      counts toward the slot's 30 min run limit, hence 20 min.
 #   3. PG_BIN_DIR set (the step image on the factory's step host, which has secrets-run nowhere): a private cluster in a
 #      temp directory on a free loopback port, trust auth, stopped and removed when the command ends. The superuser is the
 #      test role and the admin one at once, so the usage schema suite's scratch database works there too.
@@ -12,7 +15,11 @@ set -u
 if [ -n "${AGW_TEST_PG_URL:-}" ]; then exec "$@"; fi
 
 if command -v secrets-run >/dev/null 2>&1; then
-  exec secrets-run run --env-file=.env.test.tpl -- sh -c '
+  lock=''
+  if command -v lockf >/dev/null 2>&1; then lock="lockf -t ${CHECK_LOCK_WAIT:-1200} ${CHECK_LOCK:-/tmp/agent-workflows-check.lock}"; fi
+  # $lock is a command prefix, split into words on purpose.
+  # shellcheck disable=SC2086
+  exec $lock secrets-run run --env-file=.env.test.tpl -- sh -c '
     AGW_TEST_PG_URL="postgres://agent_workflows:$(bun -e "process.stdout.write(encodeURIComponent(process.env.AGW_TEST_PG_PASSWORD))")@127.0.0.1:5432/agent_workflows"
     USAGE_TEST_PG_URL="postgres://$(bun -e "process.stdout.write(encodeURIComponent(process.env.USAGE_TEST_PG_USER))"):$(bun -e "process.stdout.write(encodeURIComponent(process.env.USAGE_TEST_PG_PASSWORD))")@127.0.0.1:5432/postgres"
     export AGW_TEST_PG_URL USAGE_TEST_PG_URL
