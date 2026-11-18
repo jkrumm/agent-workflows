@@ -79,7 +79,7 @@ creditAvailableUsd, creditPerCandidateUsd, iuSpentUsd, iuLineUsd, iuPerCandidate
 the credit and IU reads are `null` at the target).
 
 **No nightly job.** The nightly labelling LaunchAgent (`com.jkrumm.agent-workflows-eval-mine`) is retired: bug-recall cases
-are no longer the target (`docs/waves/PLAN.md`), and its `make eval-mine-job` target, script and plist template are gone.
+are no longer the target (`docs/waves/PLAN.md`), and its `eval-mine-job` Make target, script and plist template were removed in fc721ee.
 `agw eval mine review --auto` still runs by hand.
 
 **Files**, all under `$AGW_EVAL_DIR/review-gt/` (dirs 0700, files 0600; cases name private repos):
