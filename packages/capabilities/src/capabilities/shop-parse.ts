@@ -171,7 +171,9 @@ function isKnownPage(html: string): boolean {
 export function detectBlock(input: { status: number; html: string; finalUrl: string }): BlockKind | null {
   if (input.status === 429) return 'rate-limited'
   if (/\/ap\/(signin|cvf)\b/.test(input.finalUrl)) return 'login-required'
-  if (!isKnownPage(input.html) && ROBOT_MARKERS.test(input.html)) return 'bot-protection'
+  // A JSON answer (a Shopify store's endpoints) is data, not a page: its product text may say "kein Roboter".
+  if (!isKnownPage(input.html) && !/^\s*[{[]/.test(input.html) && ROBOT_MARKERS.test(input.html))
+    return 'bot-protection'
   if (input.status === 403) return 'forbidden'
   if (input.status === 503 && !isKnownPage(input.html)) return 'rate-limited'
   return null

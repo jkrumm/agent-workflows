@@ -8,6 +8,7 @@ import { createShopItem } from './shop-item.ts'
 import { createShopList } from './shop-list.ts'
 import { createShopOffers } from './shop-offers.ts'
 import { createShopSearch } from './shop-search.ts'
+import { createShopStore } from './shop-shopify.ts'
 import { createShopWatch, type WatchDeps } from './shop-watch.ts'
 
 /** What the shop doors and `image.read` are built from beyond the model and web deps. Every field defaults to production. */
@@ -22,7 +23,7 @@ export interface ShopDeps {
 
 /**
  * `image.read` (vision, generic), the three amazon.de doors (`shop.search`, `shop.item`, `shop.find`), `shop.offers`
- * (idealo.de, geizhals.de and tech-shop offers by part number), `shop.list` (the products of one idealo category page) and `shop.watch` (one run of the price watch). The doors share one
+ * (idealo.de, geizhals.de, tech-shop and Shopify-store offers by part number), `shop.list` (the products of one idealo category page), `shop.watch` (one run of the price watch) and `shop.store` (a Shopify store's collections, collection feed or search). The doors share one
  * fetcher, so one cache, one pause and one request at a time cover all of them; `shop.find` calls the other capabilities in
  * process, `image.read` for its `--images`.
  */
@@ -46,5 +47,6 @@ export function createShopCapabilities(llm: LlmDeps, web: WebDeps = {}, shop: Sh
     createShopOffers(fetcher),
     createShopList(fetcher),
     createShopWatch(fetcher, resolved, shop.pace?.now ?? Date.now, { dir: shop.dir, ...shop.watch }),
+    createShopStore(fetcher),
   ] as const
 }

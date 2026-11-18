@@ -4,6 +4,7 @@ import { type ResolvedWebDeps, webUsage, within } from '../web/deps.ts'
 import { assertPublicUrl, publicOnlyPolicy } from '../web/ssrf.ts'
 import type { ReadBudget, ReadCount } from './shop-budget.ts'
 import { AMAZON_ORIGIN, type BlockKind, detectBlock } from './shop-parse.ts'
+import { SHOPIFY_HOSTS } from './shop-shopify-parse.ts'
 
 // The one place the shop doors touch the network (amazon.de and alternate.de direct; idealo.de, geizhals.de, caseking.de and mindfactory.de
 // in the research Chrome from the first request, because they turn a plain client away). Conduct, in code (docs/shop.md §Conduct): one request at a time, a
@@ -60,6 +61,8 @@ const HOSTS: Record<string, 'direct' | 'browser'> = {
   'geizhals.de': 'browser',
   'www.caseking.de': 'browser',
   'www.mindfactory.de': 'browser',
+  // A Shopify store answers its JSON endpoints to the honest client (measured 2026-11-18, docs/shop.md §Shopify stores).
+  ...Object.fromEntries(SHOPIFY_HOSTS.map((host) => [host, 'direct' as const])),
 }
 
 /** An https URL on one of the shop hosts, no credentials, default port: the shop doors read nothing else. */

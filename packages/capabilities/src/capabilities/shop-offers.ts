@@ -17,8 +17,18 @@ import {
   parseMindfactoryProduct,
   parseMindfactorySearch,
 } from './shop-direct-parse.ts'
+import { readShopify } from './shop-shopify.ts'
+import {
+  isShopifySource,
+  shopifyProductHandle,
+  shopifyHost,
+  SHOPIFY_HOSTS,
+  shopifySource,
+} from './shop-shopify-parse.ts'
 import {
   AGGREGATORS,
+  type AnySource,
+  anySourceSchema,
   DIRECT_SHOPS,
   geizhalsProductId,
   geizhalsSearchUrl,
@@ -50,7 +60,7 @@ import {
 const OFFERS_TTL_MS = 3_600_000
 
 const sourceResultSchema = z.object({
-  source: z.enum(OFFER_SOURCES),
+  source: anySourceSchema,
   product: productSchema,
   offers: z.array(offerSchema).describe('The offers on the page read, cheapest total first'),
   lowestTotalEur: z.number().nullable().describe('The cheapest total with shipping among `offers`'),
@@ -68,10 +78,10 @@ const offersInput = z.object({
     .max(500)
     .describe('A manufacturer part number, or a product page URL on one of the sources'),
   source: z
-    .enum([...OFFER_SOURCES, 'all', 'shops', 'everything'])
+    .string()
     .default('idealo')
     .describe(
-      "Which site to read, one search page and one product page each: idealo, geizhals (price comparison, many shops per page) or alternate, mindfactory, caseking (the shop's own page). `all` reads idealo and geizhals (as it always did), `shops` the three tech shops, `everything` every source; a URL names its own site",
+      "Which site to read, one search page and one product page each: idealo, geizhals (price comparison, many shops per page), alternate, mindfactory, caseking (the shop's own page) or shopify:<host> (a Shopify store's own listing: shopify:www.it-veith.de). `all` reads idealo and geizhals (as it always did), `shops` the three tech shops, `everything` every fixed source (not the Shopify stores); a URL names its own site",
     ),
   history: z
     .enum(HISTORY_PERIODS)
@@ -84,7 +94,7 @@ const offersOutput = z.object({
   query: z.string(),
   results: z.array(sourceResultSchema),
   errors: z
-    .array(z.object({ source: z.enum(OFFER_SOURCES), code: z.string(), message: z.string() }))
+    .array(z.object({ source: anySourceSchema, code: z.string(), message: z.string() }))
     .describe('Sources that could not answer while another did (`source: all`); a call that no source answers fails'),
   text: z.string().describe('The offers as plain text, for `--format plain`'),
 })
@@ -130,11 +140,13 @@ const cheapestFirst = (a: Offer, b: Offer) =>
 const isUrl = (ref: string) => /^https?:\/\//i.test(ref)
 
 /** The site a product page URL belongs to, or INVALID_INPUT. */
-function sourceOfUrl(ref: string): OfferSource {
+function sourceOfUrl(ref: string): AnySource {
   for (const source of OFFER_SOURCES) if (SITES[source].productId(ref)) return source
+  const store = shopifyProductHandle(ref)
+  if (store) return shopifySource(store.host)
   throw fail(
     'INVALID_INPUT',
-    `shop.offers: not a product page URL of ${OFFER_SOURCES.join(', ')}: ${ref.slice(0, 120)}`,
+    `shop.offers: not a product page URL of ${[...OFFER_SOURCES, ...SHOPIFY_HOSTS.map(shopifySource)].join(', ')}: ${ref.slice(0, 120)}`,
   )
 }
 
@@ -147,7 +159,7 @@ export const isMissingPage = (error: unknown) =>
   (error.data as { status?: number } | undefined)?.status === 404
 
 export interface ReadArgs {
-  source: OfferSource
+  source: AnySource
   /** A part number, or the product page URL of the site (a watch keeps it after the first search). */
   ref: string
   /** The part number the page must name: set with a URL; with a part number `ref` is the one. */
@@ -168,7 +180,7 @@ interface Located {
 }
 
 /** The product page a search by part number leads to: its URL, and the page itself when the site redirected straight to it. */
-async function locate(shop: ShopFetch, args: ReadArgs, ctx: PageCtx): Promise<Located> {
+async function locate(shop: ShopFetch, args: ReadArgs & { source: OfferSource }, ctx: PageCtx): Promise<Located> {
   const site = SITES[args.source]
   if (isUrl(args.ref)) {
     if (!site.productId(args.ref)) throw fail('INVALID_INPUT', `shop.offers: not a ${args.source} product page URL`)
@@ -227,6 +239,15 @@ async function locate(shop: ShopFetch, args: ReadArgs, ctx: PageCtx): Promise<Lo
  * number is NOT_FOUND, with the near misses named, never a similar product (a 2 x 16 GB kit for a 2 x 32 GB question).
  */
 export async function readSource(shop: ShopFetch, args: ReadArgs, ctx: PageCtx): Promise<SourceResult> {
+  if (isShopifySource(args.source)) return readShopify(shop, { ...args, source: args.source }, ctx)
+  return readFixedSource(shop, { ...args, source: args.source }, ctx)
+}
+
+async function readFixedSource(
+  shop: ShopFetch,
+  args: ReadArgs & { source: OfferSource },
+  ctx: PageCtx,
+): Promise<SourceResult> {
   const mpn = isUrl(args.ref) ? (args.expectMpn ?? null) : args.ref
   const located = await locate(shop, args, ctx)
   const tries = located.probes ?? [{ url: located.url, name: '' }]
@@ -342,6 +363,20 @@ function renderOffers(results: SourceResult[]): string {
     .join('\n\n')
 }
 
+/** The sources a call reads: a URL names its own; `all`, `shops` and `everything` are groups; else one listed source. */
+function sourcesOf(product: string, source: string): AnySource[] {
+  if (isUrl(product)) return [sourceOfUrl(product)]
+  if (source === 'everything') return [...OFFER_SOURCES]
+  if (source === 'all') return [...AGGREGATORS]
+  if (source === 'shops') return [...DIRECT_SHOPS]
+  if ((OFFER_SOURCES as readonly string[]).includes(source)) return [source as OfferSource]
+  if (shopifyHost(source)) return [source as AnySource]
+  throw fail(
+    'INVALID_INPUT',
+    `shop.offers: unknown source ${source}; use ${[...OFFER_SOURCES, 'all', 'shops', 'everything', ...SHOPIFY_HOSTS.map(shopifySource)].join(', ')}`,
+  )
+}
+
 /**
  * `shop.offers`: the offers for ONE exact product from idealo.de, geizhals.de and the tech shops, parsed in code (no
  * model). Every page is read under the shop conduct, in the research Chrome where the host turns a plain client away.
@@ -355,22 +390,14 @@ export const createShopOffers = (shop: ShopFetch) =>
     output: offersOutput,
     cli: { positional: ['product'], defaultFormat: 'plain', plainField: 'text' },
     async handler({ product, source, history, fresh }, ctx) {
-      const sources: OfferSource[] = isUrl(product)
-        ? [sourceOfUrl(product)]
-        : source === 'everything'
-          ? [...OFFER_SOURCES]
-          : source === 'all'
-            ? [...AGGREGATORS]
-            : source === 'shops'
-              ? [...DIRECT_SHOPS]
-              : [source]
+      const sources = sourcesOf(product, source)
       if (history && !sources.includes('idealo'))
         throw fail(
           'INVALID_INPUT',
           'shop.offers: --history reads the idealo price series; geizhals has none that is readable',
         )
       const results: SourceResult[] = []
-      const failures: { source: OfferSource; error: unknown }[] = []
+      const failures: { source: AnySource; error: unknown }[] = []
       for (const one of sources) {
         try {
           results.push(await readSource(shop, { source: one, ref: product, history, fresh }, ctx))

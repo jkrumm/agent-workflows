@@ -1,0 +1,29 @@
+{
+ "resources": {
+  "results": {
+   "products": [
+    {
+     "available": true,
+     "body": "\n<p>✔️ Auf Lager – sofort lieferbar</p>\n<p>✔️ Neuware in versiegelter OVP</p>\n<p>✔️ Kostenloser Versand</p>\n<p>✔️ 24 Monate Gewährleistung</p>\n<p>ℹ️ Besteuerung nach §25a UStG (Differenzbesteuerung). Die Umsatzsteuer wird nicht gesondert ausgewiesen.</p><p><b>EAN:</b> 0840006665021</p>",
+     "compare_at_price_max": "816.99",
+     "compare_at_price_min": "816.99",
+     "handle": "corsair-vengeance-ddr5-64gb-2x32gb-5600mhz-c40-intel-optimierter-desktop-speicher-onboard-spannungsregelung-benutzerdefinierte-xmp-3-0-profile-kompakt-formfaktor-schwarz-cmk64gx5m2b5600c40-3",
+     "id": 11774579376396,
+     "price": "564.85",
+     "price_max": "564.85",
+     "price_min": "564.85",
+     "tags": [
+      "diffbesteuert",
+      "halfpercday",
+      "spreadr-hidden;spreadr-hidden"
+     ],
+     "title": "✔️ Corsair Vengeance DDR5 48GB (2x24GB) 5600MHz C40 Intel-Optimierter Desktop-Speicher (Onboard-Spannungsregelung, Benutzerdefinierte XMP 3.0-Profile, Kompakt Formfaktor) Schwarz, CMK48GX5M2B5600C40",
+     "type": "",
+     "url": "/products/corsair-vengeance-ddr5-64gb-2x32gb-5600mhz-c40-intel-optimierter-desktop-speicher-onboard-spannungsregelung-benutzerdefinierte-xmp-3-0-profile-kompakt-formfaktor-schwarz-cmk64gx5m2b5600c40-3?_pos=1&_psq=CMK48GX5M2B5600C40&_psid=c1fc8837a&_ss=e",
+     "variants": [],
+     "vendor": "Corsair"
+    }
+   ]
+  }
+ }
+}

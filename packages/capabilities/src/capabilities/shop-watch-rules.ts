@@ -1,8 +1,11 @@
 import { z } from 'zod'
-import { DIRECT_SHOPS, isDirectShop, type Offer, type OfferSource } from './shop-offers-parse.ts'
+import { type AnySource, DIRECT_SHOPS, isDirectShop, type Offer } from './shop-offers-parse.ts'
+import { isShopifySource, shopifyHost } from './shop-shopify-parse.ts'
 
 // The watch's decisions as pure functions: which offer qualifies, and when a price is worth a message. No file, no
 // network, no clock: `shop-watch.ts` reads the pages, keeps the record and sends the message.
+
+const shopifySourceField = z.string().refine((s) => shopifyHost(s) !== null, 'a listed shopify:<host> store')
 
 export const watchEntrySchema = z.object({
   mpn: z.string().trim().min(1).describe('Manufacturer part number: the exact product'),
@@ -28,14 +31,48 @@ export const watchEntrySchema = z.object({
     .describe(
       "Tech shops whose own page is read besides idealo and geizhals (by part number; the page found is kept). Their offers have no shop rating and count as a known retailer's own price; [] reads none",
     ),
+  shopify: z
+    .array(shopifySourceField)
+    .default([])
+    .describe(
+      "Shopify stores read by part number (shopify:www.it-veith.de), counted like a tech shop: the shop's own price",
+    ),
 })
 export type WatchEntry = z.infer<typeof watchEntrySchema>
 
-export const watchFileSchema = z.object({ products: z.array(watchEntrySchema).min(1) })
+/** A source whose page is the shop's own (a tech shop, a Shopify store): no shop rating, it counts as the known retailer it is. */
+export const isOwnPageSource = (source: string) => isDirectShop(source) || isShopifySource(source)
+
+export const feedEntrySchema = z
+  .object({
+    label: z.string().trim().min(1).describe('Name in messages and the feed state: unique'),
+    source: shopifySourceField.describe('The store as shopify:<host>'),
+    collection: z.string().trim().min(1).optional().describe("A collection handle: the store's product feed"),
+    query: z.string().trim().min(1).optional().describe("The store's own search (at most 10 products)"),
+    contains: z.string().optional().describe('Title words; | separates alternatives ("DDR5|NVMe")'),
+    maxPricePerGb: z
+      .number()
+      .positive()
+      .optional()
+      .describe('Price per GB ceiling, EUR (capacity read from the title)'),
+    maxPrice: z.number().positive().optional().describe('Price ceiling, EUR'),
+    availableOnly: z.boolean().default(true).describe('Only products that can be bought now'),
+    pages: z.int().min(1).max(5).default(3).describe('Pages of 250 products read from a collection'),
+  })
+  .refine((f) => (f.collection === undefined) !== (f.query === undefined), 'give exactly one of collection and query')
+export type FeedEntry = z.infer<typeof feedEntrySchema>
+
+export const watchFileSchema = z
+  .object({
+    products: z.array(watchEntrySchema).default([]),
+    feeds: z.array(feedEntrySchema).default([]),
+  })
+  .refine((f) => f.products.length + f.feeds.length > 0, 'the list holds no product and no feed')
+  .refine((f) => new Set(f.feeds.map((x) => x.label)).size === f.feeds.length, 'feed labels must be unique')
 
 /** A price from one source, in the shape the rules read. `amazon` has no shop rating: it counts when Amazon sells. */
 export interface WatchCandidate {
-  source: OfferSource | 'amazon'
+  source: AnySource | 'amazon'
   shop: string | null
   rating: number | null
   ratingCount: number | null
@@ -50,13 +87,13 @@ export interface WatchCandidate {
  */
 export function qualifyingOffer(
   entry: WatchEntry,
-  source: OfferSource,
+  source: AnySource,
   offer: Offer,
   url: string,
 ): WatchCandidate | null {
   const total = entry.allowPrepayment ? offer.totalEur : offer.totalEurNoPrepayment
   if (total === null || offer.inStock === false) return null
-  if (!isDirectShop(source)) {
+  if (!isOwnPageSource(source)) {
     if (offer.rating === null || offer.rating < entry.minRating) return null
     if (offer.ratingCount === null || offer.ratingCount < entry.minRatings) return null
   }
@@ -74,7 +111,7 @@ export function cheapest(candidates: WatchCandidate[]): WatchCandidate | null {
 /** What the watch remembers of one product between runs. */
 export interface WatchState {
   /** The product page each source was found at, by source; null (or absent) searches by part number again. */
-  pageUrls: Partial<Record<OfferSource, string | null>>
+  pageUrls: Partial<Record<AnySource, string | null>>
   /** The lowest qualifying total was at or under the ceiling at the last run. */
   underCeiling: boolean
   /** The price of the last message, while the price has not risen above it since; null re-arms the recent-runs rule. */
