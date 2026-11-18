@@ -4,7 +4,7 @@
 // that did not change leaves the gateway running, a changed one restarts and is awaited on `build`, a failed deploy
 // that restarted it puts the previous build's directory back, a failure that did not touch it leaves it alone, and the
 // build directories are immutable, deterministic and pruned without ever losing the live or the previous one.
-import { afterEach, expect, test } from 'bun:test'
+import { afterEach, expect, setDefaultTimeout, test } from 'bun:test'
 import {
   chmodSync,
   cpSync,
@@ -21,6 +21,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const ROOT = join(import.meta.dir, '../../..')
+// Each test runs the real deploy.sh under zsh with stand-in launchctl and curl: seconds when idle, over the 5 s default at a load
+// average of 20 on the mini (four tests failed there, all green alone). A hang guard, as long as the load-scaled cap.
+setDefaultTimeout(30_000)
 import { describeZsh, ZSH } from '@agent-workflows/testing/zsh'
 const NEW = 'a'.repeat(40)
 const PREV = 'b'.repeat(40)
