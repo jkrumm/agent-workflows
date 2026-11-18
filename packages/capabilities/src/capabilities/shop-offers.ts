@@ -326,6 +326,18 @@ function describeMemory(product: Product): string | null {
   return /\bDDR\d|\bDIMM\b|\bRAM\b|Arbeitsspeicher/i.test(product.name) ? 'capacity not stated on the page' : null
 }
 
+/** What a Shopify store's listing adds: capacity and price per GB, the struck-through price, the tags and what they mean, other listings. */
+function storeFacts(product: Product): string[] {
+  const perGb = product.pricePerGbEur == null ? null : product.pricePerGbEur.toFixed(3).replace('.', ',')
+  const facts = [
+    product.capacityGb == null ? null : `capacity ${product.capacityGb} GB${perGb ? `, ${perGb} EUR/GB` : ''}`,
+    product.compareAtEur == null ? null : `compare-at price ${money(product.compareAtEur)}`,
+    product.tags && product.tags.length > 0 ? `tags ${product.tags.join(', ')}` : null,
+    ...(product.notes ?? []).map((note) => `note: ${note}`),
+  ]
+  return facts.filter((f): f is string => f !== null)
+}
+
 /** Plain columns, no drawing characters: total, item, shipping, shop, rating, payment, delivery. */
 function renderOffers(results: SourceResult[]): string {
   return results
@@ -337,6 +349,7 @@ function renderOffers(results: SourceResult[]): string {
         ...(memory ? [`memory ${memory}`] : []),
         `${r.product.offerCount} offers (${r.offers.length} listed)`,
         ...(r.product.dataTime ? [`data from ${r.product.dataTime}`] : []),
+        ...storeFacts(r.product),
         r.product.url,
       ].join('\n')
       const rows = r.offers.map((o) => [
@@ -385,7 +398,7 @@ export const createShopOffers = (shop: ShopFetch) =>
   defineCapability({
     id: 'shop.offers',
     summary:
-      'Offers for one exact product by part number or product URL from idealo.de and geizhals.de (many shops per page) and from the tech shops Alternate, Mindfactory and Caseking (their own price): total with shipping, shop, rating, payment, delivery, memory module count and size, optional idealo price history; parsed in code, no model',
+      'Offers for one exact product by part number or product URL from idealo.de and geizhals.de (many shops per page), from the tech shops Alternate, Mindfactory and Caseking (their own price) and from a listed Shopify store (shopify:www.it-veith.de: price, availability, tags, capacity and price per GB): total with shipping, shop, rating, payment, delivery, memory module count and size, optional idealo price history; parsed in code, no model',
     input: offersInput,
     output: offersOutput,
     cli: { positional: ['product'], defaultFormat: 'plain', plainField: 'text' },

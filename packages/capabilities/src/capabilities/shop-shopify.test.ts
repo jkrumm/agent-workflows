@@ -225,6 +225,12 @@ describe('shop.offers from a Shopify store', () => {
     expect(res.lowestTotalEur).toBe(564.85)
     expect(out.text).toContain('564,85')
     expect(out.text).toContain('memory 2 x 24 GB (48 GB)')
+    // The shop's own words reach the plain output, not only the JSON.
+    expect(out.text).toContain('capacity 48 GB, 11,768 EUR/GB')
+    expect(out.text).toContain('compare-at price 816,99')
+    expect(out.text).toContain('tags diffbesteuert, halfpercday')
+    expect(out.text).toContain('note: margin scheme (§25a UStG): no VAT shown on the invoice')
+    expect(out.text).toContain('note: daily markdown')
   })
 
   test('the part number must be a whole word of the title: a near miss is NOT_FOUND naming it', async () => {
@@ -298,6 +304,8 @@ describe('shop.store', () => {
       tags: expect.arrayContaining(['diffbesteuert']),
     })
     expect(r.requests).toEqual([collectionFeedUrl(HOST, 'computer-und-elektronik', 250, 1)])
+    // A plain-format listing can be followed to the product.
+    expect(out.text).toContain(PRODUCT_URL)
   })
 
   test('filters: title words, a ceiling per GB, available only', async () => {

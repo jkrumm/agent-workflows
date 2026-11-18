@@ -266,13 +266,14 @@ const listingOutput = z.object({
 const money = (n: number | null, digits = 2) => (n === null ? '-' : n.toFixed(digits).replace('.', ','))
 
 function renderItems(items: ListingItem[]): string {
-  const header = ['Price', 'EUR/GB', 'Avail', 'Title', 'Tags']
+  const header = ['Price', 'EUR/GB', 'Avail', 'Title', 'Tags', 'URL']
   const rows = items.map((i) => [
     money(i.priceEur),
     money(i.pricePerGbEur, 3),
     i.available === null ? '-' : i.available ? 'yes' : 'no',
     clip(i.title, 72),
     i.tags.filter((t) => !t.startsWith('spreadr-')).join(','),
+    i.url,
   ])
   const widths = header.map((h, c) => Math.max(h.length, ...rows.map((r) => r[c]!.length)))
   const line = (cells: string[]) =>
