@@ -1,0 +1,1192 @@
+<html><head><title>Western Digital Black SN850X 2TB ab 392,69&nbsp;€ | Vergleiche Black Friday Angebote auf idealo.de</title></head><body>
+<script data-testid="Product" type="application/ld+json">{"@type":"Product","offers":{"@type":"AggregateOffer","offerCount":40}}</script>
+<h1 id="oopStage-title" class="oopStage-title" translate="no" tabindex="0">
+                    <span>Western Digital Black SN850X</span>
+                        <span class="oopStage-variantTitle">2TB</span>
+                        </h1>
+<div class="oopStage-productInfoTopItems small-12 collapse-both columns">
+                <b>Produktübersicht:</b>
+                <span class="oopStage-productInfoTopItem">
+                        Lesetransferrate&nbsp;7.300&nbsp;MB/s </span>
+                <span class="oopStage-productInfoTopItem">
+                        Schreibtransferrate&nbsp;6.600&nbsp;MB/s </span>
+                <span class="oopStage-productInfoTopItem">
+                        max. Schreibvolumen (TBW)&nbsp;1.200&nbsp;TB </span>
+                <span class="oopStage-productInfoTopItem">
+                        4K Random Read IOPS&nbsp;1.200.000 </span>
+                <span class="oopStage-productInfoTopItem">
+                        4K Random Write IOPS&nbsp;1.100.000 </span>
+                <span class="oopStage-productInfoTopItem">
+                        2.000&nbsp;GB </span>
+                <span class="oopStage-productInfoTopItem">
+                        3D TLC </span>
+                <span class="oopStage-productInfoTopItem">
+                        PCIe 4.0 x4 </span>
+                <span class="oopStage-productInfoTopItem">
+                        NVMe </span>
+                <span class="oopStage-productInfoTopItem">
+                        M.2 </span>
+                <span class="oopStage-productInfoTopItemWrapperDatasheetLink"><a id="productDetailsAnchor" href="#datasheet" data-trx-click="product_details_click;1-1-0;koopa">
+            Produktdetails</a>
+</span>
+            </div>
+<ul class="productOffers-list" data-import-time="Daten vom 18.11.2026&nbsp;07:16">
+
+<li class="productOffers-listItem row row-24 " data-shop="{&quot;type&quot;:&quot;GENERAL&quot;}" data-trx-click="offer_click;2-4-10;sooper" data-mtrx-click="{&quot;shop_name&quot;:&quot;onbuy.com/de&quot;,&quot;products&quot;:[{&quot;id&quot;:202070647,&quot;category&quot;:14613,&quot;name&quot;:&quot;Western Digital Black SN850X 2TB&quot;,&quot;price&quot;:392.69}],&quot;event&quot;:&quot;leadout&quot;}">
+<div class="small-24 medium-24 large-24 larger-5 xlarge-4 productOffers-listItemTitleWrapper" data-offerlist-column="title">
+        <a class="productOffers-listItemTitle" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=1&amp;price=392.69&amp;productid=202070647&amp;sid=336628&amp;type=offer" target="_blank" rel="noopener nofollow" data-trx-click="offer_click;2-4-10;sooper">
+            <span class="productOffers-listItemTitleInner " title="WESTERN DIGITAL SN850X Festplatte - NVME SSD - 2TB intern - M2 Format - Schwarz">
+                  WESTERN DIGITAL SN850X Festplatte - NVME SSD - 2TB intern - M2 Format - Schwarz</span>
+        </a>
+
+</div>
+
+        <div class="productOffers-listItemOffer small-8 medium-8 large-9 larger-8 xlarge-8 columns" data-offerlist-column="price">
+        <div class="row">
+            <div class="column small-24 large-12 larger-12 xlarge-12 price-column">
+                <div class="price-and-badge-wrapper">
+        <a class="productOffers-listItemOfferPrice" data-trx-click="offer_click;2-4-10;sooper" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=1&amp;price=392.69&amp;productid=202070647&amp;sid=336628&amp;type=offer" target="_blank" rel="noopener nofollow">
+                392,69&nbsp;€<span class="productOffers-listItemOfferBasePrice">
+                        0,20&nbsp;€/GB</span>
+                </a>
+        <div class="best-total-price-box">
+            <div class="best-total-price">
+                <span>
+                <a href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=1&amp;price=392.69&amp;productid=202070647&amp;sid=336628&amp;type=offer" data-trx-click="offer_click;2-4-10;sooper" target="_blank" rel="noopener nofollow">
+                        <span class="productOffers-listItemOfferBestTotalPrice">
+                            Günstigster Gesamtpreis</span><br>
+                        </a></span>
+                </div>
+
+            <div class="line-offer-view productOffers-listItemOfferShippingDetails show-for-large withBestTotalPrice">
+                    <a href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=1&amp;price=392.69&amp;productid=202070647&amp;sid=336628&amp;type=offer" data-trx-click="offer_click;2-4-10;sooper" target="_blank" rel="noopener nofollow">
+                        <div class="productOffers-listItemOfferShippingDetails" title="392,69&nbsp;€ inkl. Versand">
+					392,69&nbsp;€ inkl. Versand</div>
+	</a>
+                </div>
+            </div>
+        </div>
+
+</div>
+            <div class="column large-12 larger-12 xlarge-12 show-for-large payment-column">
+                <div class="productOffers-listItemOfferShippingDetailsRight" data-trx-click="offer_click;2-4-10;sooper">
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=1&amp;price=392.69&amp;productid=202070647&amp;sid=336628&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/paypal-c038cb02ad0744a542c4.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Rechnung">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=1&amp;price=392.69&amp;productid=202070647&amp;sid=336628&amp;type=offer">
+                                <span>
+                                    Rechnung</span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=1&amp;price=392.69&amp;productid=202070647&amp;sid=336628&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/visa-ac94b93bc9a9921b1f11.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=1&amp;price=392.69&amp;productid=202070647&amp;sid=336628&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/mastercard-2e81fe3d252402ab0358.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=1&amp;price=392.69&amp;productid=202070647&amp;sid=336628&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/klarna-78921c2f072f5cda9c8b.png" title=""></span>
+                            </a>
+                    </span>
+				</div>
+
+	</div>
+        </div>
+    </div>
+
+        <ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" role="list" data-offerlist-column="delivery" data-trx-click="offer_click;2-4-10;sooper">
+        <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=1&amp;price=392.69&amp;productid=202070647&amp;sid=336628&amp;type=offer">
+            <li>
+                <svg></svg>
+
+                <p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+       <span class="productOffers-listItemOfferDeliveryStatusDatesTitle">
+           Lieferung:
+       </span>
+        <span class="productOffers-listItemOfferDeliveryStatusDatesRange">
+            bis Mo. 30.11.</span>
+    </p>
+</li>
+            </a>
+    </ul>
+<div class="small-8 medium-8 large-6 larger-4 xlarge-4 xlarge-text-left large-text-center small-text-center productOffers-listItemOfferShopV2Block  va-middle-xlarge-up" data-offerlist-column="shop">
+        <div class="productOffers-listItemOfferShopV2">
+        <div class="productOffers-listItemOfferShopV2LogoContainer">
+            <div class="productOffers-listItemOfferShopV2Logo">
+                <a class="productOffers-listItemOfferShopV2LogoLink" data-shop-name="onbuy.com/de - Shop aus Dublin 1" data-trx-click="offer_click;2-4-10;sooper" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=1&amp;price=392.69&amp;productid=202070647&amp;sid=336628&amp;type=offer" rel="noopener nofollow" target="_blank">
+                    <img class="productOffers-listItemOfferShopV2LogoImage" src="//cdn.idealo.com/folder/Shop/336/6/336628/s1_shop_160x60.png" data-shop-logo="//cdn.idealo.com/folder/Shop/336/6/336628/s1_shop_160x60.png" data-shop-logo-fallback="//cdn.idealo.com/folder/Shop/336/6/336628/s1_shop.gif" alt="onbuy.com/de - Shop aus Dublin 1">
+
+                    <noscript>
+                        <img class="productOffers-listItemOfferShopV2LogoImage noborder"
+                             src="//cdn.idealo.com/folder/Shop/336/6/336628/s1_shop.gif"
+                             alt="onbuy.com/de"
+                        />
+                    </noscript>
+                </a>
+            </div>
+
+            <a href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=1&amp;price=392.69&amp;productid=202070647&amp;sid=336628&amp;type=offer" target="_blank" rel="noopener nofollow">
+                    <div class="show-for-medium productOffers-listItemOfferShopV2MarketPlace">
+                        Marktplatz</div>
+                </a>
+            </div>
+        <div class="productOffers-listItemOfferShopV2RatingsContainer">
+            <a target="_blank" class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/336628.html">
+                        <div class="productOffers-listItemOfferShopV2Stars rating-single-star" data-trx-click="offer_click;2-4-10;sooper">
+        <div class="starAndRatingWrapper">
+            <svg></svg>
+                <span>
+                <b>3,0</b>
+            </span>
+        </div>
+    </div>
+
+</a>
+                    <a target="_blank" class="productOffers-listItemOfferShopV2NORatings" href="https://www.idealo.de/preisvergleich/Shop/336628.html" data-trx-click="offer_click;2-4-10;sooper">
+                                <span class="productOffers-listItemOfferShopV2NORatings--numberOfRatings">17</span>
+                            </a>
+                        </div>
+    </div>
+    <div class="productOffers-listItemOfferShopV2MarketPlaceSoldThrough">
+                Verkauf durch:</div>
+            <div class="productOffers-listItemOfferShopV2MarketPlaceMerchantName">
+                <a href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=1&amp;price=392.69&amp;productid=202070647&amp;sid=336628&amp;type=offer" target="_blank" data-shop-name="onbuy.com/de" rel="noopener nofollow" title="Tobit De">
+                    Tobit De</a>
+            </div>
+             </div>
+
+        <div class="productOffers-listItemOfferCtaHolder small-8 medium-8 large-4 larger-4 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="leadoutbutton">
+        <ul class="productOffers-listItemOfferCta">
+		<li>
+			<a class="productOffers-listItemOfferCtaLeadout button button--leadout" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=1&amp;price=392.69&amp;productid=202070647&amp;sid=336628&amp;type=offer" data-shop-name="onbuy.com/de" rel="noopener nofollow" target="_blank" data-trx-click="offer_click;2-4-10;sooper" aria-label="Zum onbuy.com/de Shop">
+                Zum Shop<img class="btn-cta-shop" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/btn_placeholder-6a908321904cc83dbe01.gif" alt="Western Digital Black SN850X 2TB kaufen: günstige SSDs bei onbuy.com/de">
+            </a>
+        </li>
+        </ul>
+</div>
+
+        <div class="productOffers-listItemOfferDetailsMobile ">
+            <div class="productOffers-listItemOfferDetails" data-overlay="{
+  &quot;closeCaption&quot; : &quot;back&quot;,
+  &quot;contentLoad&quot; : &quot;https://www.idealo.de/offerpage/ui/shop-infos/product/202070647/offerkey/0ad3fc33dd098b1299ec9f2d9330b352/index/0?offerListCondition=null&amp;locale=de_DE&amp;language=de_DE&quot;,
+  &quot;contentLoadBy&quot; : &quot;ajax&quot;,
+  &quot;eventStopPropagation&quot; : &quot;false&quot;,
+  &quot;titleCaption&quot; : &quot;onbuy.com/de&quot;,
+  &quot;triggerOnOpen&quot; : &quot;shop-info-open&quot;,
+  &quot;contentPaddingTop&quot; : &quot;0&quot;,
+  &quot;wrapperClass&quot; : &quot;shopOverlay&quot;,
+  &quot;appendTo&quot; : &quot;#shop-overlay-wrapper&quot;
+}" data-trx-click="offer_click;2-4-10;sooper">
+        Details</div>
+<div class="vertical-separator"></div>
+
+            <div class="productOffers-listItemOfferDelivery delivery delivery--long svg-icon" data-trx-click="offer_click;2-4-10;sooper">
+            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=1&amp;price=392.69&amp;productid=202070647&amp;sid=336628&amp;type=offer">
+                <svg></svg>
+            </a>
+        </div>
+
+        <span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile" data-trx-click="offer_click;2-4-10;sooper">
+    <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=1&amp;price=392.69&amp;productid=202070647&amp;sid=336628&amp;type=offer">
+        <span class="productOffers-listItemOfferDeliveryStatusMobileText">
+            <p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+       <span class="productOffers-listItemOfferDeliveryStatusDatesTitle">
+           Lieferung:
+       </span>
+        <span class="productOffers-listItemOfferDeliveryStatusDatesRange">
+            bis Mo. 30.11.</span>
+    </p>
+</span>
+    </a>
+</span>
+
+</div>
+<a class="productOffers-listItemOfferLink" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=1&amp;price=392.69&amp;productid=202070647&amp;sid=336628&amp;type=offer" target="_blank" data-shop-name="onbuy.com/de" rel="noopener nofollow">
+</a>
+</li>
+
+<li class="productOffers-listItem row row-24 " data-shop="{&quot;type&quot;:&quot;IDECL&quot;}" data-trx-click="offer_click;2-4-10;sooper" data-mtrx-click="{&quot;shop_name&quot;:&quot;kaufland.de&quot;,&quot;products&quot;:[{&quot;id&quot;:202070647,&quot;category&quot;:14613,&quot;name&quot;:&quot;Western Digital Black SN850X 2TB&quot;,&quot;price&quot;:411.99}],&quot;event&quot;:&quot;leadout&quot;}">
+<div class="small-24 medium-24 large-24 larger-5 xlarge-4 productOffers-listItemTitleWrapper" data-offerlist-column="title">
+        <a class="productOffers-listItemTitle" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=2&amp;price=411.99&amp;productid=202070647&amp;sid=26895&amp;type=offer" target="_blank" rel="noopener nofollow" data-trx-click="offer_click;2-4-10;sooper">
+            <span class="productOffers-listItemTitleInner " title="Western Digital Black SN850X M.2 2 TB PCI Express 4.0 NVMe">
+                  Western Digital Black SN850X M.2 2 TB PCI Express 4.0 NVMe</span>
+        </a>
+
+</div>
+
+        <div class="productOffers-listItemOffer small-8 medium-8 large-9 larger-8 xlarge-8 columns" data-offerlist-column="price">
+        <div class="row">
+            <div class="column small-24 large-12 larger-12 xlarge-12 price-column">
+                <div class="price-and-badge-wrapper">
+        <a class="productOffers-listItemOfferPrice" data-trx-click="offer_click;2-4-10;sooper" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=2&amp;price=411.99&amp;productid=202070647&amp;sid=26895&amp;type=offer" target="_blank" rel="noopener nofollow">
+                411,99&nbsp;€<span class="productOffers-listItemOfferBasePrice">
+                        0,21&nbsp;€/GB</span>
+                </a>
+        <div class="best-total-price">
+                </div>
+
+            <div class="line-offer-view productOffers-listItemOfferShippingDetails show-for-large">
+                    <a href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=2&amp;price=411.99&amp;productid=202070647&amp;sid=26895&amp;type=offer" data-trx-click="offer_click;2-4-10;sooper" target="_blank" rel="noopener nofollow">
+                        <div class="productOffers-listItemOfferShippingDetails" title="411,99&nbsp;€ inkl. Versand">
+					411,99&nbsp;€ inkl. Versand</div>
+	</a>
+                </div>
+            </div>
+
+</div>
+            <div class="column large-12 larger-12 xlarge-12 show-for-large payment-column">
+                <div class="productOffers-listItemOfferShippingDetailsRight" data-trx-click="offer_click;2-4-10;sooper">
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=2&amp;price=411.99&amp;productid=202070647&amp;sid=26895&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/paypal-c038cb02ad0744a542c4.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Rechnung">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=2&amp;price=411.99&amp;productid=202070647&amp;sid=26895&amp;type=offer">
+                                <span>
+                                    Rechnung</span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=2&amp;price=411.99&amp;productid=202070647&amp;sid=26895&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/visa-ac94b93bc9a9921b1f11.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=2&amp;price=411.99&amp;productid=202070647&amp;sid=26895&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/mastercard-2e81fe3d252402ab0358.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=2&amp;price=411.99&amp;productid=202070647&amp;sid=26895&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/klarna-78921c2f072f5cda9c8b.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Lastschrift">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=2&amp;price=411.99&amp;productid=202070647&amp;sid=26895&amp;type=offer">
+                                <span>
+                                    Lastschrift</span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Vorkasse">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=2&amp;price=411.99&amp;productid=202070647&amp;sid=26895&amp;type=offer">
+                                <span>
+                                    Vorkasse</span>
+                            </a>
+                    </span>
+				</div>
+
+	</div>
+        </div>
+    </div>
+
+        <ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" role="list" data-offerlist-column="delivery" data-trx-click="offer_click;2-4-10;sooper">
+        <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=2&amp;price=411.99&amp;productid=202070647&amp;sid=26895&amp;type=offer">
+            <li>
+                <svg></svg>
+
+                <p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+       <span class="productOffers-listItemOfferDeliveryStatusDatesTitle">
+           Lieferung:
+       </span>
+        <span class="productOffers-listItemOfferDeliveryStatusDatesRange">
+            bis Sa. 28.11.</span>
+    </p>
+</li>
+            <li>
+                   <svg></svg>
+                    <div class="productOffers-listItemOfferDeliveryRetourText">
+                        <span>Rücksendung 14 Tage kostenfrei</span>
+                    </div>
+                </li>
+            </a>
+    </ul>
+<div class="small-8 medium-8 large-6 larger-4 xlarge-4 xlarge-text-left large-text-center small-text-center productOffers-listItemOfferShopV2Block  va-middle-xlarge-up" data-offerlist-column="shop">
+        <div class="productOffers-listItemOfferShopV2">
+        <div class="productOffers-listItemOfferShopV2LogoContainer">
+            <div class="productOffers-listItemOfferShopV2Logo">
+                <a class="productOffers-listItemOfferShopV2LogoLink" data-shop-name="kaufland.de - Shop aus Neckarsulm" data-trx-click="offer_click;2-4-10;sooper" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=2&amp;price=411.99&amp;productid=202070647&amp;sid=26895&amp;type=offer" rel="noopener nofollow" target="_blank">
+                    <img class="productOffers-listItemOfferShopV2LogoImage" src="//cdn.idealo.com/folder/Shop/26/8/26895/s1_shop_160x60.png" data-shop-logo="//cdn.idealo.com/folder/Shop/26/8/26895/s1_shop_160x60.png" data-shop-logo-fallback="//cdn.idealo.com/folder/Shop/26/8/26895/s1_shop.gif" alt="kaufland.de - Shop aus Neckarsulm">
+
+                    <noscript>
+                        <img class="productOffers-listItemOfferShopV2LogoImage noborder"
+                             src="//cdn.idealo.com/folder/Shop/26/8/26895/s1_shop.gif"
+                             alt="kaufland.de"
+                        />
+                    </noscript>
+                </a>
+            </div>
+
+            <a href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=2&amp;price=411.99&amp;productid=202070647&amp;sid=26895&amp;type=offer" target="_blank" rel="noopener nofollow">
+                    <div class="show-for-medium productOffers-listItemOfferShopV2MarketPlace">
+                        Marktplatz</div>
+                </a>
+            </div>
+        <div class="productOffers-listItemOfferShopV2RatingsContainer">
+            <a target="_blank" class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/26895.html">
+                        <div class="productOffers-listItemOfferShopV2Stars rating-single-star" data-trx-click="offer_click;2-4-10;sooper">
+        <div class="starAndRatingWrapper">
+            <svg></svg>
+                <span>
+                <b>4,5</b>
+            </span>
+        </div>
+    </div>
+
+</a>
+                    <a target="_blank" class="productOffers-listItemOfferShopV2NORatings" href="https://www.idealo.de/preisvergleich/Shop/26895.html" data-trx-click="offer_click;2-4-10;sooper">
+                                <span class="productOffers-listItemOfferShopV2NORatings--numberOfRatings">56529</span>
+                            </a>
+                        </div>
+    </div>
+    <div class="productOffers-listItemOfferShopV2MarketPlaceSoldThrough">
+                Verkauf durch:</div>
+            <div class="productOffers-listItemOfferShopV2MarketPlaceMerchantName">
+                <a href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=2&amp;price=411.99&amp;productid=202070647&amp;sid=26895&amp;type=offer" target="_blank" data-shop-name="kaufland.de" rel="noopener nofollow" title="somnia24">
+                    somnia24</a>
+            </div>
+             </div>
+
+        <div class="productOffers-listItemOfferCtaHolder small-8 medium-8 large-4 larger-4 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="leadoutbutton">
+        <ul class="productOffers-listItemOfferCta">
+		<li>
+			<a class="productOffers-listItemOfferCtaLeadout button button--leadout" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=2&amp;price=411.99&amp;productid=202070647&amp;sid=26895&amp;type=offer" data-shop-name="kaufland.de" rel="noopener nofollow" target="_blank" data-trx-click="offer_click;2-4-10;sooper" aria-label="Zum kaufland.de Shop">
+                Zum Shop<img class="btn-cta-shop" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/btn_placeholder-6a908321904cc83dbe01.gif" alt="Western Digital Black SN850X 2TB bestellen: preiswerte SSDs bei kaufland.de">
+            </a>
+        </li>
+        </ul>
+</div>
+
+        <div class="productOffers-listItemOfferDetailsMobile ">
+            <div class="productOffers-listItemOfferDetails" data-overlay="{
+  &quot;closeCaption&quot; : &quot;back&quot;,
+  &quot;contentLoad&quot; : &quot;https://www.idealo.de/offerpage/ui/shop-infos/product/202070647/offerkey/39e63d03229ac4fba51ae590c566052f/index/1?offerListCondition=null&amp;locale=de_DE&amp;language=de_DE&quot;,
+  &quot;contentLoadBy&quot; : &quot;ajax&quot;,
+  &quot;eventStopPropagation&quot; : &quot;false&quot;,
+  &quot;titleCaption&quot; : &quot;kaufland.de&quot;,
+  &quot;triggerOnOpen&quot; : &quot;shop-info-open&quot;,
+  &quot;contentPaddingTop&quot; : &quot;0&quot;,
+  &quot;wrapperClass&quot; : &quot;shopOverlay&quot;,
+  &quot;appendTo&quot; : &quot;#shop-overlay-wrapper&quot;
+}" data-trx-click="offer_click;2-4-10;sooper">
+        Details</div>
+<div class="vertical-separator"></div>
+
+            <div class="productOffers-listItemOfferDelivery delivery delivery--long svg-icon" data-trx-click="offer_click;2-4-10;sooper">
+            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=2&amp;price=411.99&amp;productid=202070647&amp;sid=26895&amp;type=offer">
+                <svg></svg>
+            </a>
+        </div>
+
+        <span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile" data-trx-click="offer_click;2-4-10;sooper">
+    <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=2&amp;price=411.99&amp;productid=202070647&amp;sid=26895&amp;type=offer">
+        <span class="productOffers-listItemOfferDeliveryStatusMobileText">
+            <p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+       <span class="productOffers-listItemOfferDeliveryStatusDatesTitle">
+           Lieferung:
+       </span>
+        <span class="productOffers-listItemOfferDeliveryStatusDatesRange">
+            bis Sa. 28.11.</span>
+    </p>
+</span>
+    </a>
+</span>
+
+</div>
+<a class="productOffers-listItemOfferLink" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=2&amp;price=411.99&amp;productid=202070647&amp;sid=26895&amp;type=offer" target="_blank" data-shop-name="kaufland.de" rel="noopener nofollow">
+</a>
+</li>
+
+<li class="productOffers-listItem row row-24 " data-shop="{&quot;type&quot;:&quot;GENERAL&quot;}" data-trx-click="offer_click;2-4-10;sooper" data-mtrx-click="{&quot;shop_name&quot;:&quot;pccomponentes.de&quot;,&quot;products&quot;:[{&quot;id&quot;:202070647,&quot;category&quot;:14613,&quot;name&quot;:&quot;Western Digital Black SN850X 2TB&quot;,&quot;price&quot;:424.71}],&quot;event&quot;:&quot;leadout&quot;}">
+<div class="small-24 medium-24 large-24 larger-5 xlarge-4 productOffers-listItemTitleWrapper" data-offerlist-column="title">
+        <a class="productOffers-listItemTitle" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=3&amp;price=424.71&amp;productid=202070647&amp;sid=338942&amp;type=offer" target="_blank" rel="noopener nofollow" data-trx-click="offer_click;2-4-10;sooper">
+            <span class="productOffers-listItemTitleInner " title="SSD Sandisk WD Black SN850X 2TB NVMe PCIe 4.0 M.2 7300MB/s">
+                  SSD Sandisk WD Black SN850X 2TB NVMe PCIe 4.0 M.2 7300MB/s</span>
+        </a>
+
+</div>
+
+        <div class="productOffers-listItemOffer small-8 medium-8 large-9 larger-8 xlarge-8 columns" data-offerlist-column="price">
+        <div class="row">
+            <div class="column small-24 large-12 larger-12 xlarge-12 price-column">
+                <div class="price-and-badge-wrapper">
+        <a class="productOffers-listItemOfferPrice" data-trx-click="offer_click;2-4-10;sooper" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=3&amp;price=424.71&amp;productid=202070647&amp;sid=338942&amp;type=offer" target="_blank" rel="noopener nofollow">
+                424,71&nbsp;€<span class="productOffers-listItemOfferBasePrice">
+                        0,21&nbsp;€/GB</span>
+                </a>
+        <div class="best-total-price">
+                </div>
+
+            <div class="line-offer-view productOffers-listItemOfferShippingDetails show-for-large">
+                    <a href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=3&amp;price=424.71&amp;productid=202070647&amp;sid=338942&amp;type=offer" data-trx-click="offer_click;2-4-10;sooper" target="_blank" rel="noopener nofollow">
+                        <div class="productOffers-listItemOfferShippingDetails" title="424,71&nbsp;€ inkl. Versand">
+					424,71&nbsp;€ inkl. Versand</div>
+	</a>
+                </div>
+            </div>
+
+</div>
+            <div class="column large-12 larger-12 xlarge-12 show-for-large payment-column">
+                <div class="productOffers-listItemOfferShippingDetailsRight" data-trx-click="offer_click;2-4-10;sooper">
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=3&amp;price=424.71&amp;productid=202070647&amp;sid=338942&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/paypal-c038cb02ad0744a542c4.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=3&amp;price=424.71&amp;productid=202070647&amp;sid=338942&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/visa-ac94b93bc9a9921b1f11.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=3&amp;price=424.71&amp;productid=202070647&amp;sid=338942&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/mastercard-2e81fe3d252402ab0358.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Vorkasse">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=3&amp;price=424.71&amp;productid=202070647&amp;sid=338942&amp;type=offer">
+                                <span>
+                                    Vorkasse</span>
+                            </a>
+                    </span>
+				</div>
+
+	</div>
+        </div>
+    </div>
+
+        <ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" role="list" data-offerlist-column="delivery" data-trx-click="offer_click;2-4-10;sooper">
+        <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=3&amp;price=424.71&amp;productid=202070647&amp;sid=338942&amp;type=offer">
+            <li>
+                <svg></svg>
+
+                <p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+       <span class="productOffers-listItemOfferDeliveryStatusDatesTitle">
+           Lieferung:
+       </span>
+        <span class="productOffers-listItemOfferDeliveryStatusDatesRange">
+            bis Di. 24.11.</span>
+    </p>
+</li>
+            </a>
+    </ul>
+<div class="small-8 medium-8 large-6 larger-4 xlarge-4 xlarge-text-left large-text-center small-text-center productOffers-listItemOfferShopV2Block  va-middle-xlarge-up" data-offerlist-column="shop">
+        <div class="productOffers-listItemOfferShopV2">
+        <div class="productOffers-listItemOfferShopV2LogoContainer">
+            <div class="productOffers-listItemOfferShopV2Logo">
+                <a class="productOffers-listItemOfferShopV2LogoLink" data-shop-name="pccomponentes.de - Shop aus Alhama de Murcia" data-trx-click="offer_click;2-4-10;sooper" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=3&amp;price=424.71&amp;productid=202070647&amp;sid=338942&amp;type=offer" rel="noopener nofollow" target="_blank">
+                    <img class="productOffers-listItemOfferShopV2LogoImage" src="//cdn.idealo.com/folder/Shop/338/9/338942/s1_shop_160x60.png" data-shop-logo="//cdn.idealo.com/folder/Shop/338/9/338942/s1_shop_160x60.png" data-shop-logo-fallback="//cdn.idealo.com/folder/Shop/338/9/338942/s1_shop.gif" alt="pccomponentes.de - Shop aus Alhama de Murcia">
+
+                    <noscript>
+                        <img class="productOffers-listItemOfferShopV2LogoImage noborder"
+                             src="//cdn.idealo.com/folder/Shop/338/9/338942/s1_shop.gif"
+                             alt="pccomponentes.de"
+                        />
+                    </noscript>
+                </a>
+            </div>
+
+            <a href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=3&amp;price=424.71&amp;productid=202070647&amp;sid=338942&amp;type=offer" target="_blank" rel="noopener nofollow">
+                    <div class="show-for-medium productOffers-listItemOfferShopV2MarketPlace">
+                        Marktplatz</div>
+                </a>
+            </div>
+        <div class="productOffers-listItemOfferShopV2RatingsContainer">
+            <a target="_blank" class="productOffers-listItemOfferShopV2RatingsNoRatings" href="https://www.idealo.de/preisvergleich/Shop/338942.html" data-trx-click="offer_click;2-4-10;sooper">
+                        ohne Bewertung</a>
+                </div>
+    </div>
+    <div class="productOffers-listItemOfferShopV2MarketPlaceSoldThrough">
+                Verkauf durch:</div>
+            <div class="productOffers-listItemOfferShopV2MarketPlaceMerchantName">
+                <a href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=3&amp;price=424.71&amp;productid=202070647&amp;sid=338942&amp;type=offer" target="_blank" data-shop-name="pccomponentes.de" rel="noopener nofollow" title="Pc Componentes DE">
+                    Pc Componentes DE</a>
+            </div>
+             </div>
+
+        <div class="productOffers-listItemOfferCtaHolder small-8 medium-8 large-4 larger-4 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="leadoutbutton">
+        <ul class="productOffers-listItemOfferCta">
+		<li>
+			<a class="productOffers-listItemOfferCtaLeadout button button--leadout" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=3&amp;price=424.71&amp;productid=202070647&amp;sid=338942&amp;type=offer" data-shop-name="pccomponentes.de" rel="noopener nofollow" target="_blank" data-trx-click="offer_click;2-4-10;sooper" aria-label="Zum pccomponentes.de Shop">
+                Zum Shop<img class="btn-cta-shop" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/btn_placeholder-6a908321904cc83dbe01.gif" alt="Western Digital Black SN850X 2TB versand: billige SSDs bei pccomponentes.de">
+            </a>
+        </li>
+        </ul>
+</div>
+
+        <div class="productOffers-listItemOfferDetailsMobile ">
+            <div class="productOffers-listItemOfferDetails" data-overlay="{
+  &quot;closeCaption&quot; : &quot;back&quot;,
+  &quot;contentLoad&quot; : &quot;https://www.idealo.de/offerpage/ui/shop-infos/product/202070647/offerkey/b2faa6e422b5553776477f89c237964c/index/2?offerListCondition=null&amp;locale=de_DE&amp;language=de_DE&quot;,
+  &quot;contentLoadBy&quot; : &quot;ajax&quot;,
+  &quot;eventStopPropagation&quot; : &quot;false&quot;,
+  &quot;titleCaption&quot; : &quot;pccomponentes.de&quot;,
+  &quot;triggerOnOpen&quot; : &quot;shop-info-open&quot;,
+  &quot;contentPaddingTop&quot; : &quot;0&quot;,
+  &quot;wrapperClass&quot; : &quot;shopOverlay&quot;,
+  &quot;appendTo&quot; : &quot;#shop-overlay-wrapper&quot;
+}" data-trx-click="offer_click;2-4-10;sooper">
+        Details</div>
+<div class="vertical-separator"></div>
+
+            <div class="productOffers-listItemOfferDelivery delivery delivery--medium svg-icon" data-trx-click="offer_click;2-4-10;sooper">
+            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=3&amp;price=424.71&amp;productid=202070647&amp;sid=338942&amp;type=offer">
+                <svg></svg>
+            </a>
+        </div>
+
+        <span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile" data-trx-click="offer_click;2-4-10;sooper">
+    <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=3&amp;price=424.71&amp;productid=202070647&amp;sid=338942&amp;type=offer">
+        <span class="productOffers-listItemOfferDeliveryStatusMobileText">
+            <p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+       <span class="productOffers-listItemOfferDeliveryStatusDatesTitle">
+           Lieferung:
+       </span>
+        <span class="productOffers-listItemOfferDeliveryStatusDatesRange">
+            bis Di. 24.11.</span>
+    </p>
+</span>
+    </a>
+</span>
+
+</div>
+<a class="productOffers-listItemOfferLink" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=3&amp;price=424.71&amp;productid=202070647&amp;sid=338942&amp;type=offer" target="_blank" data-shop-name="pccomponentes.de" rel="noopener nofollow">
+</a>
+</li>
+
+<li class="productOffers-listItem row row-24 " data-shop="{&quot;type&quot;:&quot;IDECL&quot;}" data-trx-click="offer_click;2-4-10;sooper" data-mtrx-click="{&quot;shop_name&quot;:&quot;electronis.de&quot;,&quot;products&quot;:[{&quot;id&quot;:202070647,&quot;category&quot;:14613,&quot;name&quot;:&quot;Western Digital Black SN850X 2TB&quot;,&quot;price&quot;:455.08}],&quot;event&quot;:&quot;leadout&quot;}">
+<div class="small-24 medium-24 large-24 larger-5 xlarge-4 productOffers-listItemTitleWrapper" data-offerlist-column="title">
+        <a class="productOffers-listItemTitle" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=12&amp;price=455.08&amp;productid=202070647&amp;sid=20481&amp;type=offer" target="_blank" rel="noopener nofollow" data-trx-click="offer_click;2-4-10;sooper">
+            <span class="productOffers-listItemTitleInner " title="Western Digital WD_BLACK SN850X 2TB SSD M.2 PCIe - WDS200T2X0E">
+                  Western Digital WD_BLACK SN850X 2TB SSD M.2 PCIe - WDS200T2X0E</span>
+        </a>
+
+</div>
+
+        <div class="productOffers-listItemOffer small-8 medium-8 large-9 larger-8 xlarge-8 columns" data-offerlist-column="price">
+        <div class="row">
+            <div class="column small-24 large-12 larger-12 xlarge-12 price-column">
+                <div class="price-and-badge-wrapper">
+        <a class="productOffers-listItemOfferPrice" data-trx-click="offer_click;2-4-10;sooper" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=12&amp;price=455.08&amp;productid=202070647&amp;sid=20481&amp;type=offer" target="_blank" rel="noopener nofollow">
+                455,08&nbsp;€<span class="productOffers-listItemOfferBasePrice">
+                        0,23&nbsp;€/GB</span>
+                </a>
+        <div class="best-total-price">
+                </div>
+
+            <div class="line-offer-view productOffers-listItemOfferShippingDetails show-for-large">
+                    <a href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=12&amp;price=455.08&amp;productid=202070647&amp;sid=20481&amp;type=offer" data-trx-click="offer_click;2-4-10;sooper" target="_blank" rel="noopener nofollow">
+                        <div class="productOffers-listItemOfferShippingDetails" title="461,98&nbsp;€ inkl. Versand">
+					461,98&nbsp;€ inkl. Versand</div>
+	</a>
+                </div>
+            </div>
+
+</div>
+            <div class="column large-12 larger-12 xlarge-12 show-for-large payment-column">
+                <div class="productOffers-listItemOfferShippingDetailsRight" data-trx-click="offer_click;2-4-10;sooper">
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=12&amp;price=455.08&amp;productid=202070647&amp;sid=20481&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/paypal-c038cb02ad0744a542c4.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=12&amp;price=455.08&amp;productid=202070647&amp;sid=20481&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/visa-ac94b93bc9a9921b1f11.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=12&amp;price=455.08&amp;productid=202070647&amp;sid=20481&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/mastercard-2e81fe3d252402ab0358.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=12&amp;price=455.08&amp;productid=202070647&amp;sid=20481&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/american-express-b6d0b3d814c4b5314ddb.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=12&amp;price=455.08&amp;productid=202070647&amp;sid=20481&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/diners-club-1742dae18f60772bc49a.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=12&amp;price=455.08&amp;productid=202070647&amp;sid=20481&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/klarna-78921c2f072f5cda9c8b.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Nachnahme">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=12&amp;price=455.08&amp;productid=202070647&amp;sid=20481&amp;type=offer">
+                                <span>
+                                    Nachnahme</span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Vorkasse">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=12&amp;price=455.08&amp;productid=202070647&amp;sid=20481&amp;type=offer">
+                                <span>
+                                    Vorkasse</span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=12&amp;price=455.08&amp;productid=202070647&amp;sid=20481&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/amzpay-260d13cc85438b08e97b.png" title=""></span>
+                            </a>
+                    </span>
+				</div>
+
+	</div>
+        </div>
+    </div>
+
+        <ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" role="list" data-offerlist-column="delivery" data-trx-click="offer_click;2-4-10;sooper">
+        <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=12&amp;price=455.08&amp;productid=202070647&amp;sid=20481&amp;type=offer">
+            <li>
+                <svg></svg>
+
+                <p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+       <span class="productOffers-listItemOfferDeliveryStatusDatesTitle">
+           Lieferung:
+       </span>
+        <span class="productOffers-listItemOfferDeliveryStatusDatesRange">
+            bis Sa. 21.11.</span>
+    </p>
+<div class="productOffers-listItemOfferDeliveryProviderWrapper">
+                        <span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider">
+                                DHL</span>
+                        <span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider">
+                                DPD</span>
+                        </div>
+                </li>
+            </a>
+    </ul>
+<div class="small-8 medium-8 large-6 larger-4 xlarge-4 xlarge-text-left large-text-center small-text-center productOffers-listItemOfferShopV2Block  va-middle-xlarge-up" data-offerlist-column="shop">
+        <div class="productOffers-listItemOfferShopV2">
+        <div class="productOffers-listItemOfferShopV2LogoContainer">
+            <div class="productOffers-listItemOfferShopV2Logo">
+                <a class="productOffers-listItemOfferShopV2LogoLink" data-shop-name="electronis.de - Shop aus Potsdam" data-trx-click="offer_click;2-4-10;sooper" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=12&amp;price=455.08&amp;productid=202070647&amp;sid=20481&amp;type=offer" rel="noopener nofollow" target="_blank">
+                    <img class="productOffers-listItemOfferShopV2LogoImage" src="//cdn.idealo.com/folder/Shop/20/4/20481/s1_shop_160x60.png" data-shop-logo="//cdn.idealo.com/folder/Shop/20/4/20481/s1_shop_160x60.png" data-shop-logo-fallback="//cdn.idealo.com/folder/Shop/20/4/20481/s1_shop.gif" alt="electronis.de - Shop aus Potsdam">
+
+                    <noscript>
+                        <img class="productOffers-listItemOfferShopV2LogoImage noborder"
+                             src="//cdn.idealo.com/folder/Shop/20/4/20481/s1_shop.gif"
+                             alt="electronis.de"
+                        />
+                    </noscript>
+                </a>
+            </div>
+
+            </div>
+        <div class="productOffers-listItemOfferShopV2RatingsContainer">
+            <a target="_blank" class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/20481.html">
+                        <div class="productOffers-listItemOfferShopV2Stars rating-single-star" data-trx-click="offer_click;2-4-10;sooper">
+        <div class="starAndRatingWrapper">
+            <svg></svg>
+                <span>
+                <b>4,8</b>
+            </span>
+        </div>
+    </div>
+
+</a>
+                    <a target="_blank" class="productOffers-listItemOfferShopV2NORatings" href="https://www.idealo.de/preisvergleich/Shop/20481.html" data-trx-click="offer_click;2-4-10;sooper">
+                                <span class="productOffers-listItemOfferShopV2NORatings--numberOfRatings">6918</span>
+                            </a>
+                        </div>
+    </div>
+    <button class="show-for-large productOffers-listItemOfferShopV2Info" data-trx-click="offer_click;2-4-10;sooper" data-overlay="{
+  &quot;closeCaption&quot; : &quot;back&quot;,
+  &quot;contentLoad&quot; : &quot;https://www.idealo.de/offerpage/ui/shop-infos/product/202070647/offerkey/22c9ef22bb657b7e1f8f29a4bfa8ebfd/index/11?offerListCondition=null&amp;locale=de_DE&amp;language=de_DE&quot;,
+  &quot;contentLoadBy&quot; : &quot;ajax&quot;,
+  &quot;eventStopPropagation&quot; : &quot;false&quot;,
+  &quot;titleCaption&quot; : &quot;electronis.de&quot;,
+  &quot;triggerOnOpen&quot; : &quot;shop-info-open&quot;,
+  &quot;contentPaddingTop&quot; : &quot;0&quot;,
+  &quot;wrapperClass&quot; : &quot;shopOverlay&quot;,
+  &quot;appendTo&quot; : &quot;#shop-overlay-wrapper&quot;
+}">
+                Shop-Details</button>
+        </div>
+
+        <div class="productOffers-listItemOfferCtaHolder small-8 medium-8 large-4 larger-4 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="leadoutbutton">
+        <ul class="productOffers-listItemOfferCta">
+		<li>
+			<a class="productOffers-listItemOfferCtaLeadout button button--leadout" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=12&amp;price=455.08&amp;productid=202070647&amp;sid=20481&amp;type=offer" data-shop-name="electronis.de" rel="noopener nofollow" target="_blank" data-trx-click="offer_click;2-4-10;sooper" aria-label="Zum electronis.de Shop">
+                Zum Shop<img class="btn-cta-shop" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/btn_placeholder-6a908321904cc83dbe01.gif" alt="Western Digital Black SN850X 2TB versand: billige SSDs bei electronis.de">
+            </a>
+        </li>
+        </ul>
+</div>
+
+        <div class="productOffers-listItemOfferDetailsMobile ">
+            <div class="productOffers-listItemOfferDetails" data-overlay="{
+  &quot;closeCaption&quot; : &quot;back&quot;,
+  &quot;contentLoad&quot; : &quot;https://www.idealo.de/offerpage/ui/shop-infos/product/202070647/offerkey/22c9ef22bb657b7e1f8f29a4bfa8ebfd/index/11?offerListCondition=null&amp;locale=de_DE&amp;language=de_DE&quot;,
+  &quot;contentLoadBy&quot; : &quot;ajax&quot;,
+  &quot;eventStopPropagation&quot; : &quot;false&quot;,
+  &quot;titleCaption&quot; : &quot;electronis.de&quot;,
+  &quot;triggerOnOpen&quot; : &quot;shop-info-open&quot;,
+  &quot;contentPaddingTop&quot; : &quot;0&quot;,
+  &quot;wrapperClass&quot; : &quot;shopOverlay&quot;,
+  &quot;appendTo&quot; : &quot;#shop-overlay-wrapper&quot;
+}" data-trx-click="offer_click;2-4-10;sooper">
+        Details</div>
+<div class="vertical-separator"></div>
+
+            <div class="productOffers-listItemOfferDelivery delivery delivery--short svg-icon" data-trx-click="offer_click;2-4-10;sooper">
+            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=12&amp;price=455.08&amp;productid=202070647&amp;sid=20481&amp;type=offer">
+                <svg></svg>
+            </a>
+        </div>
+
+        <span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile" data-trx-click="offer_click;2-4-10;sooper">
+    <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=12&amp;price=455.08&amp;productid=202070647&amp;sid=20481&amp;type=offer">
+        <span class="productOffers-listItemOfferDeliveryStatusMobileText">
+            <p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+       <span class="productOffers-listItemOfferDeliveryStatusDatesTitle">
+           Lieferung:
+       </span>
+        <span class="productOffers-listItemOfferDeliveryStatusDatesRange">
+            bis Sa. 21.11.</span>
+    </p>
+</span>
+    </a>
+</span>
+
+</div>
+<a class="productOffers-listItemOfferLink" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=12&amp;price=455.08&amp;productid=202070647&amp;sid=20481&amp;type=offer" target="_blank" data-shop-name="electronis.de" rel="noopener nofollow">
+</a>
+</li>
+
+<li class="productOffers-listItem row row-24 " data-shop="{&quot;type&quot;:&quot;IDECL&quot;}" data-trx-click="offer_click;2-4-10;sooper" data-mtrx-click="{&quot;shop_name&quot;:&quot;reichelt.de&quot;,&quot;products&quot;:[{&quot;id&quot;:202070647,&quot;category&quot;:14613,&quot;name&quot;:&quot;Western Digital Black SN850X 2TB&quot;,&quot;price&quot;:459.9}],&quot;event&quot;:&quot;leadout&quot;}">
+<div class="small-24 medium-24 large-24 larger-5 xlarge-4 productOffers-listItemTitleWrapper" data-offerlist-column="title">
+        <a class="productOffers-listItemTitle" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=13&amp;price=459.90&amp;productid=202070647&amp;sid=24030&amp;type=offer" target="_blank" rel="noopener nofollow" data-trx-click="offer_click;2-4-10;sooper">
+            <span class="productOffers-listItemTitleInner " title="WDS200T2X0E - WD_BLACK SN850X NVMe-SSD, 2 TB, M.2 SANDISK">
+                  WDS200T2X0E - WD_BLACK SN850X NVMe-SSD, 2 TB, M.2 SANDISK</span>
+        </a>
+
+</div>
+
+        <div class="productOffers-listItemOffer small-8 medium-8 large-9 larger-8 xlarge-8 columns" data-offerlist-column="price">
+        <div class="row">
+            <div class="column small-24 large-12 larger-12 xlarge-12 price-column">
+                <div class="price-and-badge-wrapper">
+        <a class="productOffers-listItemOfferPrice" data-trx-click="offer_click;2-4-10;sooper" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=13&amp;price=459.90&amp;productid=202070647&amp;sid=24030&amp;type=offer" target="_blank" rel="noopener nofollow">
+                459,90&nbsp;€<span class="productOffers-listItemOfferBasePrice">
+                        0,23&nbsp;€/GB</span>
+                </a>
+        <div class="best-total-price">
+                </div>
+
+            <div class="line-offer-view productOffers-listItemOfferShippingDetails show-for-large">
+                    <a href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=13&amp;price=459.90&amp;productid=202070647&amp;sid=24030&amp;type=offer" data-trx-click="offer_click;2-4-10;sooper" target="_blank" rel="noopener nofollow">
+                        <div class="productOffers-listItemOfferShippingDetails" title="465,85&nbsp;€ inkl. Versand">
+					465,85&nbsp;€ inkl. Versand</div>
+	</a>
+                </div>
+            </div>
+
+</div>
+            <div class="column large-12 larger-12 xlarge-12 show-for-large payment-column">
+                <div class="productOffers-listItemOfferShippingDetailsRight" data-trx-click="offer_click;2-4-10;sooper">
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=13&amp;price=459.90&amp;productid=202070647&amp;sid=24030&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/paypal-c038cb02ad0744a542c4.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Rechnung">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=13&amp;price=459.90&amp;productid=202070647&amp;sid=24030&amp;type=offer">
+                                <span>
+                                    Rechnung</span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=13&amp;price=459.90&amp;productid=202070647&amp;sid=24030&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/klarna-78921c2f072f5cda9c8b.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Lastschrift">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=13&amp;price=459.90&amp;productid=202070647&amp;sid=24030&amp;type=offer">
+                                <span>
+                                    Lastschrift</span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Nachnahme">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=13&amp;price=459.90&amp;productid=202070647&amp;sid=24030&amp;type=offer">
+                                <span>
+                                    Nachnahme</span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Vorkasse">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=13&amp;price=459.90&amp;productid=202070647&amp;sid=24030&amp;type=offer">
+                                <span>
+                                    Vorkasse</span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=13&amp;price=459.90&amp;productid=202070647&amp;sid=24030&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/amzpay-260d13cc85438b08e97b.png" title=""></span>
+                            </a>
+                    </span>
+				</div>
+
+	</div>
+        </div>
+    </div>
+
+        <ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" role="list" data-offerlist-column="delivery" data-trx-click="offer_click;2-4-10;sooper">
+        <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=13&amp;price=459.90&amp;productid=202070647&amp;sid=24030&amp;type=offer">
+            <li>
+                <svg></svg>
+
+                <p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+       <span class="productOffers-listItemOfferDeliveryStatusDatesTitle">
+           Lieferung:
+       </span>
+        <span class="productOffers-listItemOfferDeliveryStatusDatesRange">
+            bis Fr. 20.11.</span>
+    </p>
+<div class="productOffers-listItemOfferDeliveryProviderWrapper">
+                        <span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider">
+                                DHL</span>
+                        <span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider">
+                                DPD</span>
+                        </div>
+                </li>
+            <li>
+                   <svg></svg>
+                    <div class="productOffers-listItemOfferDeliveryRetourText">
+                        <span>Rücksendung 14 Tage kostenfrei</span>
+                    </div>
+                </li>
+            </a>
+    </ul>
+<div class="small-8 medium-8 large-6 larger-4 xlarge-4 xlarge-text-left large-text-center small-text-center productOffers-listItemOfferShopV2Block  va-middle-xlarge-up" data-offerlist-column="shop">
+        <div class="productOffers-listItemOfferShopV2">
+        <div class="productOffers-listItemOfferShopV2LogoContainer">
+            <div class="productOffers-listItemOfferShopV2Logo">
+                <a class="productOffers-listItemOfferShopV2LogoLink" data-shop-name="reichelt.de - Shop aus Sande" data-trx-click="offer_click;2-4-10;sooper" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=13&amp;price=459.90&amp;productid=202070647&amp;sid=24030&amp;type=offer" rel="noopener nofollow" target="_blank">
+                    <img class="productOffers-listItemOfferShopV2LogoImage" src="//cdn.idealo.com/folder/Shop/24/0/24030/s1_shop_160x60.png" data-shop-logo="//cdn.idealo.com/folder/Shop/24/0/24030/s1_shop_160x60.png" data-shop-logo-fallback="//cdn.idealo.com/folder/Shop/24/0/24030/s1_shop.gif" alt="reichelt.de - Shop aus Sande">
+
+                    <noscript>
+                        <img class="productOffers-listItemOfferShopV2LogoImage noborder"
+                             src="//cdn.idealo.com/folder/Shop/24/0/24030/s1_shop.gif"
+                             alt="reichelt.de"
+                        />
+                    </noscript>
+                </a>
+            </div>
+
+            </div>
+        <div class="productOffers-listItemOfferShopV2RatingsContainer">
+            <a target="_blank" class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/24030.html">
+                        <div class="productOffers-listItemOfferShopV2Stars rating-single-star" data-trx-click="offer_click;2-4-10;sooper">
+        <div class="starAndRatingWrapper">
+            <svg></svg>
+                <span>
+                <b>2,3</b>
+            </span>
+        </div>
+    </div>
+
+</a>
+                    <a target="_blank" class="productOffers-listItemOfferShopV2NORatings" href="https://www.idealo.de/preisvergleich/Shop/24030.html" data-trx-click="offer_click;2-4-10;sooper">
+                                <span class="productOffers-listItemOfferShopV2NORatings--numberOfRatings">194</span>
+                            </a>
+                        </div>
+    </div>
+    <button class="show-for-large productOffers-listItemOfferShopV2Info" data-trx-click="offer_click;2-4-10;sooper" data-overlay="{
+  &quot;closeCaption&quot; : &quot;back&quot;,
+  &quot;contentLoad&quot; : &quot;https://www.idealo.de/offerpage/ui/shop-infos/product/202070647/offerkey/96d22563d1cb22114c4c5f62ccd85663/index/12?offerListCondition=null&amp;locale=de_DE&amp;language=de_DE&quot;,
+  &quot;contentLoadBy&quot; : &quot;ajax&quot;,
+  &quot;eventStopPropagation&quot; : &quot;false&quot;,
+  &quot;titleCaption&quot; : &quot;reichelt.de&quot;,
+  &quot;triggerOnOpen&quot; : &quot;shop-info-open&quot;,
+  &quot;contentPaddingTop&quot; : &quot;0&quot;,
+  &quot;wrapperClass&quot; : &quot;shopOverlay&quot;,
+  &quot;appendTo&quot; : &quot;#shop-overlay-wrapper&quot;
+}">
+                Shop-Details</button>
+        </div>
+
+        <div class="productOffers-listItemOfferCtaHolder small-8 medium-8 large-4 larger-4 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="leadoutbutton">
+        <ul class="productOffers-listItemOfferCta">
+		<li>
+			<a class="productOffers-listItemOfferCtaLeadout button button--leadout" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=13&amp;price=459.90&amp;productid=202070647&amp;sid=24030&amp;type=offer" data-shop-name="reichelt.de" rel="noopener nofollow" target="_blank" data-trx-click="offer_click;2-4-10;sooper" aria-label="Zum reichelt.de Shop">
+                Zum Shop<img class="btn-cta-shop" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/btn_placeholder-6a908321904cc83dbe01.gif" alt="Western Digital Black SN850X 2TB kaufen: günstige SSDs bei reichelt.de">
+            </a>
+        </li>
+        </ul>
+</div>
+
+        <div class="productOffers-listItemOfferDetailsMobile ">
+            <div class="productOffers-listItemOfferDetails" data-overlay="{
+  &quot;closeCaption&quot; : &quot;back&quot;,
+  &quot;contentLoad&quot; : &quot;https://www.idealo.de/offerpage/ui/shop-infos/product/202070647/offerkey/96d22563d1cb22114c4c5f62ccd85663/index/12?offerListCondition=null&amp;locale=de_DE&amp;language=de_DE&quot;,
+  &quot;contentLoadBy&quot; : &quot;ajax&quot;,
+  &quot;eventStopPropagation&quot; : &quot;false&quot;,
+  &quot;titleCaption&quot; : &quot;reichelt.de&quot;,
+  &quot;triggerOnOpen&quot; : &quot;shop-info-open&quot;,
+  &quot;contentPaddingTop&quot; : &quot;0&quot;,
+  &quot;wrapperClass&quot; : &quot;shopOverlay&quot;,
+  &quot;appendTo&quot; : &quot;#shop-overlay-wrapper&quot;
+}" data-trx-click="offer_click;2-4-10;sooper">
+        Details</div>
+<div class="vertical-separator"></div>
+
+            <div class="productOffers-listItemOfferDelivery delivery delivery--short svg-icon" data-trx-click="offer_click;2-4-10;sooper">
+            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=13&amp;price=459.90&amp;productid=202070647&amp;sid=24030&amp;type=offer">
+                <svg></svg>
+            </a>
+        </div>
+
+        <span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile" data-trx-click="offer_click;2-4-10;sooper">
+    <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=13&amp;price=459.90&amp;productid=202070647&amp;sid=24030&amp;type=offer">
+        <span class="productOffers-listItemOfferDeliveryStatusMobileText">
+            <p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+       <span class="productOffers-listItemOfferDeliveryStatusDatesTitle">
+           Lieferung:
+       </span>
+        <span class="productOffers-listItemOfferDeliveryStatusDatesRange">
+            bis Fr. 20.11.</span>
+    </p>
+</span>
+    </a>
+</span>
+
+</div>
+<a class="productOffers-listItemOfferLink" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=13&amp;price=459.90&amp;productid=202070647&amp;sid=24030&amp;type=offer" target="_blank" data-shop-name="reichelt.de" rel="noopener nofollow">
+</a>
+</li>
+
+<li class="productOffers-listItem row row-24 " data-hyperlinks="[{&quot;rel&quot;:&quot;totalPrice&quot;,&quot;href&quot;:&quot;https://www.idealo.de/offerpage/offerlist/product/202070647/start/0/sort/btpb?includeFilters=0&amp;excludeFilters=0&amp;offerpageViewId=0dcafce9-f13c-49dc-81df-2dc5d7ac1aa9&quot;},{&quot;rel&quot;:&quot;basePrice&quot;,&quot;href&quot;:&quot;https://www.idealo.de/offerpage/offerlist/product/202070647/start/0/sort/basePrice?includeFilters=0&amp;excludeFilters=0&amp;offerpageViewId=0dcafce9-f13c-49dc-81df-2dc5d7ac1aa9&quot;},{&quot;rel&quot;:&quot;singlePrice&quot;,&quot;href&quot;:&quot;https://www.idealo.de/offerpage/offerlist/product/202070647/start/0/sort/default?includeFilters=0&amp;excludeFilters=0&amp;offerpageViewId=0dcafce9-f13c-49dc-81df-2dc5d7ac1aa9&quot;},{&quot;rel&quot;:&quot;loadMore&quot;,&quot;href&quot;:&quot;https://www.idealo.de/offerpage/offerlist/product/202070647/start/20/sort/default?includeFilters=0&amp;excludeFilters=0&amp;offerpageViewId=0dcafce9-f13c-49dc-81df-2dc5d7ac1aa9&amp;offerlistViewId=ee282e01-f9f1-4276-aab3-90ccb541edb6&quot;},{&quot;rel&quot;:&quot;available&quot;,&quot;href&quot;:&quot;https://www.idealo.de/offerpage/offerlist/product/202070647/start/0/sort/default?includeFilters=64&amp;excludeFilters=0&amp;offerpageViewId=0dcafce9-f13c-49dc-81df-2dc5d7ac1aa9&quot;},{&quot;rel&quot;:&quot;freereturn&quot;,&quot;href&quot;:&quot;https://www.idealo.de/offerpage/offerlist/product/202070647/start/0/sort/default?includeFilters=262144&amp;excludeFilters=0&amp;offerpageViewId=0dcafce9-f13c-49dc-81df-2dc5d7ac1aa9&quot;},{&quot;rel&quot;:&quot;base&quot;,&quot;href&quot;:&quot;https://www.idealo.de/offerpage/offerlist/product/202070647/start/0/sort/default?includeFilters=0&amp;excludeFilters=0&amp;offerpageViewId=0dcafce9-f13c-49dc-81df-2dc5d7ac1aa9&quot;},{&quot;rel&quot;:&quot;homeDelivery&quot;,&quot;href&quot;:&quot;https://www.idealo.de/offerpage/offerlist/product/202070647/start/0/sort/default?includeFilters=0&amp;excludeFilters=0&amp;offerFilters=HOME_DELIVERY&amp;offerpageViewId=0dcafce9-f13c-49dc-81df-2dc5d7ac1aa9&quot;},{&quot;rel&quot;:&quot;disposalOnly&quot;,&quot;href&quot;:&quot;https://www.idealo.de/offerpage/offerlist/product/202070647/start/0/sort/default?includeFilters=0&amp;excludeFilters=0&amp;offerFilters=DISPOSAL_ONLY&amp;offerpageViewId=0dcafce9-f13c-49dc-81df-2dc5d7ac1aa9&quot;},{&quot;rel&quot;:&quot;shopLanguage&quot;,&quot;href&quot;:&quot;https://www.idealo.de/offerpage/offerlist/product/202070647/start/0/sort/default?includeFilters=0&amp;excludeFilters=0&amp;offerFilters=SHOP_LANG_INTERNATIONAL&amp;offerFilters=SHOP_LANG_DOMESTIC&amp;offerpageViewId=0dcafce9-f13c-49dc-81df-2dc5d7ac1aa9&quot;}]" data-total-offer-count="40" data-shop="{&quot;type&quot;:&quot;IDECL&quot;}" data-trx-click="offer_click;2-4-10;sooper" data-mtrx-click="{&quot;shop_name&quot;:&quot;itkadmin.de&quot;,&quot;products&quot;:[{&quot;id&quot;:202070647,&quot;category&quot;:14613,&quot;name&quot;:&quot;Western Digital Black SN850X 2TB&quot;,&quot;price&quot;:483.99}],&quot;event&quot;:&quot;leadout&quot;}">
+<div class="small-24 medium-24 large-24 larger-5 xlarge-4 productOffers-listItemTitleWrapper" data-offerlist-column="title">
+        <a class="productOffers-listItemTitle" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=20&amp;price=483.99&amp;productid=202070647&amp;sid=320646&amp;type=offer" target="_blank" rel="noopener nofollow" data-trx-click="offer_click;2-4-10;sooper">
+            <span class="productOffers-listItemTitleInner " title="WD_BLACK SN850X WDS200T2X0E - SSD - ver­schlüs­selt - 2 TB - intern - M.2 2280 - PCIe 4.0 x4 (NVMe)">
+                  WD_BLACK SN850X WDS200T2X0E - SSD - ver­schlüs­selt - 2 TB - intern - M.2 2280 - PCIe 4.0 x4 (NVMe)</span>
+        </a>
+
+</div>
+
+        <div class="productOffers-listItemOffer small-8 medium-8 large-9 larger-8 xlarge-8 columns" data-offerlist-column="price">
+        <div class="row">
+            <div class="column small-24 large-12 larger-12 xlarge-12 price-column">
+                <div class="price-and-badge-wrapper">
+        <a class="productOffers-listItemOfferPrice" data-trx-click="offer_click;2-4-10;sooper" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=20&amp;price=483.99&amp;productid=202070647&amp;sid=320646&amp;type=offer" target="_blank" rel="noopener nofollow">
+                483,99&nbsp;€<span class="productOffers-listItemOfferBasePrice">
+                        0,24&nbsp;€/GB</span>
+                </a>
+        <div class="best-total-price">
+                </div>
+
+            <div class="line-offer-view productOffers-listItemOfferShippingDetails show-for-large">
+                    <a href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=20&amp;price=483.99&amp;productid=202070647&amp;sid=320646&amp;type=offer" data-trx-click="offer_click;2-4-10;sooper" target="_blank" rel="noopener nofollow">
+                        <div class="productOffers-listItemOfferShippingDetails" title="483,99&nbsp;€ inkl. Versand">
+					483,99&nbsp;€ inkl. Versand</div>
+	</a>
+                </div>
+            </div>
+
+</div>
+            <div class="column large-12 larger-12 xlarge-12 show-for-large payment-column">
+                <div class="productOffers-listItemOfferShippingDetailsRight" data-trx-click="offer_click;2-4-10;sooper">
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=20&amp;price=483.99&amp;productid=202070647&amp;sid=320646&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/paypal-c038cb02ad0744a542c4.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Rechnung">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=20&amp;price=483.99&amp;productid=202070647&amp;sid=320646&amp;type=offer">
+                                <span>
+                                    Rechnung</span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=20&amp;price=483.99&amp;productid=202070647&amp;sid=320646&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/visa-ac94b93bc9a9921b1f11.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=20&amp;price=483.99&amp;productid=202070647&amp;sid=320646&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/mastercard-2e81fe3d252402ab0358.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=20&amp;price=483.99&amp;productid=202070647&amp;sid=320646&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/klarna-78921c2f072f5cda9c8b.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Lastschrift">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=20&amp;price=483.99&amp;productid=202070647&amp;sid=320646&amp;type=offer">
+                                <span>
+                                    Lastschrift</span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Vorkasse">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=20&amp;price=483.99&amp;productid=202070647&amp;sid=320646&amp;type=offer">
+                                <span>
+                                    Vorkasse</span>
+                            </a>
+                    </span>
+				</div>
+
+	</div>
+        </div>
+    </div>
+
+        <ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" role="list" data-offerlist-column="delivery" data-trx-click="offer_click;2-4-10;sooper">
+        <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=20&amp;price=483.99&amp;productid=202070647&amp;sid=320646&amp;type=offer">
+            <li>
+                <svg></svg>
+
+                <p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+       <span class="productOffers-listItemOfferDeliveryStatusDatesTitle">
+           Lieferung:
+       </span>
+        <span class="productOffers-listItemOfferDeliveryStatusDatesRange">
+            bis Sa. 21.11.</span>
+    </p>
+</li>
+            </a>
+    </ul>
+<div class="small-8 medium-8 large-6 larger-4 xlarge-4 xlarge-text-left large-text-center small-text-center productOffers-listItemOfferShopV2Block  va-middle-xlarge-up" data-offerlist-column="shop">
+        <div class="productOffers-listItemOfferShopV2">
+        <div class="productOffers-listItemOfferShopV2LogoContainer">
+            <div class="productOffers-listItemOfferShopV2Logo">
+                <a class="productOffers-listItemOfferShopV2LogoLink" data-shop-name="itkadmin.de - Shop aus Bremen" data-trx-click="offer_click;2-4-10;sooper" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=20&amp;price=483.99&amp;productid=202070647&amp;sid=320646&amp;type=offer" rel="noopener nofollow" target="_blank">
+                    <img class="productOffers-listItemOfferShopV2LogoImage" src="//cdn.idealo.com/folder/Shop/320/6/320646/s1_shop_160x60.png" data-shop-logo="//cdn.idealo.com/folder/Shop/320/6/320646/s1_shop_160x60.png" data-shop-logo-fallback="//cdn.idealo.com/folder/Shop/320/6/320646/s1_shop.gif" alt="itkadmin.de - Shop aus Bremen">
+
+                    <noscript>
+                        <img class="productOffers-listItemOfferShopV2LogoImage noborder"
+                             src="//cdn.idealo.com/folder/Shop/320/6/320646/s1_shop.gif"
+                             alt="itkadmin.de"
+                        />
+                    </noscript>
+                </a>
+            </div>
+
+            </div>
+        <div class="productOffers-listItemOfferShopV2RatingsContainer">
+            <a target="_blank" class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/320646.html">
+                        <div class="productOffers-listItemOfferShopV2Stars rating-single-star" data-trx-click="offer_click;2-4-10;sooper">
+        <div class="starAndRatingWrapper">
+            <svg></svg>
+                <span>
+                <b>4,6</b>
+            </span>
+        </div>
+    </div>
+
+</a>
+                    <a target="_blank" class="productOffers-listItemOfferShopV2NORatings" href="https://www.idealo.de/preisvergleich/Shop/320646.html" data-trx-click="offer_click;2-4-10;sooper">
+                                <span class="productOffers-listItemOfferShopV2NORatings--numberOfRatings">13</span>
+                            </a>
+                        </div>
+    </div>
+    <button class="show-for-large productOffers-listItemOfferShopV2Info" data-trx-click="offer_click;2-4-10;sooper" data-overlay="{
+  &quot;closeCaption&quot; : &quot;back&quot;,
+  &quot;contentLoad&quot; : &quot;https://www.idealo.de/offerpage/ui/shop-infos/product/202070647/offerkey/36b213dba67ac6f3bb675c7231352b8d/index/19?offerListCondition=null&amp;locale=de_DE&amp;language=de_DE&quot;,
+  &quot;contentLoadBy&quot; : &quot;ajax&quot;,
+  &quot;eventStopPropagation&quot; : &quot;false&quot;,
+  &quot;titleCaption&quot; : &quot;itkadmin.de&quot;,
+  &quot;triggerOnOpen&quot; : &quot;shop-info-open&quot;,
+  &quot;contentPaddingTop&quot; : &quot;0&quot;,
+  &quot;wrapperClass&quot; : &quot;shopOverlay&quot;,
+  &quot;appendTo&quot; : &quot;#shop-overlay-wrapper&quot;
+}">
+                Shop-Details</button>
+        </div>
+
+        <div class="productOffers-listItemOfferCtaHolder small-8 medium-8 large-4 larger-4 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="leadoutbutton">
+        <ul class="productOffers-listItemOfferCta">
+		<li>
+			<a class="productOffers-listItemOfferCtaLeadout button button--leadout" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=20&amp;price=483.99&amp;productid=202070647&amp;sid=320646&amp;type=offer" data-shop-name="itkadmin.de" rel="noopener nofollow" target="_blank" data-trx-click="offer_click;2-4-10;sooper" aria-label="Zum itkadmin.de Shop">
+                Zum Shop<img class="btn-cta-shop" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/btn_placeholder-6a908321904cc83dbe01.gif" alt="Western Digital Black SN850X 2TB bestellen: preiswerte SSDs bei itkadmin.de">
+            </a>
+        </li>
+        </ul>
+</div>
+
+        <div class="productOffers-listItemOfferDetailsMobile ">
+            <div class="productOffers-listItemOfferDetails" data-overlay="{
+  &quot;closeCaption&quot; : &quot;back&quot;,
+  &quot;contentLoad&quot; : &quot;https://www.idealo.de/offerpage/ui/shop-infos/product/202070647/offerkey/36b213dba67ac6f3bb675c7231352b8d/index/19?offerListCondition=null&amp;locale=de_DE&amp;language=de_DE&quot;,
+  &quot;contentLoadBy&quot; : &quot;ajax&quot;,
+  &quot;eventStopPropagation&quot; : &quot;false&quot;,
+  &quot;titleCaption&quot; : &quot;itkadmin.de&quot;,
+  &quot;triggerOnOpen&quot; : &quot;shop-info-open&quot;,
+  &quot;contentPaddingTop&quot; : &quot;0&quot;,
+  &quot;wrapperClass&quot; : &quot;shopOverlay&quot;,
+  &quot;appendTo&quot; : &quot;#shop-overlay-wrapper&quot;
+}" data-trx-click="offer_click;2-4-10;sooper">
+        Details</div>
+<div class="vertical-separator"></div>
+
+            <div class="productOffers-listItemOfferDelivery delivery delivery--short svg-icon" data-trx-click="offer_click;2-4-10;sooper">
+            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=20&amp;price=483.99&amp;productid=202070647&amp;sid=320646&amp;type=offer">
+                <svg></svg>
+            </a>
+        </div>
+
+        <span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile" data-trx-click="offer_click;2-4-10;sooper">
+    <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=20&amp;price=483.99&amp;productid=202070647&amp;sid=320646&amp;type=offer">
+        <span class="productOffers-listItemOfferDeliveryStatusMobileText">
+            <p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+       <span class="productOffers-listItemOfferDeliveryStatusDatesTitle">
+           Lieferung:
+       </span>
+        <span class="productOffers-listItemOfferDeliveryStatusDatesRange">
+            bis Sa. 21.11.</span>
+    </p>
+</span>
+    </a>
+</span>
+
+</div>
+<a class="productOffers-listItemOfferLink" href="/relocator/relocate?categoryId=14613&amp;offerKey=x&amp;pos=20&amp;price=483.99&amp;productid=202070647&amp;sid=320646&amp;type=offer" target="_blank" data-shop-name="itkadmin.de" rel="noopener nofollow">
+</a>
+</li>
+<li class="productOffers-listItemImportTime row">
+            <span class="small-12 columns">Daten vom 18.11.2026&nbsp;07:16</span>
+        </li>
+
+        <li class="productOffers-listItemLoadMore row">
+                <div class="collapse-both text-center small-12 columns">
+                    <button class="productOffers-listLoadMore button-ghost button-ghost--blue" data-trx-click="offerlist_load_more_click;1-1-1;sooper">Weitere Angebote anzeigen</button>
+                </div>
+            </li>
+        
+</ul>
+</body></html>

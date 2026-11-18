@@ -1,0 +1,633 @@
+<html><head><title>AMD Ryzen 9 9950X3D ab 560,99&nbsp;€ | Vergleiche Black Friday Angebote auf idealo.de</title></head><body>
+<script data-testid="Product" type="application/ld+json">{"@type":"Product","offers":{"@type":"AggregateOffer","offerCount":60}}</script>
+<h1 id="oopStage-title" class="oopStage-title" translate="no" tabindex="0">
+                    <span>AMD Ryzen 9 9950X3D</span>
+                        </h1>
+<div class="oopStage-productInfoTopItems small-12 collapse-both columns">
+                <b>Produktübersicht:</b>
+                <span class="oopStage-productInfoTopItem">
+                        Sockel AM5 </span>
+                <span class="oopStage-productInfoTopItem">
+                        Desktop-Prozessor </span>
+                <span class="oopStage-productInfoTopItem">
+                        Anzahl Prozessorkerne&nbsp;16 </span>
+                <span class="oopStage-productInfoTopItem">
+                        Anzahl Threads&nbsp;32 </span>
+                <span class="oopStage-productInfoTopItem">
+                        4,3&nbsp;GHz </span>
+                <span class="oopStage-productInfoTopItem">
+                        max. Turbotakt&nbsp;5,7&nbsp;GHz </span>
+                <span class="oopStage-productInfoTopItem">
+                        Granite Ridge </span>
+                <span class="oopStage-productInfoTopItem">
+                        170&nbsp;Watt </span>
+                <span class="oopStage-productInfoTopItem">
+                        AMD Radeon Graphics </span>
+                <span class="oopStage-productInfoTopItem">
+                        L3-Cache&nbsp;128&nbsp;MB </span>
+                <span class="oopStage-productInfoTopItem">
+                        geeignet für ECC-Speicher </span>
+                <span class="oopStage-productInfoTopItemWrapperDatasheetLink"><a id="productDetailsAnchor" href="#datasheet" data-trx-click="product_details_click;1-1-0;koopa">
+            Produktdetails</a>
+</span>
+            </div>
+<ul class="productOffers-list" data-import-time="Daten vom 18.11.2026&nbsp;07:15">
+
+<li class="productOffers-listItem row row-24 " data-shop="{&quot;type&quot;:&quot;SHPSA&quot;}" data-trx-click="offer_click;2-4-10;sooper" data-mtrx-click="{&quot;shop_name&quot;:&quot;Amazon&quot;,&quot;products&quot;:[{&quot;id&quot;:206095263,&quot;category&quot;:3019,&quot;name&quot;:&quot;AMD Ryzen 9 9950X3D Boxed&quot;,&quot;price&quot;:560.99}],&quot;event&quot;:&quot;leadout&quot;}">
+<div class="small-24 medium-24 large-24 larger-5 xlarge-4 productOffers-listItemTitleWrapper" data-offerlist-column="title">
+        <a class="productOffers-listItemTitle" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=1&amp;price=560.99&amp;productid=206095266&amp;sid=4640&amp;type=offer" target="_blank" rel="noopener nofollow" data-trx-click="offer_click;2-4-10;sooper">
+            <span class="productOffers-listItemTitleInner " title="Processore - Amd - Ryzen 9 9950x3d 16 Core">
+                  Processore - Amd - Ryzen 9 9950x3d 16 Core</span>
+        </a>
+
+</div>
+
+        <div class="productOffers-listItemOffer small-8 medium-8 large-9 larger-8 xlarge-8 columns" data-offerlist-column="price">
+        <div class="row">
+            <div class="column small-24 large-12 larger-12 xlarge-12 price-column">
+                <div class="price-and-badge-wrapper">
+        <a class="productOffers-listItemOfferPrice" data-trx-click="offer_click;2-4-10;sooper" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=1&amp;price=560.99&amp;productid=206095266&amp;sid=4640&amp;type=offer" target="_blank" rel="noopener nofollow">
+                560,99&nbsp;€</a>
+        <div class="best-total-price-box">
+            <div class="best-total-price">
+                <span>
+                <a href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=1&amp;price=560.99&amp;productid=206095266&amp;sid=4640&amp;type=offer" data-trx-click="offer_click;2-4-10;sooper" target="_blank" rel="noopener nofollow">
+                        <span class="productOffers-listItemOfferBestTotalPrice">
+                            Günstigster Gesamtpreis</span><br>
+                        </a></span>
+                </div>
+
+            <div class="line-offer-view productOffers-listItemOfferShippingDetails show-for-large withBestTotalPrice">
+                    <a href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=1&amp;price=560.99&amp;productid=206095266&amp;sid=4640&amp;type=offer" data-trx-click="offer_click;2-4-10;sooper" target="_blank" rel="noopener nofollow">
+                        <div class="productOffers-listItemOfferShippingDetails" title="560,99&nbsp;€ inkl. Versand">
+					560,99&nbsp;€ inkl. Versand</div>
+	</a>
+                </div>
+            </div>
+        </div>
+
+</div>
+            <div class="column large-12 larger-12 xlarge-12 show-for-large payment-column">
+                <div class="productOffers-listItemOfferShippingDetailsRight" data-trx-click="offer_click;2-4-10;sooper">
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Rechnung">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=1&amp;price=560.99&amp;productid=206095266&amp;sid=4640&amp;type=offer">
+                                <span>
+                                    Rechnung</span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=1&amp;price=560.99&amp;productid=206095266&amp;sid=4640&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/visa-ac94b93bc9a9921b1f11.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=1&amp;price=560.99&amp;productid=206095266&amp;sid=4640&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/mastercard-2e81fe3d252402ab0358.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=1&amp;price=560.99&amp;productid=206095266&amp;sid=4640&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/american-express-b6d0b3d814c4b5314ddb.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Lastschrift">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=1&amp;price=560.99&amp;productid=206095266&amp;sid=4640&amp;type=offer">
+                                <span>
+                                    Lastschrift</span>
+                            </a>
+                    </span>
+				</div>
+
+	</div>
+        </div>
+    </div>
+
+        <ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" role="list" data-offerlist-column="delivery" data-trx-click="offer_click;2-4-10;sooper">
+        <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=1&amp;price=560.99&amp;productid=206095266&amp;sid=4640&amp;type=offer">
+            <li>
+                <svg></svg>
+
+                <p class="productOffers-listItemOfferDeliveryStatus">
+                            Nur noch 8 auf Lager</p>
+                    <div class="productOffers-listItemOfferDeliveryProviderWrapper">
+                        <span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider">
+                                DHL</span>
+                        <span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider">
+                                Hermes</span>
+                        </div>
+                </li>
+            <li>
+                   <svg></svg>
+                    <div class="productOffers-listItemOfferDeliveryRetourText">
+                        <span>Rücksendung 14 Tage kostenfrei</span>
+                    </div>
+                </li>
+            </a>
+    </ul>
+<div class="small-8 medium-8 large-6 larger-4 xlarge-4 xlarge-text-left large-text-center small-text-center productOffers-listItemOfferShopV2Block  va-middle-xlarge-up" data-offerlist-column="shop">
+        <div class="productOffers-listItemOfferShopV2">
+        <div class="productOffers-listItemOfferShopV2LogoContainer">
+            <div class="productOffers-listItemOfferShopV2Logo">
+                <a class="productOffers-listItemOfferShopV2LogoLink" data-shop-name="Amazon - Shop aus München" data-trx-click="offer_click;2-4-10;sooper" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=1&amp;price=560.99&amp;productid=206095266&amp;sid=4640&amp;type=offer" rel="noopener nofollow" target="_blank">
+                    <img class="productOffers-listItemOfferShopV2LogoImage" src="//cdn.idealo.com/folder/Shop/4/6/4640/s1_shop_160x60.png" data-shop-logo="//cdn.idealo.com/folder/Shop/4/6/4640/s1_shop_160x60.png" data-shop-logo-fallback="//cdn.idealo.com/folder/Shop/4/6/4640/s1_shop.gif" alt="Amazon - Shop aus München">
+
+                    <noscript>
+                        <img class="productOffers-listItemOfferShopV2LogoImage noborder"
+                             src="//cdn.idealo.com/folder/Shop/4/6/4640/s1_shop.gif"
+                             alt="Amazon"
+                        />
+                    </noscript>
+                </a>
+            </div>
+
+            </div>
+        <div class="productOffers-listItemOfferShopV2RatingsContainer">
+            <a target="_blank" class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/4640.html">
+                        <div class="productOffers-listItemOfferShopV2Stars rating-single-star" data-trx-click="offer_click;2-4-10;sooper">
+        <div class="starAndRatingWrapper">
+            <svg></svg>
+                <span>
+                <b>2,3</b>
+            </span>
+        </div>
+    </div>
+
+</a>
+                    <a target="_blank" class="productOffers-listItemOfferShopV2NORatings" href="https://www.idealo.de/preisvergleich/Shop/4640.html" data-trx-click="offer_click;2-4-10;sooper">
+                                <span class="productOffers-listItemOfferShopV2NORatings--numberOfRatings">1812</span>
+                            </a>
+                        </div>
+    </div>
+    <button class="show-for-large productOffers-listItemOfferShopV2Info" data-trx-click="offer_click;2-4-10;sooper" data-overlay="{
+  &quot;closeCaption&quot; : &quot;back&quot;,
+  &quot;contentLoad&quot; : &quot;https://www.idealo.de/offerpage/ui/shop-infos/product/206095266/offerkey/fef5c41d416bac04012e1939524e80f2/index/0?offerListCondition=null&amp;locale=de_DE&amp;language=de_DE&quot;,
+  &quot;contentLoadBy&quot; : &quot;ajax&quot;,
+  &quot;eventStopPropagation&quot; : &quot;false&quot;,
+  &quot;titleCaption&quot; : &quot;Amazon&quot;,
+  &quot;triggerOnOpen&quot; : &quot;shop-info-open&quot;,
+  &quot;contentPaddingTop&quot; : &quot;0&quot;,
+  &quot;wrapperClass&quot; : &quot;shopOverlay&quot;,
+  &quot;appendTo&quot; : &quot;#shop-overlay-wrapper&quot;
+}">
+                Shop-Details</button>
+        </div>
+
+        <div class="productOffers-listItemOfferCtaHolder small-8 medium-8 large-4 larger-4 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="leadoutbutton">
+        <ul class="productOffers-listItemOfferCta">
+		<li>
+			<a class="productOffers-listItemOfferCtaLeadout button button--leadout" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=1&amp;price=560.99&amp;productid=206095266&amp;sid=4640&amp;type=offer" data-shop-name="Amazon" rel="noopener nofollow" target="_blank" data-trx-click="offer_click;2-4-10;sooper" aria-label="Zum Amazon Shop">
+                Zum Shop<img class="btn-cta-shop" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/btn_placeholder-6a908321904cc83dbe01.gif" alt="AMD Ryzen 9 9950X3D kaufen: günstige CPU/Prozessoren bei Amazon">
+            </a>
+        </li>
+        </ul>
+</div>
+
+        <div class="productOffers-listItemOfferDetailsMobile ">
+            <div class="productOffers-listItemOfferDetails" data-overlay="{
+  &quot;closeCaption&quot; : &quot;back&quot;,
+  &quot;contentLoad&quot; : &quot;https://www.idealo.de/offerpage/ui/shop-infos/product/206095266/offerkey/fef5c41d416bac04012e1939524e80f2/index/0?offerListCondition=null&amp;locale=de_DE&amp;language=de_DE&quot;,
+  &quot;contentLoadBy&quot; : &quot;ajax&quot;,
+  &quot;eventStopPropagation&quot; : &quot;false&quot;,
+  &quot;titleCaption&quot; : &quot;Amazon&quot;,
+  &quot;triggerOnOpen&quot; : &quot;shop-info-open&quot;,
+  &quot;contentPaddingTop&quot; : &quot;0&quot;,
+  &quot;wrapperClass&quot; : &quot;shopOverlay&quot;,
+  &quot;appendTo&quot; : &quot;#shop-overlay-wrapper&quot;
+}" data-trx-click="offer_click;2-4-10;sooper">
+        Details</div>
+<div class="vertical-separator"></div>
+
+            <div class="productOffers-listItemOfferDelivery delivery delivery--out svg-icon" data-trx-click="offer_click;2-4-10;sooper">
+            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=1&amp;price=560.99&amp;productid=206095266&amp;sid=4640&amp;type=offer">
+                <svg></svg>
+            </a>
+        </div>
+
+        <span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile" data-trx-click="offer_click;2-4-10;sooper">
+    <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=1&amp;price=560.99&amp;productid=206095266&amp;sid=4640&amp;type=offer">
+        <span class="productOffers-listItemOfferDeliveryStatusMobileText">
+            <p class="productOffers-listItemOfferDeliveryStatus deliveryStatusText">Nur noch 8 auf Lager</p>
+                </span>
+    </a>
+</span>
+
+</div>
+<a class="productOffers-listItemOfferLink" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=1&amp;price=560.99&amp;productid=206095266&amp;sid=4640&amp;type=offer" target="_blank" data-shop-name="Amazon" rel="noopener nofollow">
+</a>
+</li>
+
+<li class="productOffers-listItem row row-24 " data-shop="{&quot;type&quot;:&quot;IDECL&quot;}" data-trx-click="offer_click;2-4-10;sooper" data-mtrx-click="{&quot;shop_name&quot;:&quot;galaxus.de&quot;,&quot;products&quot;:[{&quot;id&quot;:206095263,&quot;category&quot;:3019,&quot;name&quot;:&quot;AMD Ryzen 9 9950X3D Boxed&quot;,&quot;price&quot;:569.0}],&quot;event&quot;:&quot;leadout&quot;}">
+<div class="small-24 medium-24 large-24 larger-5 xlarge-4 productOffers-listItemTitleWrapper" data-offerlist-column="title">
+        <a class="productOffers-listItemTitle" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=2&amp;price=569.00&amp;productid=206095266&amp;sid=317105&amp;type=offer" target="_blank" rel="noopener nofollow" data-trx-click="offer_click;2-4-10;sooper">
+            <span class="productOffers-listItemTitleInner " title="AMD Ryzen 9 9950X3D (AM5, 4.30 GHz, 16 -Core), Prozessor">
+                  AMD Ryzen 9 9950X3D (AM5, 4.30 GHz, 16 -Core), Prozessor</span>
+        </a>
+
+</div>
+
+        <div class="productOffers-listItemOffer small-8 medium-8 large-9 larger-8 xlarge-8 columns" data-offerlist-column="price">
+        <div class="row">
+            <div class="column small-24 large-12 larger-12 xlarge-12 price-column">
+                <div class="price-and-badge-wrapper">
+        <a class="productOffers-listItemOfferPrice" data-trx-click="offer_click;2-4-10;sooper" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=2&amp;price=569.00&amp;productid=206095266&amp;sid=317105&amp;type=offer" target="_blank" rel="noopener nofollow">
+                569,00&nbsp;€</a>
+        <div class="best-total-price">
+                </div>
+
+            <div class="line-offer-view productOffers-listItemOfferShippingDetails show-for-large">
+                    <a href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=2&amp;price=569.00&amp;productid=206095266&amp;sid=317105&amp;type=offer" data-trx-click="offer_click;2-4-10;sooper" target="_blank" rel="noopener nofollow">
+                        <div class="productOffers-listItemOfferShippingDetails" title="569,00&nbsp;€ inkl. Versand">
+					569,00&nbsp;€ inkl. Versand</div>
+	</a>
+                </div>
+            </div>
+
+</div>
+            <div class="column large-12 larger-12 xlarge-12 show-for-large payment-column">
+                <div class="productOffers-listItemOfferShippingDetailsRight" data-trx-click="offer_click;2-4-10;sooper">
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=2&amp;price=569.00&amp;productid=206095266&amp;sid=317105&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/paypal-c038cb02ad0744a542c4.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Rechnung">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=2&amp;price=569.00&amp;productid=206095266&amp;sid=317105&amp;type=offer">
+                                <span>
+                                    Rechnung</span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=2&amp;price=569.00&amp;productid=206095266&amp;sid=317105&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/visa-ac94b93bc9a9921b1f11.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=2&amp;price=569.00&amp;productid=206095266&amp;sid=317105&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/mastercard-2e81fe3d252402ab0358.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=2&amp;price=569.00&amp;productid=206095266&amp;sid=317105&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/klarna-78921c2f072f5cda9c8b.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Vorkasse">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=2&amp;price=569.00&amp;productid=206095266&amp;sid=317105&amp;type=offer">
+                                <span>
+                                    Vorkasse</span>
+                            </a>
+                    </span>
+				</div>
+
+	</div>
+        </div>
+    </div>
+
+        <ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" role="list" data-offerlist-column="delivery" data-trx-click="offer_click;2-4-10;sooper">
+        <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=2&amp;price=569.00&amp;productid=206095266&amp;sid=317105&amp;type=offer">
+            <li>
+                <svg></svg>
+
+                <p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+       <span class="productOffers-listItemOfferDeliveryStatusDatesTitle">
+           Lieferung:
+       </span>
+        <span class="productOffers-listItemOfferDeliveryStatusDatesRange">
+            bis Do. 19.11.</span>
+    </p>
+<div class="productOffers-listItemOfferDeliveryProviderWrapper">
+                        <span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider">
+                                DHL</span>
+                        <span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider">
+                                Spedition</span>
+                        <span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider">
+                                Deutsche Post</span>
+                        <span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider">
+                                PickPoint</span>
+                        </div>
+                </li>
+            <li>
+                   <svg></svg>
+                    <div class="productOffers-listItemOfferDeliveryRetourText">
+                        <span>Rücksendung 30 Tage kostenfrei</span>
+                    </div>
+                </li>
+            </a>
+    </ul>
+<div class="small-8 medium-8 large-6 larger-4 xlarge-4 xlarge-text-left large-text-center small-text-center productOffers-listItemOfferShopV2Block  va-middle-xlarge-up" data-offerlist-column="shop">
+        <div class="productOffers-listItemOfferShopV2">
+        <div class="productOffers-listItemOfferShopV2LogoContainer">
+            <div class="productOffers-listItemOfferShopV2Logo">
+                <a class="productOffers-listItemOfferShopV2LogoLink" data-shop-name="galaxus.de - Shop aus Hamburg" data-trx-click="offer_click;2-4-10;sooper" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=2&amp;price=569.00&amp;productid=206095266&amp;sid=317105&amp;type=offer" rel="noopener nofollow" target="_blank">
+                    <img class="productOffers-listItemOfferShopV2LogoImage" src="//cdn.idealo.com/folder/Shop/317/1/317105/s1_shop_160x60.png" data-shop-logo="//cdn.idealo.com/folder/Shop/317/1/317105/s1_shop_160x60.png" data-shop-logo-fallback="//cdn.idealo.com/folder/Shop/317/1/317105/s1_shop.gif" alt="galaxus.de - Shop aus Hamburg">
+
+                    <noscript>
+                        <img class="productOffers-listItemOfferShopV2LogoImage noborder"
+                             src="//cdn.idealo.com/folder/Shop/317/1/317105/s1_shop.gif"
+                             alt="galaxus.de"
+                        />
+                    </noscript>
+                </a>
+            </div>
+
+            </div>
+        <div class="productOffers-listItemOfferShopV2RatingsContainer">
+            <a target="_blank" class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/317105.html">
+                        <div class="productOffers-listItemOfferShopV2Stars rating-single-star" data-trx-click="offer_click;2-4-10;sooper">
+        <div class="starAndRatingWrapper">
+            <svg></svg>
+                <span>
+                <b>4,6</b>
+            </span>
+        </div>
+    </div>
+
+</a>
+                    <a target="_blank" class="productOffers-listItemOfferShopV2NORatings" href="https://www.idealo.de/preisvergleich/Shop/317105.html" data-trx-click="offer_click;2-4-10;sooper">
+                                <span class="productOffers-listItemOfferShopV2NORatings--numberOfRatings">2657</span>
+                            </a>
+                        </div>
+    </div>
+    <button class="show-for-large productOffers-listItemOfferShopV2Info" data-trx-click="offer_click;2-4-10;sooper" data-overlay="{
+  &quot;closeCaption&quot; : &quot;back&quot;,
+  &quot;contentLoad&quot; : &quot;https://www.idealo.de/offerpage/ui/shop-infos/product/206095266/offerkey/9304d548707e8b7e0e17463d21d675d0/index/1?offerListCondition=null&amp;locale=de_DE&amp;language=de_DE&quot;,
+  &quot;contentLoadBy&quot; : &quot;ajax&quot;,
+  &quot;eventStopPropagation&quot; : &quot;false&quot;,
+  &quot;titleCaption&quot; : &quot;galaxus.de&quot;,
+  &quot;triggerOnOpen&quot; : &quot;shop-info-open&quot;,
+  &quot;contentPaddingTop&quot; : &quot;0&quot;,
+  &quot;wrapperClass&quot; : &quot;shopOverlay&quot;,
+  &quot;appendTo&quot; : &quot;#shop-overlay-wrapper&quot;
+}">
+                Shop-Details</button>
+        </div>
+
+        <div class="productOffers-listItemOfferCtaHolder small-8 medium-8 large-4 larger-4 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="leadoutbutton">
+        <ul class="productOffers-listItemOfferCta">
+		<li>
+			<a class="productOffers-listItemOfferCtaLeadout button button--leadout" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=2&amp;price=569.00&amp;productid=206095266&amp;sid=317105&amp;type=offer" data-shop-name="galaxus.de" rel="noopener nofollow" target="_blank" data-trx-click="offer_click;2-4-10;sooper" aria-label="Zum galaxus.de Shop">
+                Zum Shop<img class="btn-cta-shop" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/btn_placeholder-6a908321904cc83dbe01.gif" alt="AMD Ryzen 9 9950X3D bestellen: preiswerte CPU/Prozessoren bei galaxus.de">
+            </a>
+        </li>
+        </ul>
+</div>
+
+        <div class="productOffers-listItemOfferDetailsMobile ">
+            <div class="productOffers-listItemOfferDetails" data-overlay="{
+  &quot;closeCaption&quot; : &quot;back&quot;,
+  &quot;contentLoad&quot; : &quot;https://www.idealo.de/offerpage/ui/shop-infos/product/206095266/offerkey/9304d548707e8b7e0e17463d21d675d0/index/1?offerListCondition=null&amp;locale=de_DE&amp;language=de_DE&quot;,
+  &quot;contentLoadBy&quot; : &quot;ajax&quot;,
+  &quot;eventStopPropagation&quot; : &quot;false&quot;,
+  &quot;titleCaption&quot; : &quot;galaxus.de&quot;,
+  &quot;triggerOnOpen&quot; : &quot;shop-info-open&quot;,
+  &quot;contentPaddingTop&quot; : &quot;0&quot;,
+  &quot;wrapperClass&quot; : &quot;shopOverlay&quot;,
+  &quot;appendTo&quot; : &quot;#shop-overlay-wrapper&quot;
+}" data-trx-click="offer_click;2-4-10;sooper">
+        Details</div>
+<div class="vertical-separator"></div>
+
+            <div class="productOffers-listItemOfferDelivery delivery delivery--short svg-icon" data-trx-click="offer_click;2-4-10;sooper">
+            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=2&amp;price=569.00&amp;productid=206095266&amp;sid=317105&amp;type=offer">
+                <svg></svg>
+            </a>
+        </div>
+
+        <span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile" data-trx-click="offer_click;2-4-10;sooper">
+    <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=2&amp;price=569.00&amp;productid=206095266&amp;sid=317105&amp;type=offer">
+        <span class="productOffers-listItemOfferDeliveryStatusMobileText">
+            <p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+       <span class="productOffers-listItemOfferDeliveryStatusDatesTitle">
+           Lieferung:
+       </span>
+        <span class="productOffers-listItemOfferDeliveryStatusDatesRange">
+            bis Do. 19.11.</span>
+    </p>
+</span>
+    </a>
+</span>
+
+</div>
+<a class="productOffers-listItemOfferLink" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=2&amp;price=569.00&amp;productid=206095266&amp;sid=317105&amp;type=offer" target="_blank" data-shop-name="galaxus.de" rel="noopener nofollow">
+</a>
+</li>
+
+<li class="productOffers-listItem row row-24 " data-shop="{&quot;type&quot;:&quot;IDECL&quot;}" data-trx-click="offer_click;2-4-10;sooper" data-mtrx-click="{&quot;shop_name&quot;:&quot;computeruniverse.net&quot;,&quot;products&quot;:[{&quot;id&quot;:206095263,&quot;category&quot;:3019,&quot;name&quot;:&quot;AMD Ryzen 9 9950X3D Boxed&quot;,&quot;price&quot;:575.8}],&quot;event&quot;:&quot;leadout&quot;}">
+<div class="small-24 medium-24 large-24 larger-5 xlarge-4 productOffers-listItemTitleWrapper" data-offerlist-column="title">
+        <a class="productOffers-listItemTitle" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=3&amp;price=575.80&amp;productid=206095266&amp;sid=1140&amp;type=offer" target="_blank" rel="noopener nofollow" data-trx-click="offer_click;2-4-10;sooper">
+            <span class="productOffers-listItemTitleInner " title="AMD Ryzen™ 9 9950X3D 16-Kern CPU, Sockel AM5, Boxed (ohne Kühler)">
+                  AMD Ryzen™ 9 9950X3D 16-Kern CPU, Sockel AM5, Boxed (ohne Kühler)</span>
+        </a>
+
+</div>
+
+        <div class="productOffers-listItemOffer small-8 medium-8 large-9 larger-8 xlarge-8 columns" data-offerlist-column="price">
+        <div class="row">
+            <div class="column small-24 large-12 larger-12 xlarge-12 price-column">
+                <div class="price-and-badge-wrapper">
+        <a class="productOffers-listItemOfferPrice" data-trx-click="offer_click;2-4-10;sooper" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=3&amp;price=575.80&amp;productid=206095266&amp;sid=1140&amp;type=offer" target="_blank" rel="noopener nofollow">
+                575,80&nbsp;€</a>
+        <div class="best-total-price">
+                </div>
+
+            <div class="line-offer-view productOffers-listItemOfferShippingDetails show-for-large">
+                    <a href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=3&amp;price=575.80&amp;productid=206095266&amp;sid=1140&amp;type=offer" data-trx-click="offer_click;2-4-10;sooper" target="_blank" rel="noopener nofollow">
+                        <div class="productOffers-listItemOfferShippingDetails" title="582,79&nbsp;€ inkl. Versand">
+					582,79&nbsp;€ inkl. Versand</div>
+	</a>
+                </div>
+            </div>
+
+</div>
+            <div class="column large-12 larger-12 xlarge-12 show-for-large payment-column">
+                <div class="productOffers-listItemOfferShippingDetailsRight" data-trx-click="offer_click;2-4-10;sooper">
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=3&amp;price=575.80&amp;productid=206095266&amp;sid=1140&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/paypal-c038cb02ad0744a542c4.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Rechnung">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=3&amp;price=575.80&amp;productid=206095266&amp;sid=1140&amp;type=offer">
+                                <span>
+                                    Rechnung</span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=3&amp;price=575.80&amp;productid=206095266&amp;sid=1140&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/visa-ac94b93bc9a9921b1f11.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=3&amp;price=575.80&amp;productid=206095266&amp;sid=1140&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/mastercard-2e81fe3d252402ab0358.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=3&amp;price=575.80&amp;productid=206095266&amp;sid=1140&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/american-express-b6d0b3d814c4b5314ddb.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=3&amp;price=575.80&amp;productid=206095266&amp;sid=1140&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/klarna-78921c2f072f5cda9c8b.png" title=""></span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="Vorkasse">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=3&amp;price=575.80&amp;productid=206095266&amp;sid=1140&amp;type=offer">
+                                <span>
+                                    Vorkasse</span>
+                            </a>
+                    </span>
+				<span class="productOffers-listItemOfferShippingDetailsRightItem" title="">
+                            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=3&amp;price=575.80&amp;productid=206095266&amp;sid=1140&amp;type=offer">
+                                <span>
+                                    <img width="45" height="13" class="offerImage" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/payment-icons/2x/amzpay-260d13cc85438b08e97b.png" title=""></span>
+                            </a>
+                    </span>
+				</div>
+
+	</div>
+        </div>
+    </div>
+
+        <ul class="productOffers-listItemOfferDeliveryBlock show-for-large large-5 larger-3 xlarge-4 columns va-middle-xlarge-up" role="list" data-offerlist-column="delivery" data-trx-click="offer_click;2-4-10;sooper">
+        <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=3&amp;price=575.80&amp;productid=206095266&amp;sid=1140&amp;type=offer">
+            <li>
+                <svg></svg>
+
+                <p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+       <span class="productOffers-listItemOfferDeliveryStatusDatesTitle">
+           Lieferung:
+       </span>
+        <span class="productOffers-listItemOfferDeliveryStatusDatesRange">
+            bis Mo. 23.11.</span>
+    </p>
+<div class="productOffers-listItemOfferDeliveryProviderWrapper">
+                        <span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider">
+                                DHL</span>
+                        <span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider">
+                                DPD</span>
+                        <span class="productOffers-listItemOfferGreyBadge productOffers-listItemOfferDeliveryProvider">
+                                Spedition</span>
+                        </div>
+                </li>
+            <li>
+                   <svg></svg>
+                    <div class="productOffers-listItemOfferDeliveryRetourText">
+                        <span>Rücksendung 30 Tage kostenfrei</span>
+                    </div>
+                </li>
+            </a>
+    </ul>
+<div class="small-8 medium-8 large-6 larger-4 xlarge-4 xlarge-text-left large-text-center small-text-center productOffers-listItemOfferShopV2Block  va-middle-xlarge-up" data-offerlist-column="shop">
+        <div class="productOffers-listItemOfferShopV2">
+        <div class="productOffers-listItemOfferShopV2LogoContainer">
+            <div class="productOffers-listItemOfferShopV2Logo">
+                <a class="productOffers-listItemOfferShopV2LogoLink" data-shop-name="computeruniverse.net - Shop aus Bad Homburg" data-trx-click="offer_click;2-4-10;sooper" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=3&amp;price=575.80&amp;productid=206095266&amp;sid=1140&amp;type=offer" rel="noopener nofollow" target="_blank">
+                    <img class="productOffers-listItemOfferShopV2LogoImage" src="//cdn.idealo.com/folder/Shop/1/1/1140/s1_shop_160x60.png" data-shop-logo="//cdn.idealo.com/folder/Shop/1/1/1140/s1_shop_160x60.png" data-shop-logo-fallback="//cdn.idealo.com/folder/Shop/1/1/1140/s1_shop.gif" alt="computeruniverse.net - Shop aus Bad Homburg">
+
+                    <noscript>
+                        <img class="productOffers-listItemOfferShopV2LogoImage noborder"
+                             src="//cdn.idealo.com/folder/Shop/1/1/1140/s1_shop.gif"
+                             alt="computeruniverse.net"
+                        />
+                    </noscript>
+                </a>
+            </div>
+
+            </div>
+        <div class="productOffers-listItemOfferShopV2RatingsContainer">
+            <a target="_blank" class="productOffers-listItemOfferShopV2StarsLink" href="https://www.idealo.de/preisvergleich/Shop/1140.html">
+                        <div class="productOffers-listItemOfferShopV2Stars rating-single-star" data-trx-click="offer_click;2-4-10;sooper">
+        <div class="starAndRatingWrapper">
+            <svg></svg>
+                <span>
+                <b>3,9</b>
+            </span>
+        </div>
+    </div>
+
+</a>
+                    <a target="_blank" class="productOffers-listItemOfferShopV2NORatings" href="https://www.idealo.de/preisvergleich/Shop/1140.html" data-trx-click="offer_click;2-4-10;sooper">
+                                <span class="productOffers-listItemOfferShopV2NORatings--numberOfRatings">29699</span>
+                            </a>
+                        </div>
+    </div>
+    <button class="show-for-large productOffers-listItemOfferShopV2Info" data-trx-click="offer_click;2-4-10;sooper" data-overlay="{
+  &quot;closeCaption&quot; : &quot;back&quot;,
+  &quot;contentLoad&quot; : &quot;https://www.idealo.de/offerpage/ui/shop-infos/product/206095266/offerkey/2bd42f700efbde49243ed7f83fe019ce/index/2?offerListCondition=null&amp;locale=de_DE&amp;language=de_DE&quot;,
+  &quot;contentLoadBy&quot; : &quot;ajax&quot;,
+  &quot;eventStopPropagation&quot; : &quot;false&quot;,
+  &quot;titleCaption&quot; : &quot;computeruniverse.net&quot;,
+  &quot;triggerOnOpen&quot; : &quot;shop-info-open&quot;,
+  &quot;contentPaddingTop&quot; : &quot;0&quot;,
+  &quot;wrapperClass&quot; : &quot;shopOverlay&quot;,
+  &quot;appendTo&quot; : &quot;#shop-overlay-wrapper&quot;
+}">
+                Shop-Details</button>
+        </div>
+
+        <div class="productOffers-listItemOfferCtaHolder small-8 medium-8 large-4 larger-4 xlarge-4 columns va-middle-xlarge-up" data-offerlist-column="leadoutbutton">
+        <ul class="productOffers-listItemOfferCta">
+		<li>
+			<a class="productOffers-listItemOfferCtaLeadout button button--leadout" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=3&amp;price=575.80&amp;productid=206095266&amp;sid=1140&amp;type=offer" data-shop-name="computeruniverse.net" rel="noopener nofollow" target="_blank" data-trx-click="offer_click;2-4-10;sooper" aria-label="Zum computeruniverse.net Shop">
+                Zum Shop<img class="btn-cta-shop" src="//cdn.idealo.com/storage/offerpage/assets/offerpage/img/btn_placeholder-6a908321904cc83dbe01.gif" alt="AMD Ryzen 9 9950X3D versand: billige CPU/Prozessoren bei computeruniverse.net">
+            </a>
+        </li>
+        </ul>
+</div>
+
+        <div class="productOffers-listItemOfferDetailsMobile ">
+            <div class="productOffers-listItemOfferDetails" data-overlay="{
+  &quot;closeCaption&quot; : &quot;back&quot;,
+  &quot;contentLoad&quot; : &quot;https://www.idealo.de/offerpage/ui/shop-infos/product/206095266/offerkey/2bd42f700efbde49243ed7f83fe019ce/index/2?offerListCondition=null&amp;locale=de_DE&amp;language=de_DE&quot;,
+  &quot;contentLoadBy&quot; : &quot;ajax&quot;,
+  &quot;eventStopPropagation&quot; : &quot;false&quot;,
+  &quot;titleCaption&quot; : &quot;computeruniverse.net&quot;,
+  &quot;triggerOnOpen&quot; : &quot;shop-info-open&quot;,
+  &quot;contentPaddingTop&quot; : &quot;0&quot;,
+  &quot;wrapperClass&quot; : &quot;shopOverlay&quot;,
+  &quot;appendTo&quot; : &quot;#shop-overlay-wrapper&quot;
+}" data-trx-click="offer_click;2-4-10;sooper">
+        Details</div>
+<div class="vertical-separator"></div>
+
+            <div class="productOffers-listItemOfferDelivery delivery delivery--short svg-icon" data-trx-click="offer_click;2-4-10;sooper">
+            <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=3&amp;price=575.80&amp;productid=206095266&amp;sid=1140&amp;type=offer">
+                <svg></svg>
+            </a>
+        </div>
+
+        <span class="hide-for-large productOffers-listItemOfferDeliveryStatusMobile" data-trx-click="offer_click;2-4-10;sooper">
+    <a rel="noopener nofollow" target="_blank" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=3&amp;price=575.80&amp;productid=206095266&amp;sid=1140&amp;type=offer">
+        <span class="productOffers-listItemOfferDeliveryStatusMobileText">
+            <p class="productOffers-listItemOfferDeliveryStatusDates productOffers-listItemOfferDeliveryStatus">
+       <span class="productOffers-listItemOfferDeliveryStatusDatesTitle">
+           Lieferung:
+       </span>
+        <span class="productOffers-listItemOfferDeliveryStatusDatesRange">
+            bis Mo. 23.11.</span>
+    </p>
+</span>
+    </a>
+</span>
+
+</div>
+<a class="productOffers-listItemOfferLink" href="/relocator/relocate?categoryId=3019&amp;offerKey=x&amp;pos=3&amp;price=575.80&amp;productid=206095266&amp;sid=1140&amp;type=offer" target="_blank" data-shop-name="computeruniverse.net" rel="noopener nofollow">
+</a>
+</li>
+
+</ul>
+</body></html>

@@ -4,6 +4,7 @@ import {
   idealoHistoryUrl,
   idealoSearchUrl,
   normMpn,
+  pageNamesMpn,
   parseGeizhalsPayment,
   parseGeizhalsProduct,
   parseGeizhalsSearch,
@@ -11,6 +12,7 @@ import {
   parseIdealoProduct,
   parseIdealoSearch,
 } from './shop-offers-parse.ts'
+import { readSource } from './shop-offers.ts'
 import { parseItem } from './shop-parse.ts'
 import {
   failure,
@@ -425,5 +427,124 @@ describe('shop.offers', () => {
     expect(r.chrome.reads).toHaveLength(2)
     await r.offers.call({ product: 'CMK48GX5M2B5600C40', fresh: true }, r.options)
     expect(r.chrome.reads).toHaveLength(4)
+  })
+})
+
+const IDEALO_CPU = 'https://www.idealo.de/preisvergleich/OffersOfProduct/206095266_-ryzen-9-9950x3d-amd.html'
+const IDEALO_SN850X =
+  'https://www.idealo.de/preisvergleich/OffersOfProduct/202070647_-black-sn850x-2tb-western-digital.html'
+const IDEALO_ELEMENTS =
+  'https://www.idealo.de/preisvergleich/OffersOfProduct/3929692_-elements-portable-2tb-western-digital.html'
+
+describe('products whose name carries no part number (SSDs, CPUs)', () => {
+  test('a product page with a variant list: the name is the model, the offers are listed, the part number is not stated', async () => {
+    const { product, offers, titles } = parseIdealoProduct(await fixture('idealo-product-cpu-9950x3d'), IDEALO_CPU)
+    expect(product).toMatchObject({
+      id: '206095266',
+      name: 'AMD Ryzen 9 9950X3D',
+      mpn: null,
+      memory: null,
+      offerCount: 60,
+    })
+    expect(offers).toHaveLength(3)
+    expect(offers[0]).toMatchObject({ shop: 'Amazon', priceEur: 560.99, totalEur: 560.99 })
+    expect(titles).toHaveLength(3)
+  })
+
+  test("an SSD page: the variant is part of the name, the part number is in the offers' titles", async () => {
+    const { product, titles } = parseIdealoProduct(await fixture('idealo-product-ssd-sn850x'), IDEALO_SN850X)
+    expect(product).toMatchObject({ id: '202070647', name: 'Western Digital Black SN850X 2TB', mpn: null })
+    expect(titles!.filter((t) => t.includes('WDS200T2X0E')).length).toBe(3)
+  })
+
+  test('a search list marks the cards that name no part number as worth reading', async () => {
+    const page = parseIdealoSearch(await fixture('idealo-search-wds'), IDEALO_CATEGORY)
+    if (page.kind !== 'list') throw new Error('expected a list')
+    expect(page.candidates.map((c) => [c.name, c.mpn, c.probe === true])).toEqual([
+      ['Western Digital Black SN850X 2TB', null, true],
+      ['Western Digital Elements Portable 2TB', null, true],
+      ['QNAP TS-216G Leergehäuse', null, true],
+      ['Western Digital Red SA500 2TB 2.5 (WDS200T2R0A)', 'WDS200T2R0A', false],
+    ])
+  })
+
+  test("the part number named by the offers' titles, with other separators, by at least two of them", () => {
+    const page = (titles: string[], mpn: string | null = null) => ({
+      product: { mpn } as never,
+      offers: [],
+      titles,
+    })
+    const titles = ['SSD WDS200T2X0E 2TB', 'WD Black - WDS-200T2X0E', 'no number here', 'WDS200T2X0E-00BCA0 retail']
+    expect(pageNamesMpn(page(titles), 'wds200t2x0e')).toBe(true)
+    // one shop naming it is not enough
+    expect(pageNamesMpn(page(['x WDS200T2X0E', 'a', 'b', 'c']), 'WDS200T2X0E')).toBe(false)
+    expect(pageNamesMpn(page(['x WDS200T2X0E']), 'WDS200T2X0E')).toBe(true)
+    // a longer part number that merely contains it is another product
+    expect(pageNamesMpn(page(['A WDS200T2X0EX', 'B WDS200T2X0EX', 'C WDS200T2X0EX']), 'WDS200T2X0E')).toBe(false)
+    expect(pageNamesMpn(page([]), 'WDS200T2X0E')).toBe(false)
+    expect(pageNamesMpn(page(['AB12 here', 'AB12', 'AB12']), 'AB12')).toBe(false)
+    // a page that names its own part number is compared by that alone
+    expect(pageNamesMpn(page(titles, 'CMK48GX5M2B5600C40'), 'WDS200T2X0E')).toBe(false)
+  })
+
+  test("a part number of an SSD is found: the first card without a part number is read and its offers' titles name it", async () => {
+    const r = rig({
+      pages: {
+        [idealoSearchUrl('WDS200T2X0E')]: { html: await fixture('idealo-search-wds'), finalUrl: IDEALO_CATEGORY },
+        [IDEALO_SN850X]: { html: await fixture('idealo-product-ssd-sn850x') },
+      },
+    })
+    const out = await r.offers.call({ product: 'WDS200T2X0E', source: 'idealo' }, r.options)
+    expect(r.chrome.reads).toEqual([idealoSearchUrl('WDS200T2X0E'), IDEALO_SN850X])
+    expect(out.results[0]!.product).toMatchObject({
+      id: '202070647',
+      name: 'Western Digital Black SN850X 2TB',
+      mpn: 'WDS200T2X0E',
+      mpnBasis: 'offer titles',
+    })
+    expect(out.results[0]!.offers.length).toBeGreaterThan(0)
+    expect(out.text).toContain('part number WDS200T2X0E (named in the offer titles)')
+  })
+
+  test('a part number the first hits do not name is NOT_FOUND, after at most two product pages, naming what was read', async () => {
+    const r = rig({
+      pages: {
+        [idealoSearchUrl('WDS200T2X0X')]: { html: await fixture('idealo-search-wds'), finalUrl: IDEALO_CATEGORY },
+        [IDEALO_SN850X]: { html: await fixture('idealo-product-ssd-sn850x') },
+        [IDEALO_ELEMENTS]: { html: await fixture('idealo-product-cpu-9950x3d'), finalUrl: IDEALO_ELEMENTS },
+      },
+    })
+    const error = await failure(r.offers.call({ product: 'WDS200T2X0X', source: 'idealo' }, r.options))
+    expect(error.code).toBe('NOT_FOUND')
+    expect(error.message).toContain('their offer titles do not name it')
+    expect(error.message).toContain('Western Digital Black SN850X 2TB')
+    expect(r.chrome.reads).toHaveLength(3)
+  })
+
+  test('a product URL of a product with no part number in its name is read, with and without an expected part number', async () => {
+    const r = rig({
+      pages: {
+        [IDEALO_CPU]: { html: await fixture('idealo-product-cpu-9950x3d') },
+        [IDEALO_SN850X]: { html: await fixture('idealo-product-ssd-sn850x') },
+      },
+    })
+    const cpu = await r.offers.call({ product: IDEALO_CPU }, r.options)
+    expect(cpu.results[0]!.product).toMatchObject({ name: 'AMD Ryzen 9 9950X3D', mpn: null, offerCount: 60 })
+    expect(cpu.text).toContain('part number not stated')
+    const ssd = await readSource(
+      r.fetcher,
+      { source: 'idealo', ref: IDEALO_SN850X, expectMpn: 'WDS200T2X0E', fresh: false },
+      r.options,
+    )
+    expect(ssd.product).toMatchObject({ mpn: 'WDS200T2X0E', mpnBasis: 'offer titles' })
+    const wrong = await readSource(
+      r.fetcher,
+      { source: 'idealo', ref: IDEALO_SN850X, expectMpn: 'WDS200T2X0X', fresh: false },
+      r.options,
+    ).then(
+      () => '',
+      (error: Error) => error.message,
+    )
+    expect(wrong).toContain('names part number none, not WDS200T2X0X')
   })
 })

@@ -105,7 +105,10 @@ function rig({ shopRoutes = {}, anthropic, vision, browser }: Rig = {}) {
     ],
     openai: [{ text: 'from the fallback' }],
   })
-  const caps = createShopCapabilities({ transports, env: IU, warn: () => {} }, net.deps, { pace: time.pace })
+  const caps = createShopCapabilities({ transports, env: IU, warn: () => {} }, net.deps, {
+    pace: time.pace,
+    dir: mkdtempSync(join(tmpdir(), 'shop-reads-')),
+  })
   const [imageRead, search, item, find] = caps
   const usage: Usage[] = []
   const options = { addUsage: (u: Usage) => usage.push(u) }
@@ -496,7 +499,10 @@ describe('shop.search', () => {
       seen.push(init)
       return original(url, init, pin)
     }
-    const caps = createShopCapabilities({ transports: r.transports, env: IU }, net.deps, { pace: r.time.pace })
+    const caps = createShopCapabilities({ transports: r.transports, env: IU }, net.deps, {
+      pace: r.time.pace,
+      dir: mkdtempSync(join(tmpdir(), 'shop-reads-')),
+    })
     await caps[1].call({ query: 'a' }, r.options)
     const headers = seen[0]!.headers as Record<string, string>
     expect(headers['user-agent']).toBe('agent-workflows/0.1 (shop)')
