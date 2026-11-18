@@ -62,9 +62,10 @@ check:
 	@$(MAKE) --no-print-directory usage
 	@echo "==> check passed"
 
-# The caller's variables do not reach a step that runs on the step host: only what is spelled out in the command does.
+# What the step host runs is the command as written: a bare `make` (the image has one), never `$(MAKE)`, which is the mini's absolute
+# path. The caller's variables do not reach it either: only what is spelled out in the command does.
 static:
-	@$(call slot,static) $(MAKE) --no-print-directory static-steps
+	@$(call slot,static) make --no-print-directory static-steps
 
 static-steps:
 	@echo "==> format (oxfmt --check)"
@@ -78,7 +79,7 @@ static-steps:
 # private cluster from PG_BIN_DIR (the step image). TEST_WORKERS and HEAVY_WORKERS are forwarded because the step host does not
 # see the caller's make variables; BUN_TEST_BASE is not (`make test-timings` writes a file on this machine, so it stays here).
 test:
-	@$(call slot,test) sh scripts/test-env.sh $(MAKE) --no-print-directory test-steps TEST_WORKERS=$(TEST_WORKERS) HEAVY_WORKERS=$(HEAVY_WORKERS)
+	@$(call slot,test) sh scripts/test-env.sh make --no-print-directory test-steps TEST_WORKERS=$(TEST_WORKERS) HEAVY_WORKERS=$(HEAVY_WORKERS)
 
 # Home, and no slot: two light files on one worker (a slot would queue it behind a guessed 3.5 GiB first), and the suites need the usage-tracker checkout.
 usage:
