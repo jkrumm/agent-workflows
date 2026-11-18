@@ -15,6 +15,11 @@ export const DIRECT_SHOPS = ['alternate', 'mindfactory', 'caseking'] as const
 export const OFFER_SOURCES = [...AGGREGATORS, ...DIRECT_SHOPS] as const
 export type OfferSource = (typeof OFFER_SOURCES)[number]
 export type DirectShop = (typeof DIRECT_SHOPS)[number]
+/** A Shopify storefront read through its JSON endpoints (shop-shopify-parse.ts): shopify:<host>. */
+export const shopifySourceSchema = z.templateLiteral(['shopify:', z.string()])
+/** Every source an offer can come from: the fixed ones and a listed Shopify store. */
+export type AnySource = OfferSource | z.infer<typeof shopifySourceSchema>
+export const anySourceSchema = z.union([z.enum(OFFER_SOURCES), shopifySourceSchema])
 export const isDirectShop = (source: string): source is DirectShop =>
   (DIRECT_SHOPS as readonly string[]).includes(source)
 
@@ -51,7 +56,7 @@ export const offerSchema = z.object({
 export type Offer = z.infer<typeof offerSchema>
 
 export const productSchema = z.object({
-  source: z.enum(OFFER_SOURCES),
+  source: anySourceSchema,
   id: z.string(),
   url: z.string().describe('The product page'),
   name: z.string(),
@@ -71,6 +76,18 @@ export const productSchema = z.object({
     .string()
     .nullable()
     .describe('When the site says its data is from: ISO with offset (geizhals), local German time (idealo)'),
+  tags: z
+    .array(z.string())
+    .optional()
+    .describe("A Shopify store's tags as served (margin scheme, daily markdown, ...)"),
+  notes: z.array(z.string()).optional().describe('What the tags this shop was seen to use mean'),
+  compareAtEur: z.number().nullable().optional().describe("A Shopify store's struck-through price"),
+  capacityGb: z
+    .number()
+    .nullable()
+    .optional()
+    .describe('Read from the product TITLE (Shopify stores): GB, 1 TB = 1000'),
+  pricePerGbEur: z.number().nullable().optional().describe('Cheapest available item price per GB of capacityGb'),
 })
 export type Product = z.infer<typeof productSchema>
 

@@ -105,7 +105,19 @@ export function rig({ pages = {}, env = {}, directFetch, watch, browser = true, 
   const options = { addUsage: (u: Usage) => usage.push(u), signal: new AbortController().signal }
   /** A second fetcher over the same research Chrome, for tests that call `readSource` directly. */
   const fetcher = createShopFetch(resolveWebDeps(web), time)
-  return { chrome, direct, time, fetcher, dir: shopDir, offers: caps[4], list: caps[5], watch: caps[6], usage, options }
+  return {
+    chrome,
+    direct,
+    time,
+    fetcher,
+    dir: shopDir,
+    offers: caps[4],
+    list: caps[5],
+    watch: caps[6],
+    store: caps[7],
+    usage,
+    options,
+  }
 }
 
 export async function failure(promise: Promise<unknown>) {

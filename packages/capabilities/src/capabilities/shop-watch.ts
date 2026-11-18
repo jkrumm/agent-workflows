@@ -9,10 +9,14 @@ import type { Env } from '../transports/config.ts'
 import { keyOf, type ResolvedWebDeps } from '../web/deps.ts'
 import { ITEM_TTL_MS, isBlockedError, type ShopFetch } from './shop-fetch.ts'
 import { isMissingPage, readSource } from './shop-offers.ts'
-import { isDirectShop, OFFER_SOURCES, type OfferSource } from './shop-offers-parse.ts'
+import type { AnySource } from './shop-offers-parse.ts'
+import { filterItems, readListing, requireShopifyHost } from './shop-shopify.ts'
+import { isShopifySource, type ListingItem } from './shop-shopify-parse.ts'
 import { itemUrl, parseItem } from './shop-parse.ts'
 import {
   type AlertReason,
+  type FeedEntry,
+  isOwnPageSource,
   type WatchCandidate,
   cheapest,
   decide,
@@ -24,8 +28,9 @@ import {
 } from './shop-watch-rules.ts'
 
 // `shop.watch`: one run of the price watch. For each product of the owner's list it reads the idealo and geizhals offers,
-// those of the tech shops Alternate, Mindfactory and Caseking (their own pages) and the amazon.de item where an ASIN is given, appends one row to the record, and sends one ntfy message when the
-// lowest qualifying offer changed state (shop-watch-rules.ts). Files live in one directory on the host.
+// those of the tech shops Alternate, Mindfactory and Caseking (their own pages), the Shopify stores a product names and the amazon.de item where an ASIN is given, appends one row to the record, and sends one ntfy message when the
+// lowest qualifying offer changed state (shop-watch-rules.ts). The feeds of the list (a Shopify collection or search with a
+// filter) report matching products not seen before, one message per feed. Files live in one directory on the host.
 
 const NTFY_TOPIC = 'updates'
 const NTFY_TIMEOUT_MS = 15_000
@@ -45,8 +50,7 @@ const watchInput = z.object({
     .describe('Read the pages and report what would be recorded and sent; write nothing, send nothing'),
 })
 
-const SOURCES = [...OFFER_SOURCES, 'amazon'] as const
-const sourceErrorSchema = z.object({ source: z.enum(SOURCES), message: z.string() })
+const sourceErrorSchema = z.object({ source: z.string(), message: z.string() })
 
 const recordRowSchema = z.object({
   ts: z.string(),
@@ -54,7 +58,7 @@ const recordRowSchema = z.object({
   label: z.string(),
   ceilingEur: z.number(),
   lowestTotalEur: z.number().nullable().describe('The cheapest total among the qualifying offers'),
-  source: z.enum(SOURCES).nullable(),
+  source: z.string().nullable(),
   shop: z.string().nullable(),
   rating: z.number().nullable(),
   ratingCount: z.int().nullable(),
@@ -69,8 +73,33 @@ const recordRowSchema = z.object({
 })
 type RecordRow = z.infer<typeof recordRowSchema>
 
+const feedItemSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  url: z.string(),
+  priceEur: z.number().nullable(),
+  pricePerGbEur: z.number().nullable(),
+  available: z.boolean().nullable(),
+  tags: z.array(z.string()),
+})
+
+const feedRowSchema = z.object({
+  ts: z.string(),
+  label: z.string(),
+  source: z.string(),
+  mode: z.enum(['collection', 'query']),
+  read: z.int().describe('Products read before the filter'),
+  matched: z.int().describe('Products that pass the filter now'),
+  seeded: z.boolean().describe('The first run of the feed: the matches are remembered, nothing is reported as new'),
+  newItems: z.array(feedItemSchema).describe('Matching products not seen at an earlier run'),
+  notified: z.enum(['sent', 'failed', 'off']).nullable(),
+  error: z.string().nullable().describe('Why the feed could not be read (a wall, a layout); null when it was'),
+})
+type FeedRow = z.infer<typeof feedRowSchema>
+
 const watchOutput = z.object({
   rows: z.array(recordRowSchema),
+  feeds: z.array(feedRowSchema),
   sent: z.int().describe('ntfy messages delivered'),
   dryRun: z.boolean(),
   text: z.string(),
@@ -92,7 +121,7 @@ function noticeFor(entry: WatchEntry, best: WatchCandidate, reason: AlertReason,
   const eur = (n: number) => n.toFixed(2)
   const lines = [
     `${entry.label}: ${eur(best.totalEur!)} EUR with shipping, ${REASON_TEXT[reason]} (ceiling ${eur(entry.ceilingEur)} EUR)`,
-    `${best.shop ?? best.source}${isDirectShop(best.source) ? "'s own page" : ` via ${best.source}`}${best.rating === null ? '' : `, rating ${best.rating} from ${best.ratingCount ?? '?'}`}`,
+    `${best.shop ?? best.source}${isOwnPageSource(best.source) ? "'s own page" : ` via ${best.source}`}${best.rating === null ? '' : `, rating ${best.rating} from ${best.ratingCount ?? '?'}`}`,
     ...(baseline === null ? [] : [`was ${eur(baseline)} EUR`]),
   ]
   return { title: `Price: ${entry.label}`.replace(/[^\x20-\x7e]/g, '?'), body: lines.join('\n'), click: best.url }
@@ -156,7 +185,7 @@ const stateFileSchema = z.record(
     })),
 )
 
-const renderRows = (rows: RecordRow[], sent: number, dryRun: boolean) =>
+const renderRows = (rows: RecordRow[], feeds: FeedRow[], sent: number, dryRun: boolean) =>
   [
     ...rows.map((r) =>
       [
@@ -170,7 +199,18 @@ const renderRows = (rows: RecordRow[], sent: number, dryRun: boolean) =>
         .filter(Boolean)
         .join('  '),
     ),
-    `${rows.length} products, ${sent} messages${dryRun ? ' (dry run: nothing written, nothing sent)' : ''}`,
+    ...feeds.map((f) =>
+      [
+        f.label.padEnd(24),
+        f.error
+          ? `[${f.source}: ${f.error}]`
+          : `${f.matched} of ${f.read} match, ${f.seeded ? 'first run, remembered' : `${f.newItems.length} new`}`,
+        f.notified ? `ALERT ${f.notified}` : '',
+      ]
+        .filter(Boolean)
+        .join('  '),
+    ),
+    `${rows.length} products, ${feeds.length} feeds, ${sent} messages${dryRun ? ' (dry run: nothing written, nothing sent)' : ''}`,
   ].join('\n')
 
 type PageCtx = Pick<Ctx, 'signal' | 'addUsage'>
@@ -189,11 +229,12 @@ interface Gathered {
 async function gatherSite(
   shop: ShopFetch,
   entry: WatchEntry,
-  source: OfferSource,
+  source: AnySource,
   g: Gathered,
   ctx: PageCtx,
 ): Promise<void> {
-  const stored = g.state.pageUrls[source] ?? null
+  // A Shopify store is searched by part number each run (one request); its product page `.js` is not the way in.
+  const stored = isShopifySource(source) ? null : (g.state.pageUrls[source] ?? null)
   try {
     const read = await readSource(shop, { source, ref: stored ?? entry.mpn, expectMpn: entry.mpn, fresh: true }, ctx)
     g.reads++
@@ -207,7 +248,7 @@ async function gatherSite(
     if (ctx.signal.aborted) throw fail('CANCELLED', 'cancelled')
     const notListed = error instanceof CapabilityError && error.code === 'NOT_FOUND'
     // A tech shop that does not list the part number answered: no offer, no error (it is searched again next run).
-    if (isDirectShop(source) && notListed) {
+    if (isOwnPageSource(source) && notListed) {
       g.reads++
       g.offers[source] = 0
     } else {
@@ -257,6 +298,7 @@ async function gather(shop: ShopFetch, entry: WatchEntry, state: WatchState, ctx
   await gatherSite(shop, entry, 'idealo', g, ctx)
   await gatherSite(shop, entry, 'geizhals', g, ctx)
   for (const direct of entry.shops) await gatherSite(shop, entry, direct, g, ctx)
+  for (const store of entry.shopify) await gatherSite(shop, entry, store as AnySource, g, ctx)
   if (entry.asin) await gatherAmazon(shop, entry.asin, g, ctx)
   return g
 }
@@ -304,13 +346,115 @@ function recordRow(
   }
 }
 
+const feedStateSchema = z.record(z.string(), z.object({ seen: z.array(z.string()) }))
+type FeedState = z.infer<typeof feedStateSchema>
+
+interface Notify {
+  config: { url: string; token: string } | null
+  fetch: typeof fetch
+  dryRun: boolean
+  signal: AbortSignal
+}
+
+const feedItem = (i: ListingItem) => ({
+  id: i.id,
+  title: i.title,
+  url: i.url,
+  priceEur: i.priceEur,
+  pricePerGbEur: i.pricePerGbEur,
+  available: i.available,
+  tags: i.tags,
+})
+
+/** One message for a feed: the new products with price and price per GB; the first one's page is the click target. */
+function feedNotice(feed: FeedEntry, fresh: ListingItem[]) {
+  const line = (i: ListingItem) =>
+    `${i.priceEur === null ? '-' : i.priceEur.toFixed(2)} EUR${i.pricePerGbEur === null ? '' : ` (${i.pricePerGbEur.toFixed(3)}/GB)`} ${i.title.slice(0, 90)}`
+  const shown = fresh.slice(0, 5).map(line)
+  if (fresh.length > shown.length) shown.push(`+${fresh.length - shown.length} more`)
+  return { title: `New: ${feed.label}`.replace(/[^\x20-\x7e]/g, '?'), body: shown.join('\n'), click: fresh[0]!.url }
+}
+
+/**
+ * One feed: the products that match its filter now, the ones not remembered from an earlier run reported as new (one
+ * message). The first run of a feed only remembers. A feed that cannot be read is a field of its row and keeps its state;
+ * a message that was not delivered keeps the products new for the next run.
+ */
+async function runFeed(
+  shop: ShopFetch,
+  feed: FeedEntry,
+  state: FeedState,
+  notify: Notify,
+  ts: string,
+  ctx: PageCtx,
+): Promise<{ row: FeedRow; seen: string[] | undefined; read: boolean; failure?: unknown }> {
+  const seen = state[feed.label]?.seen
+  const mode = feed.collection === undefined ? ('query' as const) : ('collection' as const)
+  const row = { ts, label: feed.label, source: feed.source, mode }
+  try {
+    const host = requireShopifyHost(feed.source, 'shop.watch')
+    const listing = await readListing(
+      shop,
+      { host, collection: feed.collection, query: feed.query, pages: feed.pages, limit: 250, fresh: true },
+      ctx,
+    )
+    const matched = filterItems(listing.items, {
+      contains: feed.contains,
+      maxPriceEur: feed.maxPrice,
+      maxPricePerGbEur: feed.maxPricePerGb,
+      availableOnly: feed.availableOnly,
+    })
+    const known = new Set(seen ?? [])
+    const fresh = seen === undefined ? [] : matched.filter((i) => !known.has(i.id))
+    const ids = matched.map((i) => i.id)
+    const base = {
+      ...row,
+      read: listing.items.length,
+      matched: matched.length,
+      seeded: seen === undefined,
+      newItems: fresh.map(feedItem),
+      error: null,
+    }
+    if (fresh.length === 0) return { row: { ...base, notified: null }, seen: ids, read: true }
+    if (notify.dryRun) return { row: { ...base, notified: notify.config ? null : 'off' }, seen: ids, read: true }
+    if (!notify.config) return { row: { ...base, notified: 'off' }, seen, read: true }
+    const ok = await send(notify.config, feedNotice(feed, fresh), notify.fetch, notify.signal)
+    return { row: { ...base, notified: ok ? 'sent' : 'failed' }, seen: ok ? ids : seen, read: true }
+  } catch (error) {
+    if (ctx.signal.aborted) throw fail('CANCELLED', 'cancelled')
+    const failed = {
+      ...row,
+      read: 0,
+      matched: 0,
+      seeded: false,
+      newItems: [],
+      notified: null,
+      error: errorMessage(error),
+    }
+    return { row: failed, seen, read: false, failure: error }
+  }
+}
+
 /** The record and the state, written atomically enough: the state through a rename. */
-async function persist(dir: string, rows: RecordRow[], states: Record<string, WatchState>): Promise<void> {
+async function persist(
+  dir: string,
+  rows: RecordRow[],
+  states: Record<string, WatchState>,
+  feeds: { rows: FeedRow[]; state: FeedState },
+): Promise<void> {
   await mkdir(dir, { recursive: true })
   await appendFile(join(dir, 'record.jsonl'), rows.map((r) => `${JSON.stringify(r)}\n`).join(''))
-  const tmp = join(dir, `state.json.${process.pid}.tmp`)
-  await writeFile(tmp, `${JSON.stringify(states, null, 2)}\n`)
-  await rename(tmp, join(dir, 'state.json'))
+  if (feeds.rows.length > 0) {
+    await appendFile(join(dir, 'feeds.jsonl'), feeds.rows.map((r) => `${JSON.stringify(r)}\n`).join(''))
+    await writeAtomically(join(dir, 'feeds.json'), feeds.state)
+  }
+  await writeAtomically(join(dir, 'state.json'), states)
+}
+
+async function writeAtomically(path: string, value: unknown): Promise<void> {
+  const tmp = `${path}.${process.pid}.tmp`
+  await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`)
+  await rename(tmp, path)
 }
 
 async function readWatchList(dir: string) {
@@ -320,7 +464,7 @@ async function readWatchList(dir: string) {
   const list = watchFileSchema.safeParse(raw)
   if (!list.success)
     throw fail('INVALID_INPUT', `shop.watch: ${listPath} is not a valid watch list: ${z.prettifyError(list.error)}`)
-  return list.data.products
+  return list.data
 }
 
 export const createShopWatch = (shop: ShopFetch, web: ResolvedWebDeps, now: () => number, deps: WatchDeps = {}) =>
@@ -333,12 +477,18 @@ export const createShopWatch = (shop: ShopFetch, web: ResolvedWebDeps, now: () =
     cli: { defaultFormat: 'plain', plainField: 'text', mutating: true },
     async handler({ dryRun }, ctx) {
       const dir = deps.dir ?? keyOf(web.env(), 'AGW_SHOP_DIR') ?? join(homedir(), '.agent-workflows', 'data', 'shop')
-      const products = await readWatchList(dir)
+      const { products, feeds } = await readWatchList(dir)
       const states = stateFileSchema.parse((await readJson(join(dir, 'state.json'))) ?? {}) as Record<
         string,
         WatchState
       >
-      const notify = { config: ntfyConfig(web.env()), fetch: deps.notifyFetch ?? fetch, dryRun, signal: ctx.signal }
+      const feedState = feedStateSchema.parse((await readJson(join(dir, 'feeds.json'))) ?? {})
+      const notify: Notify = {
+        config: ntfyConfig(web.env()),
+        fetch: deps.notifyFetch ?? fetch,
+        dryRun,
+        signal: ctx.signal,
+      }
 
       const rows: RecordRow[] = []
       const failures: unknown[] = []
@@ -354,10 +504,21 @@ export const createShopWatch = (shop: ShopFetch, web: ResolvedWebDeps, now: () =
         failures.push(...g.failures)
         rows.push(recordRow(new Date(now()).toISOString(), entry, g, best, { alert, notified }))
       }
-      if (!dryRun) await persist(dir, rows, states)
+      // The feeds go last: a wall at a store's collection feed starts that host's cooldown, and the products come first.
+      const feedRows: FeedRow[] = []
+      const nextFeeds: FeedState = { ...feedState }
+      for (const feed of feeds) {
+        if (ctx.signal.aborted) throw fail('CANCELLED', 'cancelled')
+        const run = await runFeed(shop, feed, feedState, notify, new Date(now()).toISOString(), ctx)
+        feedRows.push(run.row)
+        if (run.seen !== undefined) nextFeeds[feed.label] = { seen: run.seen }
+        if (run.read) reads++
+        else failures.push(run.failure)
+      }
+      if (!dryRun) await persist(dir, rows, states, { rows: feedRows, state: nextFeeds })
       // The run fails only when no source of any product could be read: a blocked site is a field of the row.
       if (reads === 0 && failures.length > 0) throw (failures.find(isBlockedError) ?? failures[0]) as Error
-      const sent = rows.filter((r) => r.notified === 'sent').length
-      return { rows, sent, dryRun, text: renderRows(rows, sent, dryRun) }
+      const sent = [...rows, ...feedRows].filter((r) => r.notified === 'sent').length
+      return { rows, feeds: feedRows, sent, dryRun, text: renderRows(rows, feedRows, sent, dryRun) }
     },
   })

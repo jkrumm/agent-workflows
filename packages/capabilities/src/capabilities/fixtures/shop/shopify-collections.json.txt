@@ -1,0 +1,84 @@
+{
+ "collections": [
+  {
+   "id": 233063383232,
+   "title": "Computer",
+   "handle": "computer-und-harware",
+   "description": "",
+   "published_at": "2020-10-30T18:02:18+01:00",
+   "updated_at": "2026-11-17T12:05:26+01:00",
+   "image": null,
+   "products_count": 134
+  },
+  {
+   "id": 495262793996,
+   "title": "Computer und Elektronik",
+   "handle": "computer-und-elektronik",
+   "description": "",
+   "published_at": "2023-03-25T11:38:19+01:00",
+   "updated_at": "2026-11-17T18:35:29+01:00",
+   "image": null,
+   "products_count": 725
+  },
+  {
+   "id": 239944597696,
+   "title": "Freizeit",
+   "handle": "freizeit-sport",
+   "description": "",
+   "published_at": "2021-01-07T13:18:01+01:00",
+   "updated_at": "2026-10-17T13:54:57+02:00",
+   "image": null,
+   "products_count": 9
+  },
+  {
+   "id": 233063481536,
+   "title": "Haushaltsgeräte",
+   "handle": "haushaltsgerate",
+   "description": "",
+   "published_at": "2020-10-30T18:02:58+01:00",
+   "updated_at": "2026-11-17T13:09:50+01:00",
+   "image": null,
+   "products_count": 204
+  },
+  {
+   "id": 504882004236,
+   "title": "Haushaltsgeräte",
+   "handle": "haushaltsgerate-1",
+   "description": "",
+   "published_at": "2023-12-15T23:44:08+01:00",
+   "updated_at": "2026-11-17T15:54:49+01:00",
+   "image": null,
+   "products_count": 528
+  },
+  {
+   "id": 275734266048,
+   "title": "Listing",
+   "handle": "listing",
+   "description": "",
+   "published_at": "2021-07-30T20:40:52+02:00",
+   "updated_at": "2026-11-17T11:54:43+01:00",
+   "image": null,
+   "products_count": 20
+  },
+  {
+   "id": 233063514304,
+   "title": "Saison und Baumakt",
+   "handle": "sainson-und-baumakt",
+   "description": "",
+   "published_at": "2020-10-30T18:03:19+01:00",
+   "updated_at": "2026-11-17T11:54:43+01:00",
+   "image": null,
+   "products_count": 36
+  },
+  {
+   "id": 522171547916,
+   "title": "Spielwaren / LEGO",
+   "handle": "spielwaren-lego",
+   "description": "",
+   "published_at": "2025-03-28T15:11:12+01:00",
+   "updated_at": "2026-11-17T12:04:26+01:00",
+   "image": null,
+   "products_count": 215
+  }
+ ]
+}

@@ -1,0 +1,108 @@
+{
+ "products": [
+  {
+   "id": 11774579376396,
+   "title": "✔️ Corsair Vengeance DDR5 48GB (2x24GB) 5600MHz C40 Intel-Optimierter Desktop-Speicher (Onboard-Spannungsregelung, Benutzerdefinierte XMP 3.0-Profile, Kompakt Formfaktor) Schwarz, CMK48GX5M2B5600C40",
+   "handle": "corsair-vengeance-ddr5-64gb-2x32gb-5600mhz-c40-intel-optimierter-desktop-speicher-onboard-spannungsregelung-benutzerdefinierte-xmp-3-0-profile-kompakt-formfaktor-schwarz-cmk64gx5m2b5600c40-3",
+   "vendor": "Corsair",
+   "tags": [
+    "diffbesteuert",
+    "halfpercday",
+    "spreadr-hidden;spreadr-hidden"
+   ],
+   "variants": [
+    {
+     "id": 54694773096716,
+     "title": "Default Title",
+     "sku": "840006665021",
+     "available": true,
+     "price": "564.85",
+     "compare_at_price": "816.99"
+    }
+   ]
+  },
+  {
+   "id": 16624682795276,
+   "title": "✔️ Sony RX100 IV Premium Kompakt Digitalkamera (21 MP, 7,6 cm (3 Zoll) Display, 1 Zoll Sensor, 24-70 mm F1.8-2.8 Zeiss Objektiv, 4K) schwarz",
+   "handle": "sony-rx100-iv-premium-kompakt-digitalkamera-21-mp-7-6-cm-3-zoll-display-1-zoll-sensor-24-70-mm-f1-8-2-8-zeiss-objektiv-4k-schwarz",
+   "vendor": "Sony",
+   "tags": [
+    "1proday",
+    "diffbesteuert",
+    "spreadr-hidden;spreadr-hidden"
+   ],
+   "variants": [
+    {
+     "id": 16624682795277,
+     "title": "Default Title",
+     "sku": "4548736017092-gesamtdiff",
+     "available": true,
+     "price": "760.80",
+     "compare_at_price": null
+    }
+   ]
+  },
+  {
+   "id": 11844800512268,
+   "title": "✔️ Samsung Portable SSD T9, 4 TB, 2.000 MB/s Lesen, 2.000 MB/s Schreiben, USB 3.2 Gen.2x2, Externe Festplatte für professionelle Anwender, Kompatibel mit Mac, PC, Smartphone und 12K Kameras, MU-PG4T0B/EU grau",
+   "handle": "✔️-samsung-portable-ssd-t9-4-tb-2-000-mb-s-lesen-2-000-mb-s-schreiben-usb-3-2-gen-2x2-externe-festplatte-fur-professionelle-anwender-kompatibel-mit-mac-pc-smartphone-und-12k-kameras-mu-pg4t0b-eu-grau",
+   "vendor": "Samsung",
+   "tags": [
+    "diffbesteuert",
+    "quarterperc",
+    "spreadr-hidden;spreadr-hidden"
+   ],
+   "variants": [
+    {
+     "id": 11844800512269,
+     "title": "Default Title",
+     "sku": "8806095371696",
+     "available": true,
+     "price": "691.25",
+     "compare_at_price": null
+    }
+   ]
+  },
+  {
+   "id": 9678509277452,
+   "title": "✔️ HP Color LaserJet Pro M479fdw Multifunktions-Farblaserdrucker (Drucker, Scanner, Kopierer, Fax, WLAN, LAN, Duplex, Airprint, 27 Seiten/Min) weiß NEU&OVP✔️ / Differenzbesteuert nach §25a",
+   "handle": "hp-color-laserjet-pro-m479fdw-multifunktions-farblaserdrucker-drucker-scanner-kopierer-fax-wlan-lan-duplex-airprint-27-seiten-min-weiss",
+   "vendor": "HP",
+   "tags": [
+    "diffbesteuert",
+    "spreadr-hidden;spreadr-hidden"
+   ],
+   "variants": [
+    {
+     "id": 9678509277453,
+     "title": "Default Title",
+     "sku": "192018996892-contain",
+     "available": true,
+     "price": "1399.99",
+     "compare_at_price": null
+    }
+   ]
+  },
+  {
+   "id": 16624033431820,
+   "title": "✔️ acer SSD GM7000 M.2 2TB PCIe G4x4 2280 -ohne OVP",
+   "handle": "✔️-acer-ssd-gm7000-m-2-2tb-pcie-g4x4-2280-kopie",
+   "vendor": "Acer",
+   "tags": [
+    "diffbesteuert",
+    "halfpercday",
+    "spreadr-hidden;spreadr-hidden"
+   ],
+   "variants": [
+    {
+     "id": 16624033431821,
+     "title": "Default Title",
+     "sku": "6955914613935",
+     "available": false,
+     "price": "252.30",
+     "compare_at_price": null
+    }
+   ]
+  }
+ ]
+}
