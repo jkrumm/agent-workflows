@@ -13,7 +13,7 @@ declare const self: {
 
 async function parse({ bytes, maxPages }: PdfRequest) {
   try {
-    // The bundled pdf.js (6.4.x) is past CVE-2024-4367 (fixed in 4.2.67) and has no eval option left.
+    // The bundled pdf.js (6.5.x) is past CVE-2024-4367 (fixed in 4.2.67) and has no eval option left.
     const pdf = await getDocumentProxy(bytes)
     const { text, totalPages } = await extractText(pdf, { mergePages: false })
     self.postMessage({ pages: text.slice(0, maxPages), totalPages })
