@@ -21,4 +21,4 @@ Fakes only one package's tests use, or that sit on a package's unexported intern
 - `capabilities/src/web/fake.ts` (`fakeWeb`): built from the web capabilities' schemas.
 - `audio/test/support.ts` (`testDeps`, `testConfig`, `fakeMedia`, `recordingUsage`, clock and log): typed on the audio lanes' ports.
 - `audio` podcast fakes (`fakeRoom`, `fakeBrain`, `fakeResearch`, `fakeHistory`) and `fakeAudiobookshelf`.
-- `gateway/test/support.ts`, `limits/test/support.ts`, `eval/test/harness-support.ts`, `host/test/support.ts`, `cli/test/fake-host.ts`, and the remainder of `middleware/test/support.ts`.
+- `gateway/test/support.ts`, `limits/test/support.ts`, `host/test/support.ts`, `cli/test/fake-host.ts`, and the remainder of `middleware/test/support.ts`.
