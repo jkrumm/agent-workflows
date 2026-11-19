@@ -14,7 +14,7 @@ export type DriftOptions = {
 /** What one drift tick did: verdicts written, and scorer errors recorded instead (no verdict). */
 export type DriftTick = { scored: number; errors: number }
 
-export const DEFAULT_DRIFT: DriftOptions = { rate: 0.1, intervalMs: 5 * 60_000, lookbackMs: 7 * 86_400_000, batch: 20 }
+const DEFAULT_DRIFT: DriftOptions = { rate: 0.1, intervalMs: 5 * 60_000, lookbackMs: 7 * 86_400_000, batch: 20 }
 
 /** `AGW_DRIFT_RATE` (0..1) and `AGW_DRIFT_INTERVAL_S` override the defaults; anything unparsable is refused at boot. */
 export function driftOptionsFromEnv(env: Record<string, string | undefined>): DriftOptions {

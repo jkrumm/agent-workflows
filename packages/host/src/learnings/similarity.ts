@@ -10,7 +10,7 @@ const STOP_WORDS = new Set(
 )
 
 /** The comparable words of a fact: lower case, letters and digits, at least three characters, stop words out, stemmed. */
-export function contentWords(fact: string): Set<string> {
+function contentWords(fact: string): Set<string> {
   const words = fact
     .toLowerCase()
     .split(/[^a-z0-9]+/)

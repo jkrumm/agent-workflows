@@ -1,8 +1,8 @@
 /** Longer than the runtime's body grace (30 s) plus the server's 5 s drain: past it, the process is stuck. */
-export const HARD_EXIT_MS = 45_000
+const HARD_EXIT_MS = 45_000
 
 /** A repeat signal this soon after the first is the same stop arriving twice (a supervisor's TERM plus its wrapper's forward). */
-export const REPEAT_GRACE_MS = 2_000
+const REPEAT_GRACE_MS = 2_000
 
 export interface LifecycleOptions {
   /** Stop accepting, close the runtime and the pools. */

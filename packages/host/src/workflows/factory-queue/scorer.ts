@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { FactoryQueueOutput } from './schema.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
-export const FACTORY_QUEUE_SCORER_VERSION = '2026-11-16.1'
+const FACTORY_QUEUE_SCORER_VERSION = '2026-11-16.1'
 
 /**
  * A case's expected edges: the pairs of Issues that must not run side by side, in either direction (`[a, b]` is met by an

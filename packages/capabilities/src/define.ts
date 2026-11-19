@@ -91,7 +91,7 @@ export interface Capability<
   call: (input: z.input<I>, options?: CallOptions) => Promise<z.output<O>>
 }
 
-export const ID_PATTERN = /^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)*$/
+const ID_PATTERN = /^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)*$/
 
 export function resolveDefinition<I extends z.ZodObject, O extends z.ZodType>(
   def: CapabilityDefinition<I, O>,

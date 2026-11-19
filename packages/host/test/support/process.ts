@@ -7,7 +7,7 @@ export type Life = 'alive' | 'zombie' | 'gone'
  * Whether `pid` still runs. `kill(pid, 0)` succeeds on a zombie (dead, not yet reaped by whoever adopted it), so the
  * process state decides: `/proc/<pid>/stat` on Linux, `ps -o stat=` elsewhere. `zombie` and `gone` are both dead.
  */
-export function lifeOf(pid: number): Life {
+function lifeOf(pid: number): Life {
   if (process.platform === 'linux') {
     let stat: string
     try {

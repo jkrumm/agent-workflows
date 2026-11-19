@@ -443,7 +443,7 @@ function withTailBreakpoint(messages: WireMessage[]): WireMessage[] {
  * empty), and the transcript with a second breakpoint on its tail (two of the four allowed). Every field is a pure
  * function of the transcript, so with the markers stripped round N's prompt is a prefix of round N+1's.
  */
-export function anthropicRoundBody(call: RoundCall) {
+function anthropicRoundBody(call: RoundCall) {
   const thinking = call.effort !== undefined
   return {
     model: call.model,

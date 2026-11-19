@@ -49,7 +49,7 @@ const styleGuide = z.object({
   refImageCount: z.int().min(0).default(0),
 })
 
-export const enhanceInput = z
+const enhanceInput = z
   .object({
     brief: z.string().min(1).max(4_000).optional().describe('The idea in a sentence or a paragraph; or currentPrompt'),
     currentPrompt: z
@@ -104,7 +104,7 @@ const warning = z.object({
 })
 const addition = z.object({ slot: z.string(), text: z.string() })
 
-export const enhanceOutput = z.object({
+const enhanceOutput = z.object({
   intent: intentResult,
   prompt: z.string().describe('The finished prompt, medium first, ending in the constraint block'),
   additions: z.array(addition),
@@ -255,7 +255,7 @@ function overridesSection(pinned: EnhanceInput['overrides']): string | null {
   return `The user has pinned these settings — do not propose anything that contradicts them (they are applied regardless of what you propose): ${JSON.stringify(wire)}`
 }
 
-export function planMessages(input: EnhanceInput, applied: ModeApplied) {
+function planMessages(input: EnhanceInput, applied: ModeApplied) {
   const intent =
     input.intent === 'auto'
       ? 'Detect the intent from the brief and report it as "intent.detected", choosing the closest match from the enum.'
@@ -301,7 +301,7 @@ export function checkVerbatim(source: string, prompt: string) {
  * verbatim; the router then picks the model, an invalid size snaps to the nearest preset, and an `inputFidelity` the model
  * would answer with a 400 is dropped. Every correction is a note.
  */
-export function resolveSettings(
+function resolveSettings(
   proposed: LlmPlan['proposed_settings'],
   hasReferences: boolean,
   pinned: EnhanceInput['overrides'] = undefined,

@@ -21,7 +21,7 @@ export const CUTOUT_LIMITS = {
 
 export const CUTOUT_MODELS = ['recraft', 'bria'] as const
 
-export const cutoutInput = z.object({
+const cutoutInput = z.object({
   file: z
     .string()
     .min(1)

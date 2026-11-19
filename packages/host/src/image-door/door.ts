@@ -57,7 +57,7 @@ import {
 
 export type ImageEndpoint = 'generate' | 'edit' | 'enhance'
 
-export const IMAGE_DOOR_WORKFLOW_IDS: Record<ImageEndpoint, string> = {
+const IMAGE_DOOR_WORKFLOW_IDS: Record<ImageEndpoint, string> = {
   generate: 'door.image.generate',
   edit: 'door.image.edit',
   enhance: 'door.image.enhance',
@@ -82,7 +82,7 @@ const START_WAIT_MS = 15_000
  * response sent or its stream closed or cancelled): each holds up to a full request in memory, and each is a billed
  * upstream call. The fifth is answered `503` with `retry-after`.
  */
-export const MAX_IN_FLIGHT = 4
+const MAX_IN_FLIGHT = 4
 const RETRY_AFTER_S = 5
 /** An abandoned job's entry (its bytes already dropped) is forgotten this long after, in case its run never starts. */
 const ORPHAN_MS = 10 * 60_000

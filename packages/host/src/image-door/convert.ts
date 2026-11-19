@@ -26,7 +26,7 @@ import {
 } from './contract.ts'
 
 /** The capabilities' name for a model the studio names by id: `flare`, `sunburst`, or `auto` (also for the retired id). */
-export function modelChoice(
+function modelChoice(
   model: GenerateRequest['model'] | NonNullable<PlanRequest['overrides']>['model'],
 ): NonNullable<ImageRequest['model']> {
   if (model === IMAGE_MODELS[0]) return 'flare'
@@ -35,7 +35,7 @@ export function modelChoice(
 }
 
 /** The studio's model id for a seat: what the response's `model` says, whatever the route table maps the seat to. */
-export function studioModel(seat: ReturnType<typeof pickRoute>): ImageModel {
+function studioModel(seat: ReturnType<typeof pickRoute>): ImageModel {
   return seat === 'image.flare' ? IMAGE_MODELS[0] : IMAGE_MODELS[1]
 }
 
@@ -82,7 +82,7 @@ export function imageRequest(fields: Fields, files: Pick<ImageRequest, 'referenc
 }
 
 /** The studio's cost: `computed` for a priced call, `none` when no price was known. */
-export const studioCost = (cost: ImageResult['cost']): Cost =>
+const studioCost = (cost: ImageResult['cost']): Cost =>
   cost.usd === null ? { usd: null, source: 'none' } : { usd: cost.usd, source: 'computed' }
 
 /** The studio's reason for a routed request: `auto` names the target, the retired id also says it is retired. */

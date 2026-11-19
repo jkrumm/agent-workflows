@@ -64,7 +64,7 @@ export const GEMINI_VOICES = new Set([
 const DEFAULT_VOICE = 'Charon'
 
 /** Gemini audio tokens per second of audio. Streamed `usageMetadata` reports 1 token: a stream is billed from duration. */
-export const AUDIO_TOKENS_PER_SECOND = 25
+const AUDIO_TOKENS_PER_SECOND = 25
 
 /** No byte from upstream for this long means a wedged stream (idle rule, never a total-duration cap). */
 const STREAM_IDLE_MS = 60_000
@@ -103,14 +103,14 @@ function defaultPrep(scope: AudioScope, input: string): PrepResult {
 }
 
 /** Whether `model` runs the prep LLM (`AudioScope.prepModels`: `TTS_GEMINI_PREP_MODELS`, id or prefix, or the prep routes). */
-export const geminiWantsPrep = (scope: AudioScope, model: string): boolean => listed(scope.prepModels('gemini'), model)
+const geminiWantsPrep = (scope: AudioScope, model: string): boolean => listed(scope.prepModels('gemini'), model)
 
 /**
  * Prep for the Gemini lane: only for prep models (and then per `ttsPrep`); `summarize` always calls the summary LLM.
  * A prep-invented style never reaches the request (vocabulary strings only), invented tags are stripped, and a prep
  * that returned only tags falls back to speaking the input as is.
  */
-export async function runGeminiPrep(
+async function runGeminiPrep(
   scope: AudioScope,
   model: string,
   input: string,
@@ -290,7 +290,7 @@ export function synthMultiSpeaker(
 }
 
 /** All chunks with bounded concurrency, in order; fail-fast with no partial output. */
-export function synthChunksConcurrent(
+function synthChunksConcurrent(
   scope: AudioScope,
   routeId: string,
   voiceName: string,
@@ -307,7 +307,7 @@ export function sseAudio(data: string): Uint8Array | null {
 }
 
 /** One SSE `data:` payload: its audio and the prompt token count it reports (input is billed once per call). */
-export function sseEvent(data: string): { audio: Uint8Array | null; promptTokens: number | null } {
+function sseEvent(data: string): { audio: Uint8Array | null; promptTokens: number | null } {
   let event: GeminiTtsResponse & { error?: { message?: string } }
   try {
     event = JSON.parse(data) as typeof event

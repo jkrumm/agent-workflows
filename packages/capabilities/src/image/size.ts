@@ -5,7 +5,7 @@
  */
 export const SIZE_PRESETS = ['auto', '1024x1024', '1536x1024', '1024x1536'] as const
 
-export const SIZE_ENVELOPE = {
+const SIZE_ENVELOPE = {
   edgeMultiple: 16,
   maxRatio: 3,
   minPixels: 655_360,

@@ -5,7 +5,7 @@ import { decideBooleans, shareTrue } from '../judge-decide.ts'
 import { DigestOutput } from './schema.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
-export const DIGEST_SCORER_VERSION = '2026-11-16.1'
+const DIGEST_SCORER_VERSION = '2026-11-16.1'
 
 /**
  * What a careful reader expects of one item, by the item's kind:

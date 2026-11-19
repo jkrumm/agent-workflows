@@ -12,9 +12,9 @@ import { z } from 'zod'
 // The wire of software-factory's hygiene loop (its `packages/contract/src/loops.ts`; the fixture key `hygiene` is the one
 // example both repos parse). Keep the limits identical there.
 
-export const MAX_CANDIDATES = 20
-export const MAX_FINDINGS = 10
-export const HYGIENE_KINDS = ['stale', 'slop'] as const
+const MAX_CANDIDATES = 20
+const MAX_FINDINGS = 10
+const HYGIENE_KINDS = ['stale', 'slop'] as const
 
 const candidate = z.object({
   path: z.string().min(1).max(300).describe('Relative to `cwd`; untrusted data'),

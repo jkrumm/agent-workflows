@@ -10,7 +10,7 @@ export type ImageRouteId = Extract<RouteId, `image.${string}`>
  * The whole-stream ceiling: a hang guard, not a budget. 30 minutes is the agent-limits rule's minimum for a single
  * non-agentic request (a short timeout on a slow answer only turns it into a failure).
  */
-export const STREAM_MAX_MS = 30 * 60_000
+const STREAM_MAX_MS = 30 * 60_000
 
 /** What the image capabilities are built from. Every field defaults to production; tests inject fakes. */
 export interface ImageDeps {

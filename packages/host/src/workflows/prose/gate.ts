@@ -12,7 +12,7 @@ import {
 } from './lint.ts'
 
 /** Findings per rule. */
-export function countByRule(findings: LintFinding[]): Map<string, number> {
+function countByRule(findings: LintFinding[]): Map<string, number> {
   const counts = new Map<string, number>()
   for (const f of findings) counts.set(f.rule, (counts.get(f.rule) ?? 0) + 1)
   return counts
@@ -22,7 +22,7 @@ export function countByRule(findings: LintFinding[]): Map<string, number> {
  * The first rule the rewrite has more findings of than the original, as "rule: after > before", or null when no rule
  * got worse. A swap (one finding fixed, a different rule introduced) keeps the total level and is still a regression.
  */
-export function worsenedRule(before: LintFinding[], after: LintFinding[]): string | null {
+function worsenedRule(before: LintFinding[], after: LintFinding[]): string | null {
   const baseline = countByRule(before)
   for (const [rule, count] of countByRule(after)) {
     const was = baseline.get(rule) ?? 0
@@ -36,7 +36,7 @@ export function worsenedRule(before: LintFinding[], after: LintFinding[]): strin
  * target, adds none, and no lint rule got worse. `reason` is why it may not (agent-gateway's `judgeRewrite`, verbatim
  * in its decisions and its reason strings).
  */
-export function judgeRewrite(
+function judgeRewrite(
   original: string,
   candidate: string,
   before: LintFinding[],

@@ -8,7 +8,7 @@ import {
   readProcessConfig,
 } from '@agent-workflows/host'
 
-export const AUDIO_PORT = 7792
+const AUDIO_PORT = 7792
 
 /** The audio process: the shared process settings on its own port, its own state dir and the door's caller tokens. */
 export interface AudioProcessConfig extends ProcessConfig {

@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { FactoryTriageOutput } from './schema.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
-export const FACTORY_TRIAGE_SCORER_VERSION = '2026-11-14.1'
+const FACTORY_TRIAGE_SCORER_VERSION = '2026-11-14.1'
 
 /** A case's expected checkpoint: `spec` for a settle case that owes a Spec, `null` for one that does not. */
 export const FactoryTriageReference = z.object({

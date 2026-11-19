@@ -7,7 +7,7 @@ export const SINCE_HINT =
   'an ISO date or timestamp (2026-10-01, 2026-10-01T00:00:00Z) or a duration back from now (30m, 24h, 7d, 2w)'
 
 /** The instant a duration reaches back to, or null when `value` is not a duration. */
-export function durationAgo(value: string, nowMs: number): Date | null {
+function durationAgo(value: string, nowMs: number): Date | null {
   const match = DURATION.exec(value.trim())
   if (!match) return null
   const ms = Number(match[1]) * UNIT_MS[match[2] as keyof typeof UNIT_MS]

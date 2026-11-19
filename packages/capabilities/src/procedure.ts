@@ -81,7 +81,7 @@ export const withCli =
   (x: ResolvedCliSpec) =>
   <T extends object>(operation: T): T => ({ ...operation, 'x-cli': x })
 
-export function buildProcedure<I extends z.ZodObject, O extends z.ZodType>(
+function buildProcedure<I extends z.ZodObject, O extends z.ZodType>(
   def: CapabilityDefinition<I, O>,
   resolved: ReturnType<typeof resolveDefinition>,
 ) {

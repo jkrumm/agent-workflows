@@ -4,7 +4,7 @@ import { decideBooleans } from '../judge-decide.ts'
 import { FactoryDigestInput, FactoryDigestOutput } from './schema.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
-export const FACTORY_DIGEST_SCORER_VERSION = '2026-11-16.1'
+const FACTORY_DIGEST_SCORER_VERSION = '2026-11-16.1'
 
 /**
  * A case's expected structure, from the prompt's own rules and the lists the case shows:
@@ -28,10 +28,7 @@ const ZERO = { valid: 0, sections: 0 }
 const share = (flags: boolean[]) => flags.filter(Boolean).length / flags.length
 
 /** What the judge reads: the Issues as the request listed them, then the digest, and nothing of its own rules. */
-export function judgeState(
-  input: z.output<typeof FactoryDigestInput>,
-  digest: z.output<typeof FactoryDigestOutput>,
-): string {
+function judgeState(input: z.output<typeof FactoryDigestInput>, digest: z.output<typeof FactoryDigestOutput>): string {
   const i = input.input
   const rows = [
     ...i.done.map((x) => `${x.id} [closed ${x.outcome}, ${x.kind}]: ${x.title}`),

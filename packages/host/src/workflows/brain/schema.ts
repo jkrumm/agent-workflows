@@ -7,7 +7,7 @@ export const BrainInput = z
   .strict()
 export type BrainInputValue = z.output<typeof BrainInput>
 
-export const BrainCitation = z.object({
+const BrainCitation = z.object({
   path: z.string().describe('Vault-relative path of a note this run read'),
   claim: z.string().describe("What that note says, in the answer's words"),
 })
@@ -24,7 +24,7 @@ export type Draft = z.output<typeof Draft>
  * Counted in code, never asserted by a model: `citations` is every citation the agent submitted before the grounding
  * rule (which drops the ones whose note the run did not read), `grounded` how many of them cite a note it read.
  */
-export const BrainGrounding = z.object({
+const BrainGrounding = z.object({
   citations: z.number().int().nonnegative(),
   grounded: z.number().int().nonnegative(),
 })

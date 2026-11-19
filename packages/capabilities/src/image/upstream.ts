@@ -6,7 +6,7 @@ import { Attempt, failedResponse, type UserError } from '../transports/http.ts'
  * `moderation_blocked`), and the gpt-image-2.5-era body prefixed `[OpenAI Vendor Group Key StatusCode: BadRequest]` whose
  * embedded JSON carries `"type":"invalid_request_error"` with no `user_error` at all. A retry fails the same way.
  */
-export function isWrappedUserErrorBody(text: string): boolean {
+function isWrappedUserErrorBody(text: string): boolean {
   if (text.includes('user_error')) return true
   return text.includes('StatusCode: BadRequest') && text.includes('"invalid_request_error"')
 }
@@ -36,7 +36,7 @@ export function userErrorOf(error: Record<string, unknown>, fallback: string): U
 }
 
 /** What a wrapped 400's embedded JSON says; null when it has no parseable error object. */
-export function parseWrappedUserError(text: string): UserError | null {
+function parseWrappedUserError(text: string): UserError | null {
   const start = text.indexOf('{')
   if (start === -1) return null
   let parsed: unknown
@@ -51,7 +51,7 @@ export function parseWrappedUserError(text: string): UserError | null {
 }
 
 /** What a wrapped 400's embedded JSON says, as one line: its message, its code, and the moderation stage and categories when it is a block. */
-export function describeWrappedUserError(text: string): string {
+function describeWrappedUserError(text: string): string {
   const parsed = parseWrappedUserError(text)
   if (!parsed) return `request rejected: ${text.slice(0, 300)}`
   const code = parsed.code ? ` [${parsed.code}]` : ''

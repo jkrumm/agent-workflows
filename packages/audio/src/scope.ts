@@ -52,7 +52,7 @@ export interface AudioDeps {
   attribution?: (req: Request) => Attribution | undefined
 }
 
-export const REAL_CLOCK: Clock = { now: () => Date.now(), sleep: (ms) => Bun.sleep(ms) }
+const REAL_CLOCK: Clock = { now: () => Date.now(), sleep: (ms) => Bun.sleep(ms) }
 
 const CONSOLE_LOG: AudioLog = {
   info: (message, fields) => console.log(JSON.stringify({ level: 'info', message, ...fields })),
@@ -267,7 +267,7 @@ export function createAudioScope(
  * `fetch` bound to `signal`: once it aborts, a call fails as an `AbortError` whatever reason the signal carries, so the
  * retry loops treat it as final and nothing more is billed.
  */
-export function bindFetch(base: Fetch, signal: AbortSignal): Fetch {
+function bindFetch(base: Fetch, signal: AbortSignal): Fetch {
   return (url, init) =>
     base(url, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal }).catch(
       (error: unknown) => {

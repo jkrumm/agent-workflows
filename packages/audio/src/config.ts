@@ -111,7 +111,7 @@ export const AUDIO_TUNING_DEFAULTS: Readonly<Omit<AudioTuning, 'ttsGeminiPrepMod
   })
 
 /** Every wire's base on the gateway from `AGW_GATEWAY_URL`: an http(s) origin, required. Messages never echo a value. */
-export function gatewayBases(env: Env): Omit<AudioTransports, 'token'> {
+function gatewayBases(env: Env): Omit<AudioTransports, 'token'> {
   const raw = env.AGW_GATEWAY_URL?.trim()
   if (!raw) throw new AudioConfigError('AGW_GATEWAY_URL is not set')
   let url: URL

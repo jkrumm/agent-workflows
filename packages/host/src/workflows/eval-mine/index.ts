@@ -60,7 +60,7 @@ export interface EvalMineOptions {
   logger?: Pick<Logger, 'warn'>
 }
 
-export const evalMineInput = z
+const evalMineInput = z
   .object({
     suite: z.enum(['review']).describe('The suite whose ground truth is mined'),
     label: z
@@ -151,7 +151,7 @@ const Summary = z.object({
   }),
 })
 
-export const evalMineOutput = z.object({
+const evalMineOutput = z.object({
   suite: z.enum(['review']),
   minerVersion: z.string(),
   labelerVersion: z.string(),

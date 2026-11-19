@@ -8,7 +8,7 @@ import { SIZE_PRESETS } from './size.ts'
 const OUTPUT_TOKENS_AT_BASE = { low: 196, medium: 439, high: 1756, xhigh: 3122, max: 7024 } as const
 const BASE_PIXELS = 1024 * 1024
 
-export function sizeToPixels(size: string): number {
+function sizeToPixels(size: string): number {
   const match = /^(\d{2,4})x(\d{2,4})$/.exec(size)
   return match ? Number(match[1]) * Number(match[2]) : BASE_PIXELS
 }

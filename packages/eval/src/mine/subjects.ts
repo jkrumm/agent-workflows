@@ -13,7 +13,7 @@ export const isBugFixSubject = (subject: string) => isFixSubject(subject) && !NO
 export const isReformatSubject = (subject: string) => MASS_REFORMAT_SUBJECT.test(subject)
 
 /** The conventional-commit type of a subject, lower-case, or null. */
-export const subjectType = (subject: string) => CONVENTIONAL.exec(subject)?.[1]?.toLowerCase() ?? null
+const subjectType = (subject: string) => CONVENTIONAL.exec(subject)?.[1]?.toLowerCase() ?? null
 
 const WEAK_TYPES = new Set(['docs', 'test', 'tests', 'refactor', 'chore'])
 export const isWeakSubject = (subject: string) => WEAK_TYPES.has(subjectType(subject) ?? '')

@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { PodcastInput, PodcastOutput } from './schema.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
-export const PODCAST_SCORER_VERSION = '2026-11-03.1'
+const PODCAST_SCORER_VERSION = '2026-11-03.1'
 
 /**
  * What a careful reader expects of an episode about the case's brief: `anchors`, words of the brief of which the title,

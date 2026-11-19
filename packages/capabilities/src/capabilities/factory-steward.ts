@@ -71,7 +71,7 @@ const factoryStewardCall = factoryStewardInput.extend({
 const text = z.string().trim().min(1).max(MAX_TEXT_CHARS)
 
 /** A Decision the steward asks the owner's chain to settle: the same required fields a lead's `factory issue ask` has. */
-export const stewardDecision = z.object({
+const stewardDecision = z.object({
   question: text,
   recommendation: text.describe('The label of one option'),
   checked: text.describe('What was looked at before asking'),

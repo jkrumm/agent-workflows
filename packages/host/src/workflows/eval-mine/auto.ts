@@ -42,7 +42,7 @@ export interface AutoPorts {
   runSpend(options: { limit: number }): Promise<RunSpend[]>
 }
 
-export const AutoState = z.enum(['labelled', 'target-reached', 'no-credit', 'iu-line'])
+const AutoState = z.enum(['labelled', 'target-reached', 'no-credit', 'iu-line'])
 export type AutoState = z.infer<typeof AutoState>
 
 /** The `auto` object of the run record: why this many candidates were labelled, readable without the log. */

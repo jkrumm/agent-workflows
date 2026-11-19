@@ -7,8 +7,8 @@ const routeIds = (lanes: readonly string[]) =>
     .map(([id]) => id) as [AudioRouteId, ...AudioRouteId[]]
 
 /** The TTS and STT routes of the table (the prep and summary LLMs are not speech routes). */
-export const TTS_ROUTES = routeIds(['gemini', 'replicate'])
-export const STT_ROUTES = routeIds(['stt'])
+const TTS_ROUTES = routeIds(['gemini', 'replicate'])
+const STT_ROUTES = routeIds(['stt'])
 
 export const SpeechRoundtripInput = z
   .object({

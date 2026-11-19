@@ -17,7 +17,7 @@ export const MAX_PROSE_TEXT_CHARS = 60_000
 export const MAX_PROSE_BRIEF_CHARS = 2_000
 export const MAX_PROSE_CONTEXT_CHARS = 8_000
 
-export const PROSE_CRITERIA = [
+const PROSE_CRITERIA = [
   'verdict_first',
   'structure',
   'no_repetition',
@@ -69,7 +69,7 @@ const reviewSchema = (verdictFirst: boolean) =>
  * The review fields, not a prompt: the capability builds the fenced reviewer prompt itself (a fresh random fence per
  * call), so nothing reachable over HTTP or the CLI is a free prompt on the paid reviewer seat.
  */
-export const proseReviewInput = z.object({
+const proseReviewInput = z.object({
   text: z
     .string()
     .max(MAX_PROSE_TEXT_CHARS)
@@ -88,7 +88,7 @@ export const proseReviewInput = z.object({
   context: z.string().max(MAX_PROSE_CONTEXT_CHARS).optional().describe('The surrounding outline; fenced as data'),
 })
 
-export const proseReviewOutput = REVIEW.extend({ model: z.string() })
+const proseReviewOutput = REVIEW.extend({ model: z.string() })
 export type ProseReviewInput = z.input<typeof proseReviewInput>
 export type ProseReviewOutput = z.output<typeof proseReviewOutput>
 
@@ -126,7 +126,7 @@ function refuseUnfitRoute(route: ResolvedRoute) {
  * Refuses an unfit review route (the writer's lab, another wire) of the table, at definition time: a reviewer from the
  * writer's own lab is the same-lab review the cross-lab rule exists to prevent. An arm's patch is checked on each call.
  */
-export function assertCrossLab() {
+function assertCrossLab() {
   let route: ResolvedRoute
   try {
     route = resolve('prose.review')

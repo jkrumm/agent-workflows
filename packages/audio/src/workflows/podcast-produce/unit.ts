@@ -13,7 +13,7 @@ import { type SynthTurnInput, synthesizeUnit, type TtsLane } from './synth.ts'
 // child whose audio an interrupted attempt already stored reuses it (`files.ts`).
 
 /** The children run in-process at once; this bounds their TTS requests (legacy: `TTS_CONCURRENCY`). */
-export function limiter(max: number) {
+function limiter(max: number) {
   let active = 0
   const waiting: (() => void)[] = []
   return async <T>(fn: () => Promise<T>): Promise<T> => {
@@ -36,7 +36,7 @@ const Turn = z.looseObject({
   voice: z.string(),
 })
 
-export const UnitInput = z.object({
+const UnitInput = z.object({
   /** The episode: the artifact directory. */
   episodeId: z.string(),
   index: z.number().int().nonnegative(),
@@ -48,7 +48,7 @@ export const UnitInput = z.object({
 })
 export type UnitInputValue = z.output<typeof UnitInput>
 
-export const UnitOutput = z.object({
+const UnitOutput = z.object({
   path: z.string(),
   sha256: z.string(),
   bytes: z.number(),

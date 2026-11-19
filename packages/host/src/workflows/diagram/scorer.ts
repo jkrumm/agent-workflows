@@ -5,10 +5,10 @@ import type { DiagramInputValue } from './schema.ts'
 import { DiagramOutput } from './schema.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
-export const DIAGRAM_SCORER_VERSION = '2026-10-29.1'
+const DIAGRAM_SCORER_VERSION = '2026-10-29.1'
 
 /** A case's expectation: the element count the brief asks for. Both bounds are optional; no reference scores nothing here. */
-export const DiagramReference = z
+const DiagramReference = z
   .object({ minElements: z.number().int().positive().optional(), maxElements: z.number().int().positive().optional() })
   .nullable()
 export type DiagramReference = z.output<typeof DiagramReference>

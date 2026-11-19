@@ -169,7 +169,7 @@ export function writerData(args: WriterDataArgs): string {
 const RULE_SEPARATOR = '────────────────────────────────────────────────────────'
 
 /** Legacy's writer system prompt: the voice guide, then the rules and the rubric. */
-export function buildWriterSystem(
+function buildWriterSystem(
   voice: string,
   args: { medium: ProseMedium; format: ProseFormat; verdictFirst: boolean },
 ): string {
@@ -177,7 +177,7 @@ export function buildWriterSystem(
 }
 
 /** Legacy's writer user prompt: the fenced data, closing on "return only the rewritten text". */
-export const buildWriterPrompt = (args: Omit<WriterDataArgs, 'closing'>) =>
+const buildWriterPrompt = (args: Omit<WriterDataArgs, 'closing'>) =>
   writerData({
     ...args,
     closing:
@@ -191,7 +191,7 @@ export const buildWriterPrompt = (args: Omit<WriterDataArgs, 'closing'>) =>
  * itself (a fresh random fence per call), so nothing reachable over HTTP or in process is a free prompt on the paid
  * writer seat.
  */
-export const proseWriteInput = z.object({
+const proseWriteInput = z.object({
   text: z
     .string()
     .max(MAX_PROSE_TEXT_CHARS)
@@ -240,7 +240,7 @@ export const proseWriteInput = z.object({
 
 export type ProseWriteInput = z.input<typeof proseWriteInput>
 
-export const proseWriteOutput = z.object({
+const proseWriteOutput = z.object({
   text: z.string().describe('The rewrite, trimmed. Empty when the writer failed on content (`failure` says how)'),
   model: z.string().describe('The model that answered'),
   failure: z

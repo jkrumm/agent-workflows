@@ -40,7 +40,7 @@ export function matchExpect(text: string, expect: GoldenExpect, liveValue: strin
 export const withinMaxChars = (report: string, maxChars: number | undefined) =>
   maxChars === undefined || report.length <= maxChars
 
-export const REGISTRIES = ['npm', 'pypi', 'crates', 'github-release'] as const
+const REGISTRIES = ['npm', 'pypi', 'crates', 'github-release'] as const
 export type Registry = (typeof REGISTRIES)[number]
 
 /** `npm:ai` → the `web.package` input; anything else is a broken case, not a miss. */

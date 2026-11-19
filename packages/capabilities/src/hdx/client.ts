@@ -7,7 +7,7 @@ const ERROR_DETAIL_CHARS = 2_000
 /** An error body is read to this many bytes and no further. */
 const ERROR_BODY_BYTES = 64 * 1024
 /** A success body is read to this many bytes and no further. */
-export const MAX_RESPONSE_BYTES = 4_000_000
+const MAX_RESPONSE_BYTES = 4_000_000
 const REST_PREFIX = '/api/api/v2'
 
 interface Sent {

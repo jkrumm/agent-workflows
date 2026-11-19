@@ -43,7 +43,7 @@ export type WatchEntry = z.infer<typeof watchEntrySchema>
 /** A source whose page is the shop's own (a tech shop, a Shopify store): no shop rating, it counts as the known retailer it is. */
 export const isOwnPageSource = (source: string) => isDirectShop(source) || isShopifySource(source)
 
-export const feedEntrySchema = z
+const feedEntrySchema = z
   .object({
     label: z.string().trim().min(1).describe('Name in messages and the feed state: unique'),
     source: shopifySourceField.describe('The store as shopify:<host>'),

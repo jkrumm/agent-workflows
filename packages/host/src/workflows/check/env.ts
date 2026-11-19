@@ -24,7 +24,7 @@ const CLAUDE_TOKEN = 'CLAUDE_CODE_OAUTH_TOKEN'
  */
 const MAKE_STATE = /^(MAKELEVEL|MAKEFLAGS|MFLAGS|MAKEOVERRIDES|GNUMAKEFLAGS|MAKEFILES|MAKE_TERMOUT|MAKE_TERMERR)$/
 
-export const isSensitiveEnvName = (name: string) =>
+const isSensitiveEnvName = (name: string) =>
   name === CLAUDE_TOKEN || CREDENTIAL.test(name) || HOST_OWN.test(name) || GIT_CONFIG_ENV.test(name)
 
 /**

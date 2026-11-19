@@ -105,7 +105,7 @@ export const GtLabel = z
 export type GtLabel = z.infer<typeof GtLabel>
 
 /** The labelers: `a` on Claude, `b` on GPT (cross-vendor by design). */
-export const LabelerSeat = z.enum(['a', 'b'])
+const LabelerSeat = z.enum(['a', 'b'])
 export type LabelerSeat = z.infer<typeof LabelerSeat>
 
 export const GtLabelResult = z.union([
@@ -171,7 +171,7 @@ const caseBase = {
 }
 
 /** An accepted bug case: the introducing commit and the bug it created. The location is labeler `a`'s. */
-export const GtBugCase = z
+const GtBugCase = z
   .object({
     ...caseBase,
     kind: z.literal('bug'),

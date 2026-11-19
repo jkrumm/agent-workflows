@@ -9,7 +9,7 @@ import { type Suites, suiteIds, suiteWorkflow } from './suites.ts'
 export const EVAL_COMPARE_ID = 'eval.compare'
 
 /** The `agw eval compare` input over the discovered suites' ids. */
-export const evalCompareInput = (ids: [string, ...string[]]) =>
+const evalCompareInput = (ids: [string, ...string[]]) =>
   z
     .object({
       workflow: z.enum(ids).describe('The workflow whose regression runs to compare'),
@@ -34,7 +34,7 @@ const Arm = z.object({
   scorers: z.array(z.string()).describe('Scorer versions of its runs'),
 })
 
-export const evalCompareOutput = (ids: [string, ...string[]]) =>
+const evalCompareOutput = (ids: [string, ...string[]]) =>
   z.object({
     workflow: z.enum(ids),
     a: Arm,
@@ -72,7 +72,7 @@ export const evalCompareOutput = (ids: [string, ...string[]]) =>
   })
 
 /** Canonical JSON (keys sorted), so `{"x":1,"y":2}` and `{"y":2,"x":1}` name the same arm. */
-export function canonical(value: unknown): string {
+function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
   if (value !== null && typeof value === 'object') {
     const entries = Object.entries(value as Record<string, unknown>).sort(([x], [y]) => (x < y ? -1 : 1))

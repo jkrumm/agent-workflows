@@ -35,7 +35,7 @@ const workerAgent = z.object({
   confidence: z.enum(CONFIDENCES),
 })
 
-export const overviewClassifyOutput = z.object({
+const overviewClassifyOutput = z.object({
   agents: z.array(workerAgent),
   model: z.string(),
 })

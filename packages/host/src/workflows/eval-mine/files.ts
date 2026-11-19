@@ -98,7 +98,7 @@ export function appendLabel(record: GtLabelRecord, env: Env): void {
 }
 
 /** Appends one validated record to a `review-gt` JSONL file (mode 0600), after a line break if its last line was torn. */
-export function appendRecord<T extends z.ZodType>(file: GtFile, schema: T, record: z.input<T>, env: Env): void {
+function appendRecord<T extends z.ZodType>(file: GtFile, schema: T, record: z.input<T>, env: Env): void {
   const path = gtPath(file, env)
   privateDir(dirname(path))
   const lead = existsSync(path) && !endsWithNewline(path) ? '\n' : ''
@@ -152,7 +152,7 @@ export function rebuildCases(options: { env: Env; versions: Versions; warn: Warn
   const controls =
     options.controls ?? readRecords('cases.jsonl', GtCase, env, warn).filter((c): c is Control => c.kind === 'control')
   const labels = latestLabels(env, options.versions, warn)
-  const bugs: z.infer<typeof GtBugCase>[] = []
+  const bugs: GtBugCase[] = []
   const rejected: Rejected[] = []
   const acceptPaths = { 'a+b': 0 }
   for (const [id, record] of labels) {

@@ -32,7 +32,7 @@ export {
   requestImages,
   routingWhy,
 } from './studio.ts'
-export { type AlphaStats, decodeAlphaStats, magicBytesValid, readPng } from './png.ts'
+export { type AlphaStats, decodeAlphaStats, readPng } from './png.ts'
 export { snapSize, validateSize } from './size.ts'
 export type { UpscaleOutput } from './upscale.ts'
 export { UPSCALE_LIMITS } from './upscale.ts'

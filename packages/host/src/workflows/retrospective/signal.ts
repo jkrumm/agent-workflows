@@ -18,7 +18,7 @@ const CONFIDENCE_RANK = { high: 2, medium: 1, low: 0 } as const
 const normalize = (text: string) => text.toLowerCase().replaceAll(/\s+/g, ' ').trim()
 
 /** The path a signal names for a proposal's target: an agent name stands for its definition directory. */
-export const targetPath = (target: string, agents: readonly string[]) =>
+const targetPath = (target: string, agents: readonly string[]) =>
   agents.includes(target) ? `agents/${target}` : target
 
 /** Stable across weeks: the same kind, target and (normalised) change is the same proposal. 16 hex characters. */

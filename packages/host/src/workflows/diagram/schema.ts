@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const MODES = ['create', 'extend'] as const
+const MODES = ['create', 'extend'] as const
 
 /** The largest `existing` accepted, in UTF-8 bytes: a hydrated element is about 1 KB, so room for some 400 elements. */
 export const MAX_EXISTING_BYTES = 512 * 1024
@@ -43,7 +43,7 @@ export const DiagramInput = z
   })
 export type DiagramInputValue = z.output<typeof DiagramInput>
 
-export const Viewport = z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() })
+const Viewport = z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() })
 export type Viewport = z.output<typeof Viewport>
 
 export const DiagramOutput = z.object({

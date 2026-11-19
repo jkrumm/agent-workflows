@@ -82,7 +82,7 @@ export interface Command {
 const METHODS = ['get', 'post', 'put', 'patch', 'delete']
 
 /** Always the CLI's own flags; an operation with an input property of one of these names is skipped. */
-export const RESERVED_FLAGS: readonly string[] = ['format', 'commit', 'idempotency-key', 'wait', 'budget', 'help']
+const RESERVED_FLAGS: readonly string[] = ['format', 'commit', 'idempotency-key', 'wait', 'budget', 'help']
 
 /** An operation that is deliberately no command (`x-cli.hidden`); `agw schema` lists it apart from the skipped ones. */
 export interface Hidden {
@@ -97,7 +97,7 @@ export interface Skipped {
   reason: string
 }
 
-export const kebab = (name: string) => name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)
+const kebab = (name: string) => name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)
 
 export function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical)
@@ -127,7 +127,7 @@ function pointer(doc: Document, ref: string): unknown {
 }
 
 /** Inlines every local `$ref`. A recursive schema keeps its `$ref` where it would loop. */
-export function deref(doc: Document, value: unknown, seen: ReadonlySet<string> = new Set()): unknown {
+function deref(doc: Document, value: unknown, seen: ReadonlySet<string> = new Set()): unknown {
   if (Array.isArray(value)) return value.map((v) => deref(doc, v, seen))
   if (value === null || typeof value !== 'object') return value
   const node = value as Record<string, unknown>

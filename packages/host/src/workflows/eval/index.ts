@@ -7,8 +7,8 @@ import { type EvalRuntime, EvalSlot } from './slot.ts'
 import type { Suites } from './suites.ts'
 
 export { EVAL_COMPARE_ID } from './compare.ts'
-export { DEFAULT_DRIFT, DriftJob, type DriftOptions, type DriftTick, driftOptionsFromEnv } from './drift.ts'
-export { caseTreeDir, EVAL_RUN_ID, sweepCaseTrees } from './run.ts'
+export { DriftJob, type DriftOptions, type DriftTick, driftOptionsFromEnv } from './drift.ts'
+export { EVAL_RUN_ID, sweepCaseTrees } from './run.ts'
 
 /** A case tree older than this whose run ended (or never existed) is leftover. */
 const SWEEP_AFTER_MS = 3 * 3_600_000

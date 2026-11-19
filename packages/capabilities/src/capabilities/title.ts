@@ -3,12 +3,12 @@ import { fail } from '../errors.ts'
 import { complete, type LlmDeps } from '../llm/model-call.ts'
 import { defineCapability } from '../procedure.ts'
 
-export const titleInput = z.object({
+const titleInput = z.object({
   text: z.string().min(1).describe('The text to title'),
   maxWords: z.int().min(2).max(30).default(8).describe('Upper bound for the title length'),
 })
 
-export const titleOutput = z.object({ title: z.string().min(1) })
+const titleOutput = z.object({ title: z.string().min(1) })
 
 const SYSTEM =
   'You write short, specific titles. Reply with the title only: one line, no quotes, no markdown, no trailing period.'
@@ -22,7 +22,7 @@ const QUOTE_PAIRS = [
 ] as const
 
 /** Models still add a `#`, a label, wrapping quotes or a final period now and then. A lone apostrophe stays. */
-export function cleanTitle(raw: string): string {
+function cleanTitle(raw: string): string {
   let title = (raw.split('\n').find((line) => line.trim()) ?? '')
     .trim()
     .replace(/^#+\s*/, '')

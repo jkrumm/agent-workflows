@@ -7,9 +7,9 @@ import { MIME, magicBytesValid, readPng } from './png.ts'
 import { snapSize } from './size.ts'
 import { GENERATE_MODELS, MODELS, pickRoute, QUALITIES, requestImages } from './studio.ts'
 
-export { GENERATE_MODELS, MODELS, pickRoute, QUALITIES }
+export { GENERATE_MODELS, pickRoute, QUALITIES }
 
-export const generateInput = z.object({
+const generateInput = z.object({
   prompt: z.string().min(1).max(32_000).describe('What to draw, or with images, what to change'),
   size: z
     .string()
@@ -51,7 +51,7 @@ const image = z.object({
 })
 export type GeneratedImage = z.infer<typeof image>
 
-export const generateOutput = z.object({
+const generateOutput = z.object({
   id: z.string().describe('The generation id'),
   model: z.string(),
   size: z.string().describe('The size requested after snapping; each image carries the size it came back as'),

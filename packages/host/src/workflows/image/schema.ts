@@ -85,7 +85,7 @@ export const ImageInput = z
   })
 export type ImageInputValue = z.output<typeof ImageInput>
 
-export const ImageFile = z.object({
+const ImageFile = z.object({
   path: z.string().describe('Absolute path of the PNG in the artifact store'),
   bytes: z.int().nonnegative(),
   width: z.int().positive(),

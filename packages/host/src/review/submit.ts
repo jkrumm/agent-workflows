@@ -16,11 +16,11 @@ import {
   type ReviewOutputV4Value,
 } from './schema.ts'
 
-export const DEFAULT_STEP_BACK =
+const DEFAULT_STEP_BACK =
   'Three rounds have not converged on this change. Step back and ask whether the approach itself is right before another fix.'
 
 /** The one JSON object in the reply, fenced or wrapped in prose: from its first `{` to its last `}`. */
-export function parseReply(text: string): ReviewerReplyValue {
+function parseReply(text: string): ReviewerReplyValue {
   const start = text.indexOf('{')
   const end = text.lastIndexOf('}')
   if (start < 0 || end < start) throw new ReviewError('the reply holds no JSON object')
@@ -37,7 +37,7 @@ export function parseReply(text: string): ReviewerReplyValue {
 }
 
 /** Lowercase, punctuation stripped, whitespace collapsed: two wordings of one message that differ only in those match. */
-export const normalizeMessage = (message: string): string =>
+const normalizeMessage = (message: string): string =>
   message
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s]/gu, '')
@@ -47,7 +47,7 @@ export const normalizeMessage = (message: string): string =>
 const repeatKey = (f: { file: string; class: string; message: string }) =>
   `${f.file}\0${f.class}\0${normalizeMessage(f.message)}`
 
-export function summarize(findings: { tag: string }[]): string {
+function summarize(findings: { tag: string }[]): string {
   const count = (tag: string) => findings.filter((f) => f.tag === tag).length
   const important = count('important')
   const nits = count('nit')

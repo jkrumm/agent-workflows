@@ -46,7 +46,7 @@ export interface CheckDeps {
 }
 
 /** The last non-empty output lines, bounded per line: the contract wants error lines, not a second log. */
-export function errorLines(output: string): string[] {
+function errorLines(output: string): string[] {
   return output
     .split('\n')
     .map((line) => line.replace(/\s+$/, ''))
@@ -197,7 +197,7 @@ const STEP_KINDS: [name: string, pattern: RegExp][] = [
 const HEAVY_STEP = /^(typecheck|test)$/
 
 /** The step's name for a caller's command: `format | lint | typecheck | test`, else the command's tool. */
-export function commandStepName(command: string): string {
+function commandStepName(command: string): string {
   const kind = STEP_KINDS.find(([, pattern]) => pattern.test(command))
   if (kind) return kind[0]
   const tool = command.trim().split(/\s+/)[0] ?? command

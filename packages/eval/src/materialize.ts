@@ -137,7 +137,7 @@ export interface SetupStep {
   args: string[]
 }
 
-export const commandLine = (step: SetupStep) => [step.cmd, ...step.args].join(' ')
+const commandLine = (step: SetupStep) => [step.cmd, ...step.args].join(' ')
 
 /** Setup the check needs before it runs: a bun lockfile and a Makefile `check` that does not install itself. */
 export function setupSteps(dir: string): SetupStep[] {

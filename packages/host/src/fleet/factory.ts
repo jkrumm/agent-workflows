@@ -143,7 +143,7 @@ export type FactorySession = z.infer<typeof FACTORY_SESSION>
 
 const FACTORY_COMMIT = z.object({ sha: z.string(), subject: z.string(), at: z.string() })
 
-export const FACTORY_FLEET = z.object({
+const FACTORY_FLEET = z.object({
   asks: z.array(z.object({ id: z.string(), kind: z.string(), text: z.string(), at: z.string() })).default([]),
   repos: z.array(
     z.object({
@@ -252,7 +252,7 @@ const firstLine = (text: string) =>
   )
 
 /** A factory failure as one warning: the command, the exit code and the first line of stderr, or the spawn error / timeout. */
-export function failureWarning(result: CommandResult, timeoutMs: number, label: string): string {
+function failureWarning(result: CommandResult, timeoutMs: number, label: string): string {
   if (result.overflow) return `${label} failed: output over the size limit`
   if (result.timedOut) return `${label} failed: timed out after ${Math.round(timeoutMs / 1000)} s`
   if (result.exitCode === null) return `${label} failed: ${firstLine(result.error ?? '') || 'could not be run'}`

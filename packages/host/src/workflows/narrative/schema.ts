@@ -3,8 +3,6 @@ import { isAbsolute } from 'node:path'
 import { z } from 'zod'
 import { BOOTSTRAP_COMMIT_LIMIT, BOOTSTRAP_DAYS, SINCE_COMMIT_LIMIT } from './gather.ts'
 
-export { NARRATIVE_SECTIONS }
-
 const SINCE_FORMAT = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/
 
 /** Whether the written calendar and clock values exist: `Date.parse` rolls 2026-02-30 and T24:00:00Z over instead of refusing them. */
@@ -100,7 +98,7 @@ export const NarrativeInput = z
   .strict()
 export type NarrativeInputValue = z.output<typeof NarrativeInput>
 
-export const NarrativeProse = z.object({
+const NarrativeProse = z.object({
   status: z
     .enum(['polished', 'declined', 'errored'])
     .describe(

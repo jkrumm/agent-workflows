@@ -16,10 +16,9 @@ import { doorCallerAuth } from './callers.ts'
 import type { AudioProcessConfig } from './config.ts'
 import { createDoor, type Door, type DoorHandlers, type Fetch } from './door.ts'
 
-export { callerAuth, type CallerAuth, parseDoorTokens, PLATFORM_CALLER, readDoorTokens } from './callers.ts'
-export { AUDIO_PORT, type AudioProcessConfig, loadAudioProcessConfig } from './config.ts'
+export { type CallerAuth, readDoorTokens } from './callers.ts'
+export { type AudioProcessConfig, loadAudioProcessConfig } from './config.ts'
 export {
-  createDoor,
   type Door,
   DOOR_WORKFLOW_IDS,
   type DoorEnd,
@@ -32,7 +31,7 @@ export {
 } from './door.ts'
 
 /** `src/workflows/<id>/module.ts`: the audio process's own tree, discovered like the host's. */
-export const AUDIO_MODULES_DIR = join(import.meta.dir, '..', 'workflows')
+const AUDIO_MODULES_DIR = join(import.meta.dir, '..', 'workflows')
 
 /**
  * What the audio process's workflow modules are built from: `HostDeps` plus the journal (its read pool and schema),
@@ -65,7 +64,7 @@ export interface AudioProcessOptions {
  * serves no capability over HTTP (the host does; the CLI would refuse a command two processes declare) and needs no
  * agent: the OpenCode host stays unbuilt until a workflow's first agent step.
  */
-export function audioProcess(options: AudioProcessOptions): ProcessDefinition {
+function audioProcess(options: AudioProcessOptions): ProcessDefinition {
   const { config } = options
   let runtime: Runtime | undefined
   let open = () => false

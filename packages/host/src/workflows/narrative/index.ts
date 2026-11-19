@@ -23,10 +23,10 @@ import {
   truncate,
 } from './sections.ts'
 
-export const NARRATIVE_WORKFLOW_ID = 'narrative'
-export const NARRATIVE_VERSION = '2026-11-03.1'
+const NARRATIVE_WORKFLOW_ID = 'narrative'
+const NARRATIVE_VERSION = '2026-11-03.1'
 /** `narrative`'s polish child: `prose-polish`'s steps, reporting a failure instead of failing. */
-export const NARRATIVE_POLISH_ID = 'narrative-polish'
+const NARRATIVE_POLISH_ID = 'narrative-polish'
 
 /** The one capability the workflow calls; any registry that has `narrative.compose` fits. */
 export type NarrativeCaller = {

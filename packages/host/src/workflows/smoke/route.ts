@@ -33,7 +33,7 @@ const resolved = (id: string, patch?: PatchInput): ResolvedRoute | null => {
 }
 
 /** Why a route is not a text probe, or null when it is. */
-export function refusal(route: ResolvedRoute): string | null {
+function refusal(route: ResolvedRoute): string | null {
   if (!MEDIA_WIRES.includes(route.wire) && route.price === undefined) return null
   return `${route.id} is a media route (wire ${route.wire}): make verify or its capability covers it, not smoke.route`
 }

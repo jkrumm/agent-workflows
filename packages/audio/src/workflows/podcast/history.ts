@@ -12,7 +12,7 @@ export interface Queryable {
   query<R extends Record<string, unknown>>(text: string, params?: unknown[]): Promise<{ rows: R[] }>
 }
 
-export const WORKFLOW_ID = 'podcast'
+const WORKFLOW_ID = 'podcast'
 
 /** The persisted script a transcript renders from: legacy `PersistedPodcastScript`. */
 export interface TranscriptScript {

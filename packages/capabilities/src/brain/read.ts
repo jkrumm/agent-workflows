@@ -21,7 +21,7 @@ const MAX_CANDIDATES = 10
 /** A `[[…]]` target longer than this is not a link; it also bounds the scan. */
 const MAX_TARGET_CHARS = 300
 
-export const readInput = z.object({
+const readInput = z.object({
   note: z
     .string()
     .min(1)
@@ -35,7 +35,7 @@ export const readInput = z.object({
     .default(20_000),
 })
 
-export const readOutput = z.discriminatedUnion('found', [
+const readOutput = z.discriminatedUnion('found', [
   z.object({
     found: z.literal(true),
     path: z.string().describe('Canonical vault-relative path of the note that was read'),

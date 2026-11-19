@@ -9,7 +9,7 @@ import type { ResolvedWebDeps } from '../web/deps.ts'
 import { within } from '../web/deps.ts'
 import { assertPublicUrl } from '../web/ssrf.ts'
 
-export const readImageInput = z.object({
+const readImageInput = z.object({
   source: z
     .string()
     .min(1)
@@ -26,7 +26,7 @@ export const readImageInput = z.object({
     ),
 })
 
-export const readImageOutput = z.object({
+const readImageOutput = z.object({
   source: z.string(),
   kind: z.enum(['url', 'file']),
   mime: z.string(),

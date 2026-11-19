@@ -4,7 +4,7 @@ import { decideBooleans } from '../judge-decide.ts'
 import { FactorySpecScreenInput, FactorySpecScreenOutput } from './schema.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
-export const FACTORY_SPEC_SCREEN_SCORER_VERSION = '2026-11-16.1'
+const FACTORY_SPEC_SCREEN_SCORER_VERSION = '2026-11-16.1'
 
 /** A case's expected verdict: what the owner would have wanted for the Spec. */
 export const FactorySpecScreenReference = z.object({
@@ -24,7 +24,7 @@ A precedent is the owner's own verdict on an earlier Spec: "needed: true" means 
  * What the judge reads: the rules, the Issue, the Spec and the precedents, never the screen's own verdict. `null` when the
  * input is not a screen request.
  */
-export function specScreenJudgeState(input: unknown): string | null {
+function specScreenJudgeState(input: unknown): string | null {
   const parsed = FactorySpecScreenInput.safeParse(input)
   if (!parsed.success) return null
   const { spec, issue, precedents } = parsed.data.request

@@ -6,7 +6,7 @@ import { AgwError } from './exit.ts'
 
 export type Env = Record<string, string | undefined>
 
-export const DEFAULT_URL = 'http://127.0.0.1:7791'
+const DEFAULT_URL = 'http://127.0.0.1:7791'
 const DEFAULT_BUDGET_S = 110
 // A hang guard, not a budget: a single model request gets at least 30 min (rules/agent-limits.md).
 const DEFAULT_TIMEOUT_S = 1800
@@ -122,7 +122,7 @@ const PROCESS_NAME = /^[a-z][a-z0-9-]*$/
 const trimUrl = (url: string) => url.trim().replace(/\/+$/, '')
 
 /** `AGW_PROCESSES=<name>=<url>[,<name>=<url>…]`; a malformed list is a usage error, never a silently dropped process. */
-export function parseProcesses(raw: string | undefined, hostUrl: string): ProcessTarget[] {
+function parseProcesses(raw: string | undefined, hostUrl: string): ProcessTarget[] {
   const out: ProcessTarget[] = []
   const bad = (message: string) =>
     new AgwError('usage', `AGW_PROCESSES: ${message}`, {

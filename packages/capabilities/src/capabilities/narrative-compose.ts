@@ -45,7 +45,7 @@ export const MAX_PAGE_CHARS = 100_000
 const MAX_COMMITS_CHARS = 40_000
 const MAX_SESSIONS_CHARS = 60_000
 
-export const narrativeComposeInput = z.object({
+const narrativeComposeInput = z.object({
   project: z.string().min(1).max(200).describe('Vault page name for this project, e.g. "weatherorb"'),
   cwd: z.string().min(1).max(1_000).describe('Absolute path of the repo the facts were gathered from'),
   since: z.string().max(100).nullable().describe('The ISO cutoff the caller asked for; null bootstraps from history'),
@@ -65,7 +65,7 @@ export const narrativeComposeInput = z.object({
 })
 export type NarrativeComposeInput = z.input<typeof narrativeComposeInput>
 
-export const narrativeComposeOutput = WORKER_OUTPUT.extend({ model: z.string().describe('The route’s model') })
+const narrativeComposeOutput = WORKER_OUTPUT.extend({ model: z.string().describe('The route’s model') })
 export type NarrativeComposeOutput = z.output<typeof narrativeComposeOutput>
 
 const SKILL = readFileSync(new URL('./narrative-skill.md', import.meta.url), 'utf8')

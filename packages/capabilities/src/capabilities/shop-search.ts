@@ -3,7 +3,7 @@ import { defineCapability } from '../procedure.ts'
 import { SEARCH_TTL_MS, type ShopFetch } from './shop-fetch.ts'
 import { AMAZON_ORIGIN, parseSearch, type SearchResult, searchResultSchema } from './shop-parse.ts'
 
-export const searchInput = z.object({
+const searchInput = z.object({
   query: z
     .string()
     .trim()
@@ -16,7 +16,7 @@ export const searchInput = z.object({
   fresh: z.boolean().default(false).describe('Read the page again even if this process read it within the last hour'),
 })
 
-export const searchOutput = z.object({
+const searchOutput = z.object({
   query: z.string(),
   url: z.string().describe('The search page that was read'),
   results: z.array(searchResultSchema),
@@ -27,14 +27,14 @@ export const searchOutput = z.object({
   table: z.string().describe('The results as a plain table, for `--format plain`'),
 })
 
-export function searchUrl(query: string): string {
+function searchUrl(query: string): string {
   return `${AMAZON_ORIGIN}/s?k=${encodeURIComponent(query).replace(/%20/g, '+')}`
 }
 
 const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text)
 
 /** One line per result: position, ASIN, price, stars (reviews), title, URL. Plain columns, no drawing characters. */
-export function renderTable(results: SearchResult[]): string {
+function renderTable(results: SearchResult[]): string {
   if (results.length === 0) return 'no results'
   const rows = results.map((r) => [
     String(r.position),

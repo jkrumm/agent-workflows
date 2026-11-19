@@ -12,7 +12,7 @@ export interface LoadSource {
   apply: (ms: number) => void
 }
 
-export const hostLoad: LoadSource = {
+const hostLoad: LoadSource = {
   load: () => loadavg()[0] ?? 0,
   cores: availableParallelism,
   apply: setDefaultTimeout,

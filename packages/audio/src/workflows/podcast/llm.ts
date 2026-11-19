@@ -444,7 +444,7 @@ function parseArguments(raw: string): unknown {
 }
 
 /** Chat completions: `native` is dropped; a chat reply is its own native form and passes untouched. */
-export function renderChat(transcript: WireMessage[]): WireMessage[] {
+function renderChat(transcript: WireMessage[]): WireMessage[] {
   return transcript.map((m) => {
     if (!m.native) return m
     const { native: _native, ...message } = m
@@ -453,7 +453,7 @@ export function renderChat(transcript: WireMessage[]): WireMessage[] {
 }
 
 /** Responses: the system message stays (the body lifts it into `instructions`), tool results become `function_call_output`. */
-export function renderResponses(transcript: WireMessage[]): WireMessage[] {
+function renderResponses(transcript: WireMessage[]): WireMessage[] {
   return transcript.flatMap((m): WireMessage[] => {
     if (m.role === 'tool') return [{ type: 'function_call_output', call_id: m.tool_call_id, output: m.content ?? '' }]
     if (m.role !== 'assistant') return [m]
@@ -475,7 +475,7 @@ export function renderResponses(transcript: WireMessage[]): WireMessage[] {
  * Messages: the system prompt apart, an assistant turn as content blocks, consecutive results as ONE user turn. Every
  * message is a block array, so the transcript is the same bytes from one round to the next.
  */
-export function renderMessages(transcript: WireMessage[]): { system: string; messages: WireMessage[] } {
+function renderMessages(transcript: WireMessage[]): { system: string; messages: WireMessage[] } {
   const system: string[] = []
   const messages: WireMessage[] = []
   let results: unknown[] | undefined

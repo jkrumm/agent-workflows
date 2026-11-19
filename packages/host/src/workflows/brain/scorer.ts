@@ -5,13 +5,13 @@ import { type BrainInputValue, BrainOutput } from './schema.ts'
 import { foldPath } from './tools.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
-export const BRAIN_SCORER_VERSION = '2026-10-29.1'
+const BRAIN_SCORER_VERSION = '2026-10-29.1'
 
 /**
  * A case's expected result (docs/research/2026-10-29-wave7-ports.md §brain), written before any run: the vault note(s)
  * the answer lives in, and the 1-3 key facts a correct answer states.
  */
-export const BrainReference = z.object({
+const BrainReference = z.object({
   notes: z.array(z.string().min(1)).min(1).max(2),
   facts: z.array(z.string().min(1)).min(1).max(3),
 })

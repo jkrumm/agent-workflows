@@ -13,7 +13,7 @@ const MEMO_MS = 15_000
 /** Distinct reported accounts beyond the CLI's registry that `record` accepts. */
 export const ACCOUNT_SLACK = 4
 /** A sample older than this is `stale`: the picker's eligibility cutoff. */
-export const STALE_AFTER_MS = 6 * 3600 * 1000
+const STALE_AFTER_MS = 6 * 3600 * 1000
 /** Account id shape: the one definition, used by the CLI parser and the report body. */
 export const ACCOUNT_ID_PATTERN = '^[a-z][a-z0-9-]{0,15}$'
 const ACCOUNT_ID_RE = new RegExp(ACCOUNT_ID_PATTERN)

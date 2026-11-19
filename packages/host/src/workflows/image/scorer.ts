@@ -5,10 +5,10 @@ import type { Scorer, Verdict } from '@agent-workflows/runtime'
 import { ImageOutput, type ImageInputValue } from './schema.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
-export const IMAGE_SCORER_VERSION = '2026-10-29.2'
+const IMAGE_SCORER_VERSION = '2026-10-29.2'
 
 /** The share of pixels that must be below, and at, full opacity for a cutout to count as one (the pre-registered thresholds). */
-export const ALPHA_MIN_SHARE = 0.05
+const ALPHA_MIN_SHARE = 0.05
 
 function readBytes(path: string): Uint8Array | null {
   if (!isAbsolute(path)) return null

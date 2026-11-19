@@ -7,9 +7,9 @@ import { z } from 'zod'
 export const MAX_SOURCE_CHARS = 200_000
 export const MIN_MINUTES = 3
 export const MAX_MINUTES = 60
-export const DEFAULT_MINUTES = 20
-export const MAX_SOURCE_PATHS = 20
-export const DEFAULT_SERIES = 'Brain Sonderausgabe'
+const DEFAULT_MINUTES = 20
+const MAX_SOURCE_PATHS = 20
+const DEFAULT_SERIES = 'Brain Sonderausgabe'
 
 export const Language = z.enum(['de', 'en'])
 
@@ -50,9 +50,9 @@ export const PodcastInput = z
   })
 export type PodcastRequest = z.output<typeof PodcastInput>
 
-export const Speaker = z.enum(['A', 'B'])
+const Speaker = z.enum(['A', 'B'])
 
-export const Turn = z.object({
+const Turn = z.object({
   speaker: Speaker,
   text: z.string(),
   /** A delivery key where the moment changes; absent = the host's baseline. */
@@ -107,7 +107,7 @@ export const Profile = z.object({
     .optional(),
 })
 
-export const Chapter = z.object({ title: z.string(), startMs: z.number().optional() })
+const Chapter = z.object({ title: z.string(), startMs: z.number().optional() })
 
 /** What the room reads back from `podcast.produce`'s output; everything else it returns is passed through as is. */
 export const ProduceResult = z.looseObject({

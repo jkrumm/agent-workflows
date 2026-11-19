@@ -3,10 +3,10 @@ import { z } from 'zod'
 import { CHECK_OUTPUT, type CheckInput } from './schema.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
-export const CHECK_SCORER_VERSION = '2026-10-28.1'
+const CHECK_SCORER_VERSION = '2026-10-28.1'
 
 /** A regression case's expected result: the recorded `passed` and per-step outcome (`CheckCase.legacy`). */
-export const CheckReference = z.object({
+const CheckReference = z.object({
   passed: z.boolean(),
   steps: z.array(z.object({ name: z.string(), passed: z.boolean() })),
 })

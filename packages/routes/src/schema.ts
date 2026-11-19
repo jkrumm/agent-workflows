@@ -14,7 +14,7 @@ export const EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as cons
 export type Effort = (typeof EFFORTS)[number]
 
 /** Sanity ceiling; the largest output limit in agent-gateway's model registry is 128k. */
-export const MAX_OUTPUT_TOKENS = 200_000
+const MAX_OUTPUT_TOKENS = 200_000
 const maxOutputTokens = z.int().positive().max(MAX_OUTPUT_TOKENS)
 
 /**
@@ -125,7 +125,7 @@ function effortRule(r: { model: string; effort?: Effort }, ctx: z.RefinementCtx)
 }
 
 /** The route a call moves to once when the primary fails on provider balance (HTTP 402, or 503 "Insufficient Balance"). */
-export const fallbackSchema = z
+const fallbackSchema = z
   .strictObject(routeFields)
   .refine(...decisionRule)
   .superRefine(effortRule)
@@ -170,7 +170,7 @@ const patchFields = {
 }
 
 /** A patch of a route's fallback: the same fields, merged over the table's fallback. `null` removes the fallback. */
-export const fallbackPatchSchema = z.strictObject(patchFields)
+const fallbackPatchSchema = z.strictObject(patchFields)
 export type FallbackPatch = z.infer<typeof fallbackPatchSchema>
 
 /**

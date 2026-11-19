@@ -6,7 +6,7 @@ import type { ToolDef } from './llm.ts'
 // fence means. The token is unknown to the text, so the text cannot close the fence (the platform's prose and review
 // prompts use the same device, capabilities `prose-prompts.ts`).
 
-export const FENCE_LABEL = 'UNTRUSTED_DATA'
+const FENCE_LABEL = 'UNTRUSTED_DATA'
 
 /** A fresh per-loop token. */
 export const fenceToken = (): string => crypto.randomUUID().replaceAll('-', '').slice(0, 16)

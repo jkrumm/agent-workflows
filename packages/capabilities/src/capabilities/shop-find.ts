@@ -8,7 +8,7 @@ import { type createShopItem, productBlock } from './shop-item.ts'
 import { type Item, itemSchema } from './shop-parse.ts'
 import type { createShopSearch } from './shop-search.ts'
 
-export const findInput = z.object({
+const findInput = z.object({
   query: z.string().trim().min(1).max(200).describe('What to search for on amazon.de'),
   ask: z
     .string()
@@ -41,7 +41,7 @@ const candidate = z.object({
   error: z.string().nullable().describe('Why this hit could not be read, when it could not'),
 })
 
-export const findOutput = z.object({
+const findOutput = z.object({
   query: z.string(),
   criteria: z.string(),
   searched: z.int().describe('Non-sponsored hits on the search page'),

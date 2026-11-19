@@ -121,7 +121,7 @@ export interface TurnPacingOptions {
 }
 
 /** The intended pacing for a caller that has not wired its own through. */
-export const DEFAULT_PACING: TurnPacingOptions = { denseThreshold: 0.12, denseSlowdown: 0.06 }
+const DEFAULT_PACING: TurnPacingOptions = { denseThreshold: 0.12, denseSlowdown: 0.06 }
 
 export interface SynthTurnInput {
   text: string

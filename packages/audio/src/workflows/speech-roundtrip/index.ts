@@ -24,7 +24,7 @@ import {
 } from './schema.ts'
 import { speechRoundtripScorer } from './scorer.ts'
 
-export const SPEECH_ROUNDTRIP_VERSION = '2026-11-03.1'
+const SPEECH_ROUNDTRIP_VERSION = '2026-11-03.1'
 /** What the workflow is apart from its body: the host process holds it to start and score eval runs (`foreignOf`). */
 export const SPEECH_ROUNDTRIP_SHELL = {
   id: 'speech-roundtrip',

@@ -15,10 +15,10 @@ export interface StoredFile {
   bytes: number
 }
 
-export const sha256 = (bytes: Uint8Array): string => new Bun.CryptoHasher('sha256').update(bytes).digest('hex')
+const sha256 = (bytes: Uint8Array): string => new Bun.CryptoHasher('sha256').update(bytes).digest('hex')
 
 /** Write `bytes` to `path` atomically (a temp file in the same directory, then a rename): never a half file. */
-export async function writeAtomic(path: string, bytes: Uint8Array | string): Promise<void> {
+async function writeAtomic(path: string, bytes: Uint8Array | string): Promise<void> {
   const tmp = `${path}.tmp-${crypto.randomUUID().slice(0, 8)}`
   await mkdir(dirname(path), { recursive: true, mode: 0o700 })
   try {

@@ -75,7 +75,7 @@ import type { Dossier, EpisodeBrief, EpisodeProfile, EpisodeSummary } from './ty
 import { EMPTY_DOSSIER } from './types.ts'
 import { mapConcurrent } from './vocab.ts'
 
-export const PODCAST_VERSION = '2026-11-03.1'
+const PODCAST_VERSION = '2026-11-03.1'
 
 /** What the workflow is apart from its body: the host process holds it to start and score eval runs (`foreignOf`). */
 export const PODCAST_SHELL = {
@@ -85,8 +85,8 @@ export const PODCAST_SHELL = {
   output: PodcastOutput,
   scorer: podcastScorer,
 } as const satisfies Omit<WorkflowDefinition<typeof PodcastInput, typeof PodcastOutput>, 'run' | 'concurrency' | 'arm'>
-export { ProduceInput, type ProduceInputValue } from './produce-input.ts'
-export { PodcastInput, PodcastOutput } from './schema.ts'
+export { type ProduceInputValue } from './produce-input.ts'
+export { PodcastInput } from './schema.ts'
 
 /** What the workflow is built from. `history` and `journal` read the journal; the rest defaults to production. */
 export interface PodcastDeps {
@@ -636,7 +636,7 @@ export function createPodcastWorkflow(deps: PodcastDeps) {
 type Produced = ReturnType<typeof ProduceResult.parse>
 
 /** The final script: the metadata pass field by field over the outline's drafts, chapter titles per segment. */
-export function assembleScript(params: {
+function assembleScript(params: {
   outline: Outline
   segments: ScriptSegment[]
   metadata: EpisodeMetadata | null
@@ -664,5 +664,3 @@ export function assembleScript(params: {
     ...(openingFrame.length > 0 ? { openingFrame } : {}),
   }
 }
-
-export { defaultEpisodeBrief }

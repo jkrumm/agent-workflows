@@ -36,7 +36,7 @@ const COMMIT_MARK = '\x01'
 const FIELD = '\x02'
 
 /** `old => new` and `dir/{old => new}/f` numstat paths to the path after the change. */
-export function renameTarget(path: string): string {
+function renameTarget(path: string): string {
   if (!path.includes(' => ')) return path
   if (!path.includes('{')) return path.slice(path.indexOf(' => ') + 4)
   return path.replace(/\{[^{}]* => ([^{}]*)\}/, '$1').replace(/\/{2,}/g, '/')

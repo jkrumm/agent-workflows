@@ -1,4 +1,3 @@
-// fallow-ignore-file unused-file -- discovered by `Bun.Glob('*/module.ts')` at boot, which static analysis cannot see.
 import { join } from 'node:path'
 import { PlainCase, readCases } from '@agent-workflows/eval'
 import type { Json } from '@agent-workflows/runtime'

@@ -50,7 +50,7 @@ export interface Exec {
   which(command: string): string | null
 }
 
-export const DEFAULT_TAIL_CHARS = 20_000
+const DEFAULT_TAIL_CHARS = 20_000
 const KILL_GRACE_MS = 5_000
 /** Once the leader is gone the pipes close; a writer that survived the group kill must not wedge the step. */
 const DRAIN_GRACE_MS = 5_000

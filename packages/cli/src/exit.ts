@@ -35,7 +35,6 @@ export const EXIT_MEANING: Record<ExitKind, string> = {
 }
 
 /** Head of an error line: `{"error":{"kind":..,"code":..,"message":..,"hint":..` stays under 400 bytes with these. */
-export const HEAD_BYTES = 400
 const MESSAGE_HEAD = 170
 const HINT_HEAD = 150
 /** Bytes a string takes inside a JSON string literal: multi-byte characters and escapes count in full. */

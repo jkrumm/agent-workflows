@@ -57,7 +57,7 @@ const executable = (path: string): boolean => {
 }
 
 /** The page as the owner is told about it: origin and path, never the query, the fragment or credentials (a URL can carry secrets). */
-export function nameOf(url: string): string {
+function nameOf(url: string): string {
   try {
     const parsed = new URL(url)
     return `${parsed.origin}${parsed.pathname}`

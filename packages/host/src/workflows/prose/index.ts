@@ -22,8 +22,8 @@ import {
 import { proseScorer } from './scorer.ts'
 import { checkVoiceGuide } from './voice.ts'
 
-export const PROSE_REVIEW_VERSION = '2026-10-29.1'
-export const PROSE_GATE_VERSION = '2026-10-29.1'
+const PROSE_REVIEW_VERSION = '2026-10-29.1'
+const PROSE_GATE_VERSION = '2026-10-29.1'
 
 type Review = ProseReviewOutputValue['review'] & Pick<ProseReviewOutputValue, 'visualSuggestions'> & { model: string }
 

@@ -5,23 +5,23 @@ import { z } from 'zod'
 // what agent-gateway's `GET /api/overview` returned under `data` (minus the retired dispatch fields, `summary.dispatch` included).
 // The agents and the human queue are the factory's read API (`factory read overview`, `factory read sessions --live`) mapped on these shapes.
 
-export const AGENT_SOURCE = z.enum(['factory'])
+const AGENT_SOURCE = z.enum(['factory'])
 export type AgentSource = z.infer<typeof AGENT_SOURCE>
 
-export const AGENT_STATE = z.enum(['needs_you', 'working', 'idle', 'stale', 'done', 'unknown'])
+const AGENT_STATE = z.enum(['needs_you', 'working', 'idle', 'stale', 'done', 'unknown'])
 export type AgentState = z.infer<typeof AGENT_STATE>
 
 /** The terminal's own word, runner-neutral despite the name (Argo stores it as `herdrStatus`): hc's OSC 7501 state. */
-export const HERDR_STATUS = z.enum(['working', 'idle', 'blocked', 'done', 'unknown'])
+const HERDR_STATUS = z.enum(['working', 'idle', 'blocked', 'done', 'unknown'])
 export type HerdrAgentStatus = z.infer<typeof HERDR_STATUS>
 
-export const CLAUDE_STATUS = z.enum(['idle', 'busy', 'waiting'])
+const CLAUDE_STATUS = z.enum(['idle', 'busy', 'waiting'])
 export type ClaudeAgentStatus = z.infer<typeof CLAUDE_STATUS>
 
-export const RECOMMENDATION = z.enum(RECOMMENDATIONS)
+const RECOMMENDATION = z.enum(RECOMMENDATIONS)
 export type Recommendation = z.infer<typeof RECOMMENDATION>
 
-export const CONFIDENCE = z.enum(CONFIDENCES)
+const CONFIDENCE = z.enum(CONFIDENCES)
 export type Confidence = z.infer<typeof CONFIDENCE>
 
 export const RECOMMENDATION_ICON: Record<Recommendation, string> = {
@@ -82,7 +82,7 @@ export const PROJECT = z.object({
 })
 export type Project = z.infer<typeof PROJECT>
 
-export const SUMMARY = z.object({
+const SUMMARY = z.object({
   needsYou: z.number(),
   working: z.number(),
   idle: z.number(),
@@ -92,7 +92,7 @@ export const SUMMARY = z.object({
 export type Summary = z.infer<typeof SUMMARY>
 
 /** One open `human` ask of the factory's fleet view. `cmd` is always null now. Never fed to the model. */
-export const HUMAN_QUEUE_ENTRY = z.object({
+const HUMAN_QUEUE_ENTRY = z.object({
   id: z.string(),
   askedAt: z.string().nullable(),
   question: z.string(),
@@ -100,7 +100,7 @@ export const HUMAN_QUEUE_ENTRY = z.object({
 })
 export type HumanQueueEntry = z.infer<typeof HUMAN_QUEUE_ENTRY>
 
-export const SNAPSHOT = z.object({
+const SNAPSHOT = z.object({
   generatedAt: z.number().describe('Epoch ms this snapshot was produced'),
   staleAfterHours: z.number(),
   summary: SUMMARY,
@@ -111,7 +111,7 @@ export const SNAPSHOT = z.object({
 export type Snapshot = z.infer<typeof SNAPSHOT>
 
 /** The classify seat's verdict for one agent, with the project and session the host adds. */
-export const OVERVIEW_AGENT = z.object({
+const OVERVIEW_AGENT = z.object({
   id: z.string(),
   sessionId: z.string().nullable(),
   project: z.string(),
@@ -149,14 +149,14 @@ export const ACCOUNT_QUOTA = z.object({
 })
 export type AccountQuota = z.infer<typeof ACCOUNT_QUOTA>
 
-export const LANE_PICK = z.object({ picked: z.string(), reason: z.string(), stale: z.boolean() })
+const LANE_PICK = z.object({ picked: z.string(), reason: z.string(), stale: z.boolean() })
 export type LanePick = z.infer<typeof LANE_PICK>
 
 export const LANE_PICKS = ['interactive', 'wave', 'fan', 'headless'] as const
 export type LanePicks = Partial<Record<(typeof LANE_PICKS)[number], LanePick>>
 
 /** The merged agent: the snapshot's fields plus the newest verdict, nulled when the agent moved after it. */
-export const ENRICHED_AGENT = AGENT.extend({
+const ENRICHED_AGENT = AGENT.extend({
   recommendation: RECOMMENDATION.nullable(),
   standing: z.string().nullable(),
   blocker: z.string().nullable(),

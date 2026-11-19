@@ -16,13 +16,13 @@ export const BOOTSTRAP_SESSION_LIMIT = 12
 export const SINCE_SESSION_LIMIT = 24
 /** Transcripts opened per included one, at most, whether or not they yield prose: a project of hundreds of quiet files reads a bounded few. */
 export const SESSION_READ_FACTOR = 3
-export const MIN_SESSION_FILE_BYTES = 4 * 1024
+const MIN_SESSION_FILE_BYTES = 4 * 1024
 /** Never read a whole transcript (they reach 16 MB): only this tail. */
-export const SESSION_TAIL_BYTES = 1024 * 1024
+const SESSION_TAIL_BYTES = 1024 * 1024
 export const SESSIONS_MAX_BYTES = 40 * 1024
 export const COMMITS_MAX_BYTES = 30 * 1024
-export const MIN_PROSE_BLOCK_CHARS = 200
-export const MAX_PROSE_BLOCKS_PER_SESSION = 3
+const MIN_PROSE_BLOCK_CHARS = 200
+const MAX_PROSE_BLOCKS_PER_SESSION = 3
 
 export interface SessionFile {
   file: string

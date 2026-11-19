@@ -6,7 +6,7 @@ import { hexRgb } from './color.ts'
 import { ImageIconInput, type ImageIconInputValue, ImageIconOutput, type ImageIconOutputValue } from './schema.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
-export const IMAGE_ICON_SCORER_VERSION = '2026-11-09.1'
+const IMAGE_ICON_SCORER_VERSION = '2026-11-09.1'
 
 /**
  * What a careful reader expects of one run beyond the output's own consistency: the model steps that ran (their order

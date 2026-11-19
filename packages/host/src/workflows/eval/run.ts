@@ -23,13 +23,13 @@ import { type EvalCase, readSuite, type Suites, suiteIds, suiteWorkflow } from '
 export const EVAL_RUN_ID = 'eval.run'
 /** Estimates read the latest this many done runs of the workflow. */
 const ESTIMATE_HISTORY = 50
-export const DEFAULT_CONCURRENCY = 2
+const DEFAULT_CONCURRENCY = 2
 /** How often a case run is polled: for its end, then for its record. */
 const CASE_POLL_MS = 500
 /** How long an ended case run's record may take before its last-read cost is reported as a lower bound. */
-export const RECORD_SETTLE_MS = 120_000
+const RECORD_SETTLE_MS = 120_000
 /** How long a case run of a workflow another process serves may stay pending before nobody is taken to be serving it. */
-export const NOT_CLAIMED_MS = 10 * 60_000
+const NOT_CLAIMED_MS = 10 * 60_000
 
 export interface EvalRunOptions {
   env?: Record<string, string | undefined>
@@ -46,7 +46,7 @@ export interface EvalRunOptions {
   casePollMs?: number
 }
 
-export const consoleLogger: Logger = {
+const consoleLogger: Logger = {
   warn: (message, meta) => console.warn(`[agw-eval] ${message}`, meta ?? ''),
   error: (message, meta) => console.error(`[agw-eval] ${message}`, meta ?? ''),
 }
@@ -60,7 +60,7 @@ export const JsonRecord = z.record(z.string(), z.unknown()) as unknown as z.ZodT
  * route, a bad patch, a Sonnet at effort none, an agent model the OpenCode server does not serve are each refused,
  * naming the route). The CLI reads `--arm <file>` and sends the file's JSON, never the path.
  */
-export const ArmInput = z
+const ArmInput = z
   .strictObject({
     routes: z
       .record(z.string(), JsonRecord)
@@ -81,7 +81,7 @@ export const ArmInput = z
   )
 
 /** The `agw eval run` input over the discovered suites' ids. */
-export const evalRunInput = (ids: [string, ...string[]]) =>
+const evalRunInput = (ids: [string, ...string[]]) =>
   z
     .object({
       workflow: z.enum(ids).describe('The workflow to replay its recorded cases against'),
@@ -105,7 +105,7 @@ export const evalRunInput = (ids: [string, ...string[]]) =>
     })
     .strict()
 
-export const CaseResult = z.object({
+const CaseResult = z.object({
   caseId: z.string(),
   status: z.enum(['scored', 'skipped', 'error']),
   runId: z.string().optional(),
@@ -155,13 +155,13 @@ const GroupSummary = z.object({
   unpricedCalls: z.number().int().describe('Calls no case cost includes: the total is a lower bound while above 0'),
 })
 
-export const RunSummary = GroupSummary.extend({
+const RunSummary = GroupSummary.extend({
   groups: z
     .record(z.string(), GroupSummary)
     .describe('The same figures per case group (research: per depth); empty when the suite declares no groups'),
 })
 
-export const evalRunOutput = (ids: [string, ...string[]]) =>
+const evalRunOutput = (ids: [string, ...string[]]) =>
   z.object({
     workflow: z.enum(ids),
     ran: z.boolean().describe('False: the plan only (no --yes)'),
@@ -181,9 +181,9 @@ export const evalRunOutput = (ids: [string, ...string[]]) =>
     summary: RunSummary,
   })
 
-export const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
+const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
-export function select(cases: EvalCase[], ids: string | undefined, limit: number | undefined): EvalCase[] {
+function select(cases: EvalCase[], ids: string | undefined, limit: number | undefined): EvalCase[] {
   let selected = cases
   if (ids) {
     const wanted = [
@@ -375,7 +375,7 @@ async function boundedPool<T>(items: T[], limit: number, fn: (item: T, index: nu
 
 const caseKey = (evalRunId: string, caseId: string) => `eval:${evalRunId}:${caseId}`
 
-export async function replay(deps: ReplayDeps, job: Job): Promise<CaseResult[]> {
+async function replay(deps: ReplayDeps, job: Job): Promise<CaseResult[]> {
   const runtime = deps.slot.get()
   const { target } = job
   const byId = new Map(job.cases.map((c) => [c.id, c]))
@@ -553,7 +553,7 @@ const CANCEL_SETTLE_MS = 30_000
  * Where a case's clone lives: derived from the case key, so the process that adopts the case run after a shutdown
  * finds the tree the first one kept and removes it. Hex only: a repo-shell deny rule can never match it.
  */
-export function caseTreeDir(tmpRoot: string | undefined, key: string): string {
+function caseTreeDir(tmpRoot: string | undefined, key: string): string {
   return join(tmpRoot ?? tmpdir(), `agw_eval_case_${createHash('sha256').update(key).digest('hex').slice(0, 16)}`)
 }
 

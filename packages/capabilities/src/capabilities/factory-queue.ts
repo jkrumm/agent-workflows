@@ -18,7 +18,7 @@ import {
 // `prio` is the factory's, never the model's: the order the seat proposes may break a prio tie and nothing more. Titles and
 // summaries are untrusted data; the Issues shown are the only ones the answer may name, and the guard refuses any other.
 
-export const QUEUE_STATE = 'queued'
+const QUEUE_STATE = 'queued'
 
 const MAX_ISSUES = 40
 const MAX_EDGES = 10
@@ -280,7 +280,7 @@ ${JSON_ANSWER}
 
 {"edges": [{"issue": "<queued issue id>", "after": "<issue id>", "reason": "${REASON_ASK}"}], "drop": [{"issue": "<queued issue id>", "after": "<issue id it waits for now>", "reason": "${REASON_ASK}"}], "order": ["<queued issue id>"], "reason": "${REASON_ASK}"}`
 
-export function buildFactoryQueuePrompt(input: FactoryQueueInput, nonce: string): string {
+function buildFactoryQueuePrompt(input: FactoryQueueInput, nonce: string): string {
   const safe = neutralizeFenceMarkers
   const line = (i: FactoryQueueInput['issues'][number]) =>
     `- ${i.id} [${i.kind}, ${i.state}, prio ${i.prio}, open ${i.ageMinutes} min, size ${i.size ?? 'unknown'}]: ${safe(i.title)}` +

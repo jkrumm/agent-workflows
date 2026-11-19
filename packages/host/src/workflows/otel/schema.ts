@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const ENVS = ['local', 'prod'] as const
+const ENVS = ['local', 'prod'] as const
 
 const DURATION = /^[1-9]\d{0,2}[mhd]$/
 
@@ -27,7 +27,7 @@ function absoluteWindow(value: string): { from: Date; to: Date } | null {
   return a && b && a < b ? { from: a, to: b } : null
 }
 
-export const isWindow = (value: string) => DURATION.test(value) || absoluteWindow(value) !== null
+const isWindow = (value: string) => DURATION.test(value) || absoluteWindow(value) !== null
 
 export const OtelInput = z
   .object({
@@ -77,7 +77,7 @@ export const Query = z.object({
 })
 export type Query = z.output<typeof Query>
 
-export const Finding = z.object({
+const Finding = z.object({
   service: z.string(),
   summary: z.string(),
   severity: Severity,
