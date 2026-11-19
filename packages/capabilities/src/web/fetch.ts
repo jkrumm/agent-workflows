@@ -697,7 +697,8 @@ export const createFetch = (deps: ResolvedWebDeps) => {
           { legs: [], wallMs: Date.now() - startedAt },
         )
       }
-      const flightKey = `${render ? 'render' : 'plain'} ${key}`
+      // An assisted read can wait on the owner and ends differently: it never shares a flight with one that does not.
+      const flightKey = `${render ? 'render' : 'plain'}${humanAssist ? '+assist' : ''} ${key}`
       // Parallel callers of one page share the read already under way: it paid, they did not read.
       while (!fresh) {
         const flight = inFlight.get(flightKey)
