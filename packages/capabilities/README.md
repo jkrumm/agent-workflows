@@ -53,7 +53,7 @@ The runtime package defines its own step `addUsage`. This one is structurally id
 
 ### Typed errors
 
-Declared on every operation (they land in the OpenAPI document), keyed by `code` so the CLI generator can map them to exit codes. Input validation failures are oRPC's `BAD_REQUEST` (400, `defined: false`); anything else a handler throws is an `INTERNAL_SERVER_ERROR` whose message is `Internal Server Error: <Name>: <message>` (query strings and credential-looking values removed, cut to 300 characters) and which is logged once with the capability id and the stack.
+Declared on every operation (they land in the OpenAPI document), keyed by `code` so the CLI generator can map them to exit codes. Input validation failures are oRPC's `BAD_REQUEST` (400, `defined: false`); a nested capability call's typed failure (`web.read` over `web.fetch`) keeps its code and status; anything else a handler throws is an `INTERNAL_SERVER_ERROR` whose message is `Internal Server Error: <Name>: <message>` (query strings and credential-looking values removed, cut to 300 characters) and which is logged once with the capability id and the stack.
 
 | Code | Status | Meaning |
 |-|-|-|

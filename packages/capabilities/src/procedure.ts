@@ -50,6 +50,12 @@ const mapErrors = (capability: string) =>
       return await next()
     } catch (error) {
       if (error instanceof ORPCError) throw error
+      // A capability that calls another one (`web.read` over `web.fetch`) gets its failure as a call error; the typed
+      // answer of the inner call is the outer call's answer, never an untyped 500 that pages as an error log.
+      if (error instanceof CapabilityCallError && CODES.includes(error.code)) {
+        const code = error.code as keyof typeof ERRORS
+        throw errors[code]({ message: error.message, data: error.data as never, cause: error })
+      }
       if (error instanceof CapabilityError && CODES.includes(error.code)) {
         const code = error.code as keyof typeof ERRORS
         throw errors[code]({ message: error.message, data: error.data as never, cause: error })

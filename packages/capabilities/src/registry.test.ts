@@ -89,6 +89,47 @@ describe('one definition, two doors', () => {
     }
   })
 
+  test('a nested call that fails typed answers with that typed error, not an untyped 500', async () => {
+    const inner = defineCapability({
+      id: 'test.inner',
+      summary: 'fails typed',
+      input: z.object({}),
+      output: z.object({}),
+      handler: () => {
+        throw fail('UPSTREAM_ERROR', 'test.inner: blocked (cloudflare-challenge)', { status: 403 })
+      },
+    })
+    const outer = defineCapability({
+      id: 'test.outer',
+      summary: 'calls test.inner without catching',
+      input: z.object({}),
+      output: z.object({}),
+      handler: (_input, ctx) => inner.call({}, ctx),
+    })
+    const registry = createRegistry([inner, outer])
+    const s = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: registry.fetch })
+    const logged: unknown[][] = []
+    const original = console.error
+    console.error = (...args: unknown[]) => void logged.push(args)
+    try {
+      const viaImport = await registry.call('test.outer', {}).catch(errorJson)
+      const viaHttp = await post(`http://127.0.0.1:${s.port}`, '/test/outer', {})
+      expect(viaHttp.status).toBe(502)
+      expect(viaHttp.body).toEqual(viaImport)
+      expect(viaImport).toEqual({
+        defined: true,
+        code: 'UPSTREAM_ERROR',
+        status: 502,
+        message: 'test.inner: blocked (cloudflare-challenge)',
+        data: { status: 403 },
+      })
+      expect(logged).toEqual([])
+    } finally {
+      console.error = original
+      void s.stop(true)
+    }
+  })
+
   test('an untyped throw is logged once and answered as a 500 that names its cause, the same on both doors', async () => {
     const boom = defineCapability({
       id: 'test.boom',
