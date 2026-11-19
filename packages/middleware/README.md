@@ -158,10 +158,9 @@ call, spans still queued are lost on `process.exit`, on a natural exit and on SI
 - **S2's open question, answered.** On Bun 1.4.3, `exporter-trace-otlp-proto` 0.300.0 reads
   `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_HEADERS` itself.
 
-Packages, pinned exactly: `@opentelemetry/sdk-trace` 3.0.0, `exporter-trace-otlp-proto` 0.300.0,
-`context-async-hooks` 3.0.0, `core` 3.0.0, `resources` 3.0.0, `api` 1.10.0. `context-async-hooks` is a dependency
-for hosts that want an active context. The hooks don't wrap step bodies, so this package parents every span
-explicitly.
+Packages, pinned exactly: `@opentelemetry/sdk-trace` 3.1.1, `exporter-trace-otlp-proto` 0.301.2,
+`core` 3.1.1, `resources` 3.1.1, `api` 1.10.0. Hosts that want an active context add `context-async-hooks`
+themselves. The hooks don't wrap step bodies, so this package parents every span explicitly.
 
 ## Usage outbox
 

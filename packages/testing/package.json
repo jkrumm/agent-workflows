@@ -22,7 +22,7 @@
     "@agent-workflows/capabilities": "workspace:*",
     "@agent-workflows/middleware": "workspace:*",
     "@agent-workflows/runtime": "workspace:*",
-    "@opentelemetry/sdk-trace": "3.0.0",
+    "@opentelemetry/sdk-trace": "3.1.1",
     "pg": "8.23.1"
   },
   "devDependencies": {
