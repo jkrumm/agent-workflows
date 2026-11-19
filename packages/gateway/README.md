@@ -54,7 +54,7 @@ Project and workspace values over 200 characters are dropped. `x-agw-fallback`, 
 | Variable | Required | Meaning |
 |-|-|-|
 | `AGW_GATEWAY_STATE_DIR` | yes | the ledger is `<dir>/ledger.sqlite`, created with its directory |
-| `AGW_GATEWAY_ACCOUNTS_FILE` | yes | the account registry; each account's `platform` block is a pool |
+| `AGW_GATEWAY_ACCOUNTS_FILE` | no | the account registry, overriding the default lookup (`$CLAUDE_ACCOUNTS_REGISTRY`, else `~/.config/claude-accounts/registry.json`, else the dotfiles file); each account's `platform` block is a pool |
 | `AGW_API_SECRET` | yes | caller `agw`; at least 32 characters |
 | `IU_API_KEY`, `IU_BASE_URL` | yes | the personal IU key; the URL ends in `/anthropic` |
 | `IU_KEY_ID` | no | unset or `personal`; anything else exits 78 |

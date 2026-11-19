@@ -363,11 +363,11 @@ describe('process', () => {
     expect(await new Response(proc.stderr).text()).toContain('personal')
   })
 
-  test('a missing required env is exit 78', async () => {
+  test('with no registry env and none under HOME the start is exit 78, naming the registry', async () => {
     const { AGW_GATEWAY_ACCOUNTS_FILE: _dropped, ...env } = baseEnv()
     const proc = spawn(env)
     expect(await proc.exited).toBe(78)
-    expect(await new Response(proc.stderr).text()).toContain('AGW_GATEWAY_ACCOUNTS_FILE')
+    expect(await new Response(proc.stderr).text()).toContain('account registry')
   })
 
   test('/health with no USAGE_PG_URL says the flush is off; SIGTERM exits clean', async () => {
