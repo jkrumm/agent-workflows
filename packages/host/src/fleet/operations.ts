@@ -12,14 +12,14 @@ import { ACCOUNT_QUOTA, OVERVIEW_PAYLOAD } from './schema.ts'
 
 const base = os.$context<HostContext>()
 
-export const AGENTS_OUTPUT = z.object({
+const AGENTS_OUTPUT = z.object({
   data: OVERVIEW_PAYLOAD.optional().describe('The merged overview; absent with --text'),
   text: z.string().optional().describe('The text render; only with --text'),
 })
 
 const MINUTES_PER_WEEK = 7 * 24 * 60
 
-export const QUOTA_REPORT_INPUT = z.object({
+const QUOTA_REPORT_INPUT = z.object({
   fiveHourPct: z.number().min(0).max(100).describe('Utilisation of the 5-hour window, percent'),
   fiveHourMinsLeft: z
     .number()
@@ -43,7 +43,7 @@ const POSTED = z.object({
   updated_at: z.number(),
 })
 
-export const QUOTA_OUTPUT = z.object({
+const QUOTA_OUTPUT = z.object({
   data: POSTED.nullable().describe(`The last report for ${DEFAULT_ACCOUNT}, as it was posted`),
   accounts: z
     .record(z.string(), ACCOUNT_QUOTA)

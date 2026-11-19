@@ -4,7 +4,7 @@ import { clipReason } from '@agent-workflows/capabilities'
 import type { FactoryHygieneOutputValue, HygieneInput } from './schema.ts'
 
 /** True when `path` (relative to `root`) is an existing regular file whose real path stays below the real `root`. */
-export function isFileUnder(root: string, path: string): boolean {
+function isFileUnder(root: string, path: string): boolean {
   if (isAbsolute(path)) return false
   try {
     const base = realpathSync(root)

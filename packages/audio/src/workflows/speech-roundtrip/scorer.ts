@@ -13,7 +13,7 @@ export type SpeechReference = z.output<typeof SpeechReference>
 export const DEFAULT_MAX_WER = 0.15
 
 /** Seconds of audio per spoken word: natural speech is ~0.4 s (150 words a minute); outside this band it is clipped or dragging. */
-export const PACE_BAND = { min: 0.2, max: 0.8 } as const
+const PACE_BAND = { min: 0.2, max: 0.8 } as const
 
 type Language = 'de' | 'en'
 

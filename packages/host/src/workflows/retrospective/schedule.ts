@@ -4,7 +4,7 @@ import type { JournalReader } from './sample.ts'
 import { DEFAULT_SAMPLE, DEFAULT_WINDOW_DAYS } from './schema.ts'
 
 const DAY_MS = 86_400_000
-export const RETRO_PURPOSE = 'retro'
+const RETRO_PURPOSE = 'retro'
 
 /** ISO 8601 week of a date in UTC: `2026-W44`. The year is the ISO week-year, not the calendar year. */
 export function isoWeek(date: Date): string {

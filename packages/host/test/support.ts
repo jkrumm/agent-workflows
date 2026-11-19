@@ -47,7 +47,7 @@ export function gate() {
   return g
 }
 
-export function testWorkflows(g = gate()) {
+function testWorkflows(g = gate()) {
   const echo = defineWorkflow({
     id: 'echo.say',
     version: 'v1',

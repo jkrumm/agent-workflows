@@ -121,7 +121,7 @@ the repo and the duplicate id before it acts, so a wrong claim only downgrades t
 
 {"verdict": "promote" | "dismiss" | "leave", "reason": "…", "repo": null | "<project>", "duplicateOf": null | "<issue id>", "recommendation": null | "one sentence for the owner"}`
 
-export function buildFactoryScreenPrompt(request: FactoryScreenInput, nonce: string): string {
+function buildFactoryScreenPrompt(request: FactoryScreenInput, nonce: string): string {
   const safe = neutralizeFenceMarkers
   const { signal } = request
   const open = request.openIssues.length

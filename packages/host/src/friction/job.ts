@@ -229,7 +229,7 @@ export async function workflowFriction(
  * The issue text: counts, rates, limits and run ids, nothing else. This repository is public and the runs review
  * private repositories, so no input, output, path, repository name, prompt or transcript is ever read into it.
  */
-export function issueBody(stats: WorkflowFriction, settings: FrictionSettings, now: Date, previous?: number): string {
+function issueBody(stats: WorkflowFriction, settings: FrictionSettings, now: Date, previous?: number): string {
   const percent = (n: number) => `${Math.round(n * 1000) / 10}%`
   // `previous` is the number of an issue that was closed. A removed one has no number to point at.
   const since = stats.since

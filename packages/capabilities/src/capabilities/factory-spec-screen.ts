@@ -140,7 +140,7 @@ settle.
 
 {"verdict": "pass" | "settle", "reason": "…"}`
 
-export function buildFactorySpecScreenPrompt(request: FactorySpecScreenInput, nonce: string): string {
+function buildFactorySpecScreenPrompt(request: FactorySpecScreenInput, nonce: string): string {
   const safe = neutralizeFenceMarkers
   const { spec, issue, precedents } = request
   const precedent = (p: FactorySpecScreenInput['precedents'][number], index: number) =>

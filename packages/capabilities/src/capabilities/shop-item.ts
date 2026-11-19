@@ -5,7 +5,7 @@ import { defineCapability } from '../procedure.ts'
 import { ITEM_TTL_MS, assertShopUrl, type ShopFetch } from './shop-fetch.ts'
 import { AMAZON_ORIGIN, type Item, itemSchema, itemUrl, parseItem } from './shop-parse.ts'
 
-export const itemInput = z.object({
+const itemInput = z.object({
   item: z.string().trim().min(1).max(500).describe('An ASIN, or an https://www.amazon.de product URL (/dp/<ASIN>)'),
   summarize: z.boolean().default(false).describe('Add a short summary made by a cheap model from the parsed fields'),
   ask: z
@@ -21,7 +21,7 @@ export const itemInput = z.object({
     .describe('Read the page again even if this process read it within the last 24 hours'),
 })
 
-export const itemOutput = itemSchema.extend({
+const itemOutput = itemSchema.extend({
   summary: z.string().nullable().describe('Model summary of the parsed fields; null unless `summarize` was set'),
   answer: z.string().nullable().describe('Model answer to `ask`; null unless it was set'),
   cached: z.boolean(),
@@ -45,7 +45,7 @@ export function parseItemRef(ref: string): string {
  * Seller-written text goes into a prompt only inside a fence, with `<` and `>` replaced so it cannot close the fence or
  * open a tag of its own. The system prompt says the fence is data.
  */
-export const fenceText = (text: string) => text.replace(/</g, '‹').replace(/>/g, '›')
+const fenceText = (text: string) => text.replace(/</g, '‹').replace(/>/g, '›')
 
 const MAX_BULLETS = 8
 const MAX_SPECS = 60
@@ -55,7 +55,7 @@ const line = (label: string, value: string | number | null) => (value === null ?
 const clip = (text: string) => (text.length > MAX_LINE_CHARS ? `${text.slice(0, MAX_LINE_CHARS - 1)}…` : text)
 
 /** The parsed fields of one item as prompt text. A missing field is said to be missing, never left for the model to fill. */
-export function itemFacts(item: Item): string {
+function itemFacts(item: Item): string {
   return [
     line('ASIN', item.asin),
     line('Title', item.title && clip(item.title)),
@@ -102,7 +102,7 @@ const ASK_SYSTEM =
   'answer only, at most 60 words.'
 
 /** Readable text of one item: the facts, then the summary and the answer when there are some. */
-export function renderItem(item: Item, summary: string | null, answer: string | null): string {
+function renderItem(item: Item, summary: string | null, answer: string | null): string {
   return [
     `${item.title ?? item.asin}`,
     item.url,

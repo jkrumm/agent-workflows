@@ -793,7 +793,7 @@ export function buildSegmentUserContent(params: {
 // Review prompts (multi-angle, whole-draft)
 // ---------------------------------------------------------------------------
 
-export const REVIEWER_ROLES = ['dramaturge', 'conversation-coach', 'fact-editor'] as const
+const REVIEWER_ROLES = ['dramaturge', 'conversation-coach', 'fact-editor'] as const
 export type ReviewerRole = (typeof REVIEWER_ROLES)[number]
 
 const REVIEWER_INSTRUCTIONS: Record<ReviewerRole, (req: PodcastScriptRequest) => string> = {
@@ -829,7 +829,7 @@ Return STRICT JSON only, no markdown, no commentary:
 {"notes":[{"segment":<0-based segment index>,"turn":<0-based turn index within that segment, or null for a segment-wide or episode-wide note>,"note":"<specific, actionable note>"}],"verdict":"<one line: is this draft ready to publish, and why>"}`
 }
 
-export function renderDraftForReview(segments: ScriptSegment[], hosts: [PodcastHost, PodcastHost]): string {
+function renderDraftForReview(segments: ScriptSegment[], hosts: [PodcastHost, PodcastHost]): string {
   const nameFor = (speaker: 'A' | 'B'): string => hosts.find((h) => h.id === speaker)?.name ?? speaker
   return segments
     .flatMap((seg, i) =>

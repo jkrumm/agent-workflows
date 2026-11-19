@@ -1,7 +1,7 @@
 import type { PdfReply, PdfRequest } from './pdf-worker.ts'
 
 /** The wall-clock limit of one parse; a PDF that takes longer is a hostile or broken file, not a slow one. */
-export const PDF_PARSE_MS = 20_000
+const PDF_PARSE_MS = 20_000
 
 /** The parse ran past its time limit and the worker was terminated. */
 export class PdfTimeout extends Error {

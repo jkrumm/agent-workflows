@@ -682,7 +682,7 @@ const UNKNOWN_SPEND: Usage = {
   costSource: 'unknown',
 }
 
-export function retryPolicy(policy: RetryPolicy | undefined): Required<RetryPolicy> {
+function retryPolicy(policy: RetryPolicy | undefined): Required<RetryPolicy> {
   return {
     attempts: Math.max(1, Math.floor(policy?.attempts ?? 1)),
     backoffMs: policy?.backoffMs ?? 1000,

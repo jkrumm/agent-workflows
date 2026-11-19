@@ -15,7 +15,7 @@ const HEADER = /^([0-9a-f]{40}) (\d+) \d+(?: \d+)?$/
 const RANGES_PER_CALL = 100
 
 /** The lines of a `git blame --porcelain` output; the extended info appears once per commit. */
-export function parseBlame(porcelain: string): BlamedLine[] {
+function parseBlame(porcelain: string): BlamedLine[] {
   const files = new Map<string, string>()
   const lines: BlamedLine[] = []
   let current: { sha: string; orig: number } | null = null

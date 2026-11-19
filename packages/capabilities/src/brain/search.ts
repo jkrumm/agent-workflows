@@ -8,7 +8,7 @@ const SNIPPET_CHARS = 200
 // A note shows at most this many matching lines: the result lists notes, not every line of one.
 const LINES_PER_NOTE = 3
 
-export const searchInput = z.object({
+const searchInput = z.object({
   query: z
     .string()
     .trim()
@@ -18,7 +18,7 @@ export const searchInput = z.object({
   maxResults: z.int().min(1).max(50).default(20).describe('Matching lines returned, at most'),
 })
 
-export const searchOutput = z.object({
+const searchOutput = z.object({
   matches: z.array(
     z.object({
       path: z.string().describe('Canonical vault-relative path of the note'),

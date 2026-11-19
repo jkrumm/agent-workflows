@@ -21,7 +21,7 @@ const HUNK = /^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@/
 const squash = (text: string) => text.replace(/\s+/g, '')
 
 /** Blank lines and lines that are only a comment (`//`, `#`, block-comment lines, `<!-- -->`). */
-export function isCosmeticLine(line: string): boolean {
+function isCosmeticLine(line: string): boolean {
   const text = line.trim()
   return text === '' || COMMENT_ONLY.test(text)
 }

@@ -8,7 +8,7 @@ import { requireEvalPurpose } from '../eval-fixture.ts'
 import type { HostRegistry } from '../index.ts'
 import { overviewScorer } from './scorer.ts'
 
-export const OVERVIEW_WORKFLOW_ID = 'overview'
+const OVERVIEW_WORKFLOW_ID = 'overview'
 
 const nullable = <T extends z.ZodType>(schema: T) => schema.nullable().default(null)
 

@@ -70,7 +70,7 @@ export const DOOR_WORKFLOW_IDS: Record<DoorEndpoint, string> = {
  * After the handler's work is over, how long the run waits for a `request` summary not yet recorded: a pcm stream
  * records it as its body ends, which may land just after the door saw the end.
  */
-export const SUMMARY_GRACE_MS = 2000
+const SUMMARY_GRACE_MS = 2000
 /**
  * A request's record ends at the latest this long after it arrived, whatever the handler does (a stream nobody reads
  * to the end and nobody cancels): the run then records what arrived as `bound`, never stays running. Far above a long

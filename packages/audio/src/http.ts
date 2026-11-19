@@ -33,7 +33,7 @@ function parseRetryAfter(value: string, now: number): number | null {
 }
 
 /** The server's retry hint from the `Retry-After` header alone, in ms, or null. */
-export function retryHintFromHeaders(headers: Headers, now = Date.now()): number | null {
+function retryHintFromHeaders(headers: Headers, now = Date.now()): number | null {
   const header = headers.get('retry-after')
   return header === null ? null : parseRetryAfter(header, now)
 }
@@ -59,7 +59,7 @@ export function retryHintMs(headers: Headers, body: string): number | null {
 }
 
 const RETRY_HINT_BODY_TIMEOUT_MS = 2_000
-export const RETRY_HINT_BODY_MAX_BYTES = 65_536
+const RETRY_HINT_BODY_MAX_BYTES = 65_536
 
 /**
  * Read a 429/503 body for its retry hint, bounded in time and bytes. Only a body read to its end within both bounds

@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { FactoryFixClassesOutput } from './schema.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
-export const FACTORY_FIX_CLASSES_SCORER_VERSION = '2026-11-16.1'
+const FACTORY_FIX_CLASSES_SCORER_VERSION = '2026-11-16.1'
 
 /**
  * A case's expected classes by sha. `basis` says how each label was settled: `files` (the changed paths decide it:

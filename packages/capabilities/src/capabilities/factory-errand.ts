@@ -94,7 +94,7 @@ When unsure, pass. The owner decides: a wrong turn-away costs the lead a round t
 
 {"verdict": "pass" | "turn_away", "reason": "…"}`
 
-export function buildFactoryErrandPrompt(request: FactoryErrandInput, nonce: string): string {
+function buildFactoryErrandPrompt(request: FactoryErrandInput, nonce: string): string {
   const safe = neutralizeFenceMarkers
   const { errand, issue } = request
   const subject = [

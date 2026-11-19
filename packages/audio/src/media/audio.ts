@@ -12,7 +12,7 @@ const SILENCE_MS = 400
 
 export type AudioOutputFormat = 'mp3' | 'opus' | 'wav' | 'pcm'
 
-export const CONTENT_TYPES: Record<AudioOutputFormat, string> = {
+const CONTENT_TYPES: Record<AudioOutputFormat, string> = {
   mp3: 'audio/mpeg',
   opus: 'audio/ogg',
   wav: 'audio/wav',
@@ -191,7 +191,7 @@ const sttEncodeArgs = (bitrateKbps: number): string[] => [
  * near-silence by IU's 4o transcribe backend (HTTP 200, one sentence for eight minutes; measured 2026-09-10,
  * 99/99 sentences with `-t`, 0 without). Callers overshoot the end instead of omitting it.
  */
-export const sliceArgs = (tmp: string, startSec: number, durationSec: number, bitrateKbps: number): string[] => [
+const sliceArgs = (tmp: string, startSec: number, durationSec: number, bitrateKbps: number): string[] => [
   '-ss',
   String(startSec),
   '-t',

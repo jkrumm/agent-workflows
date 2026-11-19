@@ -5,13 +5,13 @@ import { oneLine, stripControlBytes, truncate } from './text.ts'
 // Pure steps of the snapshot: the factory's fleet view mapped onto the overview's shapes, and the urgency state of one agent.
 
 /** Text that came from outside (a title, a headline, an ask) never carries a control byte into a pane, Argo or a prompt. */
-export const clean = (text: string | null | undefined): string | null => (text == null ? null : stripControlBytes(text))
+const clean = (text: string | null | undefined): string | null => (text == null ? null : stripControlBytes(text))
 
 /** {@link clean} for a field that is one line by nature (id, title, account, branch): CR/LF and runs of whitespace collapse too. */
 export const cleanLine = (text: string | null | undefined): string | null => (text == null ? null : oneLine(text))
 
 /** The unplaced sessions' project: live sessions the factory cannot file under a repo, and has no directory for. */
-export const UNPLACED_PROJECT = 'unplaced'
+const UNPLACED_PROJECT = 'unplaced'
 
 const NEEDS_YOU_STATES = new Set(['waiting', 'blocked', 'walled', 'stuck'])
 const WORKING_STATES = new Set(['working', 'starting'])

@@ -62,7 +62,7 @@ export const RETRO_INPUT = z
   .strict()
 
 export const PROPOSAL_KINDS = ['capability', 'agents-md', 'skill', 'cli'] as const
-export const CONFIDENCES = ['low', 'medium', 'high'] as const
+const CONFIDENCES = ['low', 'medium', 'high'] as const
 
 /** What the agent answers. Everything in it is checked again in code before it is stored or filed. */
 export const RETRO_ANALYSIS = z.object({

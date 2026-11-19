@@ -27,7 +27,7 @@ export interface ProduceJournal {
   producedRun(runId: string): Promise<ProducedRun | null>
 }
 
-export const PRODUCE_WORKFLOW_ID = 'podcast.produce'
+const PRODUCE_WORKFLOW_ID = 'podcast.produce'
 
 export function postgresProduceJournal(db: Queryable, schema: string): ProduceJournal {
   if (!/^[a-z_][a-z0-9_]{0,62}$/.test(schema)) throw new Error(`invalid journal schema name "${schema}"`)

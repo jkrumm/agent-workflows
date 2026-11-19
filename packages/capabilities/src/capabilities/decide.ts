@@ -26,7 +26,7 @@ const question = z.discriminatedUnion('type', [
   z.object({ type: z.literal('boolean'), instructions: z.string().min(1) }),
 ])
 
-export const decideInput = z.object({
+const decideInput = z.object({
   state: z.string().min(1).describe('Everything the model may know: it cannot search or read anything else'),
   questions: z
     .record(z.string(), question)
@@ -49,7 +49,7 @@ const answer = z.discriminatedUnion('type', [
   }),
 ])
 
-export const decideOutput = z.object({
+const decideOutput = z.object({
   answers: z.record(z.string(), answer),
   model: z.string(),
   truncatedChars: z.int().nonnegative().describe('State characters cut to fit the cap; 0 when nothing was cut'),

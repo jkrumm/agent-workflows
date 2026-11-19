@@ -9,8 +9,6 @@ import {
 } from '@agent-workflows/capabilities'
 import { z } from 'zod'
 
-export { MAX_TEXT_CHARS }
-
 const notBlank = (text: string) => text.trim() !== ''
 
 const medium = z

@@ -15,7 +15,7 @@ const EXCERPT_MAX = 4000
 /** Bound on each input string, so none is unbounded. Legacy bounded the finished prompt at 400k; here the transcript and reply are cut to `EXCERPT_MAX`, the destination goes into the prompt as given. */
 const INPUT_MAX = 400_000
 
-export const triageInput = z.object({
+const triageInput = z.object({
   destination: z.string().min(1).max(INPUT_MAX).describe('Where the memo was routed'),
   transcript: z.string().max(INPUT_MAX).describe(`The dictated memo; cut to ${EXCERPT_MAX} characters`),
   reply: z
@@ -43,7 +43,7 @@ const SUMMARY_JSON_SCHEMA = {
   additionalProperties: false,
 } as const
 
-export const triageOutput = summary.extend({
+const triageOutput = summary.extend({
   model: z.string(),
   /** Model calls made: 1, or 2 after one re-ask on a rejected answer. */
   attempts: z.int().min(1).max(2),

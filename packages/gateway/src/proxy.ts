@@ -13,7 +13,7 @@ import { decodeBody, type TeeResult, UsageTee } from './tee.ts'
 import type { RequestSpan, Telemetry } from './telemetry.ts'
 
 /** The label of the IU passthrough everywhere: a credit pool is itself named `iu`. */
-export const IU_API = 'iu-api'
+const IU_API = 'iu-api'
 const REFUSED = 'refused'
 type RefuseReason = Extract<Pick, { kind: 'refuse' }>['reason']
 /** An `eval` request with no pool above its reserve; see `refusalFor`. */

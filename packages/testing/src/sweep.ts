@@ -6,7 +6,7 @@ import { Pool } from 'pg'
  * its schemas until they are a day old, whatever the name pattern.
  */
 export const SCHEMA_PREFIX = 'agw_t_'
-export const SWEEP_MAX_AGE_MS = 24 * 3_600_000
+const SWEEP_MAX_AGE_MS = 24 * 3_600_000
 
 const CREATED = /_(\d{10})_[0-9a-f]{10}$/
 

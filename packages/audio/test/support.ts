@@ -55,7 +55,7 @@ export function recordingUsage(): RecordingUsage {
 export const TEST_TOKEN = 'test-secret'
 
 /** The env that points the lanes at the gateway at `url`. */
-export const gatewayEnv = (url: string): Record<string, string> => ({
+const gatewayEnv = (url: string): Record<string, string> => ({
   AGW_GATEWAY_URL: url,
   AGW_API_SECRET: TEST_TOKEN,
 })

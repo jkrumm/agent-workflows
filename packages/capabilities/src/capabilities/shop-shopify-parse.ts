@@ -7,7 +7,7 @@ import { normMpn, type Offer, type Product, type ProductPage } from './shop-offe
 
 /** Stores read as `--source shopify:<host>`. A store is one line here: the fetcher reads no host that is not listed. */
 export const SHOPIFY_HOSTS = ['www.it-veith.de'] as const
-export const SHOPIFY_PREFIX = 'shopify:'
+const SHOPIFY_PREFIX = 'shopify:'
 
 export type ShopifySource = `shopify:${string}`
 
@@ -60,10 +60,10 @@ const eurOfCents = (cents: number | null | undefined): number | null =>
   cents === null || cents === undefined ? null : round2(cents / 100)
 
 /** The shop's listings lead their titles with a check mark; the name is without it. */
-export const cleanTitle = (title: string) => title.replace(/^(?:✔️?|✅)\s*/u, '').trim()
+const cleanTitle = (title: string) => title.replace(/^(?:✔️?|✅)\s*/u, '').trim()
 
 /** "www.it-veith.de" → "it-veith.de": the shop as an offer names it. */
-export const shopName = (host: string) => host.replace(/^www\./, '')
+const shopName = (host: string) => host.replace(/^www\./, '')
 
 const FREE_SHIPPING = /kostenlose[rn]?\s+Versand|versandkostenfrei/i
 

@@ -3,7 +3,7 @@ import { complete, type LlmDeps } from '../llm/model-call.ts'
 import { defineCapability } from '../procedure.ts'
 import { type createFetch, fetchInput, VIA_NAMES } from '../web/fetch.ts'
 
-export const readInput = z.object({
+const readInput = z.object({
   url: z
     .string()
     .min(1)
@@ -35,7 +35,7 @@ export const readInput = z.object({
   humanAssist: fetchInput.shape.humanAssist,
 })
 
-export const readOutput = z.object({
+const readOutput = z.object({
   url: z.string(),
   finalUrl: z.string(),
   title: z.string().optional(),

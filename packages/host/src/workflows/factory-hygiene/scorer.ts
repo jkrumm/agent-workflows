@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { FactoryHygieneOutput, type FactoryHygieneOutputValue } from './schema.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
-export const FACTORY_HYGIENE_SCORER_VERSION = '2026-11-16.1'
+const FACTORY_HYGIENE_SCORER_VERSION = '2026-11-16.1'
 
 /** A line of the fixture checkout and a distinctive substring of it (the test proves the line holds the text). */
 const spot = z.object({ path: z.string().min(1), line: z.number().int().min(1), text: z.string().min(1) })

@@ -3,13 +3,13 @@ import { z } from 'zod'
 import { type ProseReviewInputValue, ProseReviewOutput } from './schema.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
-export const PROSE_SCORER_VERSION = '2026-10-29.1'
+const PROSE_SCORER_VERSION = '2026-10-29.1'
 
 /**
  * A recorded case's expected result: legacy's review scores where a legacy review was recorded, and the findings the
  * legacy lint reports on the draft (rule and line).
  */
-export const ProseReference = z.object({
+const ProseReference = z.object({
   scores: z.record(z.string(), z.number()).optional(),
   lint: z.array(z.object({ rule: z.string(), line: z.number().int() })).optional(),
 })

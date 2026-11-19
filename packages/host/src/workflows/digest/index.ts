@@ -4,8 +4,8 @@ import type { HostRegistry } from '../index.ts'
 import { digestScorer } from './scorer.ts'
 import { DigestInput, DigestOutput } from './schema.ts'
 
-export const DIGEST_WORKFLOW_ID = 'digest'
-export const DIGEST_VERSION = '2026-11-02.1'
+const DIGEST_WORKFLOW_ID = 'digest'
+const DIGEST_VERSION = '2026-11-02.1'
 
 /** The one capability the workflow calls; any registry that has `digest.items` fits. */
 export type DigestCaller = Pick<HostRegistry, 'call'>

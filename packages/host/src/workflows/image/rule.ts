@@ -1,8 +1,8 @@
 import type { ImageInputValue, ImageOutputValue } from './schema.ts'
 
 /** The pre-registered thresholds (`docs/research/2026-10-29-wave8-ports.md` §image). */
-export const COST_RATIO_MAX = 1.1
-export const WALL_RATIO_MAX = 1.25
+const COST_RATIO_MAX = 1.1
+const WALL_RATIO_MAX = 1.25
 
 /** One arm's result for one case: the scorer's verdict, the run's price and the wall time measured around it. */
 export interface ArmResult {

@@ -12,7 +12,7 @@ import { z } from 'zod'
 /** `null` switches a counter off. */
 export type FrictionLimits = Record<FrictionCounter, number | null>
 
-export const DEFAULT_LIMITS: FrictionLimits = {
+const DEFAULT_LIMITS: FrictionLimits = {
   /** Five failed tool calls in a run is more than exploration. */
   toolErrors: 5,
   /** The same call five times: past the first nudge, still going. */

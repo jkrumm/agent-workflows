@@ -9,7 +9,7 @@ import { DiagramInput, type DiagramInputValue, DiagramOutput, type ExcalidrawFil
 import { diagramScorer } from './scorer.ts'
 import { parseEnvelope, prepareSkeleton } from './skeleton.ts'
 
-export const DIAGRAM_VERSION = '2026-10-29.1'
+const DIAGRAM_VERSION = '2026-10-29.1'
 
 /** The agent's definition (`agents/diagram`). */
 const AGENT = 'diagram'

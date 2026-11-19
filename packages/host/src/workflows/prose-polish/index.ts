@@ -23,7 +23,7 @@ import {
   type ProsePolishOutputValue,
 } from './schema.ts'
 
-export const PROSE_POLISH_WORKFLOW_ID = 'prose-polish'
+const PROSE_POLISH_WORKFLOW_ID = 'prose-polish'
 export const PROSE_POLISH_VERSION = '2026-11-03.1'
 
 /** The two capabilities the polish calls; any registry that has `prose.critique` and `prose.write` fits. */

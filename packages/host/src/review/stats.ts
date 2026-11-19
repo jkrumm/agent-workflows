@@ -50,7 +50,7 @@ const share = (findings: StatsFinding[], key: 'anchored' | 'lineValid') => {
  * The last submitted job of every thread whose last submitted round was actionable and that no prepared job followed:
  * the fix loop stopped. Each counts once, in the group its job sits in.
  */
-export function stalledJobs(jobs: StatsJob[]): Set<string> {
+function stalledJobs(jobs: StatsJob[]): Set<string> {
   const byThread = new Map<string, StatsJob[]>()
   for (const job of jobs)
     byThread.set(`${job.repo}\0${job.thread}`, [...(byThread.get(`${job.repo}\0${job.thread}`) ?? []), job])

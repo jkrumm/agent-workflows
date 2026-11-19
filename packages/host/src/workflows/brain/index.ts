@@ -24,7 +24,7 @@ export type BrainOptions = {
 }
 
 /** What the `tools` step journals: the notes the run read and the calls it made. */
-export const Evidence = z.object({
+const Evidence = z.object({
   read: z.array(z.string()),
   counts: z.record(z.string(), z.number().int()),
   calls: z.number().int(),

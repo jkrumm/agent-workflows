@@ -86,7 +86,7 @@ function nameRefs(value: unknown, sources: Map<string, string>, connections: Map
 }
 
 /** The request body for one dashboard: names resolved to ids, tile ids kept from `live` by tile name, else derived. */
-export function dashboardBody(def: DashboardDef, names: Names, live: Obj | undefined): Obj {
+function dashboardBody(def: DashboardDef, names: Names, live: Obj | undefined): Obj {
   const liveTiles = new Map<string, string>()
   for (const t of Array.isArray(live?.tiles) ? live.tiles : []) {
     if (isObj(t) && typeof t.id === 'string' && typeof t.name === 'string') liveTiles.set(t.name, t.id)
@@ -102,7 +102,7 @@ export function dashboardBody(def: DashboardDef, names: Names, live: Obj | undef
 }
 
 /** The request body for one alert: the tile, dashboard and webhooks looked up by name. */
-export function alertBody(def: AlertDef, dashboards: Obj[], webhooks: Map<string, string>): Obj {
+function alertBody(def: AlertDef, dashboards: Obj[], webhooks: Map<string, string>): Obj {
   const { dashboard, tile, channels, ...rest } = def
   const dash = dashboards.find((d) => d.name === dashboard)
   if (dash === undefined) throw new Error(`alert "${def.name}": no dashboard "${dashboard}"`)

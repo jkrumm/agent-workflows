@@ -107,7 +107,7 @@ export type FactoryDigestOutput = z.output<typeof factoryDigestOutput>
  * many is cut, never a reason to re-ask), and unknown keys ignored. The guard owns every bound.
  */
 const rawBullet = z.object({ text: z.string().min(1).max(4000), ids: z.array(z.string().max(200)).max(200) })
-export const factoryDigestRaw = z.object({
+const factoryDigestRaw = z.object({
   headline: z.string().min(1).max(4000),
   shipped: z.array(rawBullet).max(100),
   next: z.array(rawBullet).max(100),
@@ -117,7 +117,7 @@ export const factoryDigestRaw = z.object({
 export type FactoryDigestRaw = z.output<typeof factoryDigestRaw>
 
 /** Every Issue id the request shows: the only ids an answer may cite. */
-export const digestIds = (input: FactoryDigestInput): Set<string> =>
+const digestIds = (input: FactoryDigestInput): Set<string> =>
   new Set([...input.done, ...input.working, ...input.queued, ...input.waiting].map((i) => i.id))
 
 /**
@@ -192,7 +192,7 @@ ${JSON_ANSWER}
 
 const unwrap = (text: string) => collapseLine(neutralizeFenceMarkers(text))
 
-export function buildFactoryDigestPrompt(input: FactoryDigestInput, nonce: string): string {
+function buildFactoryDigestPrompt(input: FactoryDigestInput, nonce: string): string {
   const section = (name: string, rows: string[]) => `${name}:\n${rows.length ? rows.join('\n') : '(none)'}`
   const data = [
     section(

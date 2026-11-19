@@ -20,5 +20,5 @@ export interface ReviewContext {
   env: Record<string, string | undefined>
 }
 
-export const JOBS_DIR = 'review-jobs'
+const JOBS_DIR = 'review-jobs'
 export const jobsRoot = (ctx: Pick<ReviewContext, 'stateDir'>) => join(ctx.stateDir, JOBS_DIR)

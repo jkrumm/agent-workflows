@@ -12,7 +12,7 @@ import type { SignalPort } from './signals.ts'
 import { RETRO_ANALYSIS, RETRO_INPUT, RETRO_OUTPUT, type RetroAnalysis, type RetroOutput } from './schema.ts'
 
 export const RETRO_WORKFLOW_ID = 'retrospective'
-export const RETRO_AGENT = 'retrospective'
+const RETRO_AGENT = 'retrospective'
 const DAY_MS = 86_400_000
 
 export interface RetrospectiveDeps {

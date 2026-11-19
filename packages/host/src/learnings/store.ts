@@ -10,9 +10,9 @@ export const MAX_FACT_CHARS = 400
 export const MAX_ACTIVE_FACTS = 25
 
 /** A proposed fact seen by independent runs in this many different ISO weeks is activated. */
-export const ACTIVATE_AFTER_WEEKS = 2
+const ACTIVATE_AFTER_WEEKS = 2
 /** A proposed fact not seen again for this many weeks is retired. */
-export const RETIRE_AFTER_WEEKS = 4
+const RETIRE_AFTER_WEEKS = 4
 const WEEK_MS = 7 * 86_400_000
 
 export interface Learning {

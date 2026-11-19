@@ -65,7 +65,7 @@ function urlsOf(call: ToolCallRecord): Partial<LedgerEntry> {
 }
 
 /** What a `web_fetch` call says about the chain (host only, never the path or query), for the ledger's own columns. */
-export function fetchColumns(call: ToolCallRecord): Partial<LedgerEntry> {
+function fetchColumns(call: ToolCallRecord): Partial<LedgerEntry> {
   if (call.tool !== 'web_fetch') return {}
   const facts = fetchFacts(call.args.url, call.outcome)
   return {

@@ -122,7 +122,7 @@ export function stepEvent(step: {
 }
 
 /** True for a run the wallet gate refused at admission (read from the run row's `error_kind` and `error`). */
-export function walletRefusal(run: { errorKind: string | null; error: string | null }): boolean {
+function walletRefusal(run: { errorKind: string | null; error: string | null }): boolean {
   return run.errorKind === 'admission_refused' && (run.error?.startsWith(WALLET_REFUSAL_PREFIX) ?? false)
 }
 

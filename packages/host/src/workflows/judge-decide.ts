@@ -2,7 +2,7 @@ import type { ScoreJudge } from '@agent-workflows/runtime'
 import { asRecord } from './research/util.ts'
 
 /** The decision API reads at most this many characters of state; a judged score keeps clear of it. */
-export const JUDGE_STATE_CHARS = 40_000
+const JUDGE_STATE_CHARS = 40_000
 
 /**
  * Boolean questions put to the `decide` judge (the IU decision API, input-priced: about $0.00002 for a spec-sized state),

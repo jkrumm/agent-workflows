@@ -390,7 +390,7 @@ const HARNESS_PURPOSES: ReadonlySet<string> = new Set(['eval', 'drift'])
 
 /** The `usage.records` lane of a run's rows: Hermes' own lane when Hermes asked (one Hermes lane in Argo, as on the gateway's rows), else `agw_workflow`. */
 export type UsageLane = 'agw_workflow' | 'hermes'
-export const laneOf = (caller: string): UsageLane => (caller === 'hermes' ? 'hermes' : 'agw_workflow')
+const laneOf = (caller: string): UsageLane => (caller === 'hermes' ? 'hermes' : 'agw_workflow')
 
 /**
  * Every door stamps `runs.caller`; a run without one was started inside the host process (retrospective, the eval

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  "entry": [
+    "packages/*/src/workflows/*/module.ts",
+    "agents/*/plugins/agw-tools.ts",
+    "packages/opencode-host/plugin/*/server.js",
+    "packages/hyperdx/src/cli.ts",
+    "packages/runtime/test/kill/worker.ts",
+    "packages/host/test/fixtures/**/*.ts"
+  ],
+  "ignorePatterns": ["docs/spikes/**", "packages/host/src/workflows/factory-hygiene/eval/fixture/**"]
+}

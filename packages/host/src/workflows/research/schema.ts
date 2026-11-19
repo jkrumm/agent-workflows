@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const DEPTHS = ['quick', 'standard', 'deep'] as const
+const DEPTHS = ['quick', 'standard', 'deep'] as const
 export type Depth = (typeof DEPTHS)[number]
 
 export const ResearchInput = z
@@ -31,10 +31,10 @@ export const ResearchInput = z
   .strict()
 export type ResearchInputValue = z.output<typeof ResearchInput>
 
-export const Confidence = z.enum(['high', 'medium', 'low'])
+const Confidence = z.enum(['high', 'medium', 'low'])
 
 export const Citation = z.object({ claim: z.string(), url: z.string(), confidence: Confidence })
-export const Unverified = z.object({ topic: z.string(), url: z.string().max(2048).nullable(), reason: z.string() })
+const Unverified = z.object({ topic: z.string(), url: z.string().max(2048).nullable(), reason: z.string() })
 
 /** What an agent submits: research-gateway's `SubmittedReport`. Status, warnings and grounding are derived in code. */
 export const Draft = z.object({
@@ -51,7 +51,7 @@ export type Draft = z.output<typeof Draft>
  * URL the run retrieved or saw as a search result (a follow-up also counts the earlier run's retrieved pages).
  * `pagesRetrieved` and `pagesFailed` are this run's own.
  */
-export const Grounding = z.object({
+const Grounding = z.object({
   citations: z.number().int().nonnegative(),
   grounded: z.number().int().nonnegative(),
   pagesRetrieved: z.number().int().nonnegative(),
@@ -63,7 +63,7 @@ export type Grounding = z.output<typeof Grounding>
 export const Blocked = z.object({ url: z.string(), reason: z.string() })
 
 /** Tool calls the agent made through the platform's tool gate, by tool. */
-export const ToolCounts = z.record(z.string(), z.number().int().nonnegative())
+const ToolCounts = z.record(z.string(), z.number().int().nonnegative())
 
 /**
  * research-gateway's `ResearchReport` (`src/agent/schema.ts`), so callers of `/research` keep working, plus the

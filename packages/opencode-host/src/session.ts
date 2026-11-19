@@ -256,7 +256,7 @@ export function canonicalInput(value: unknown): string {
  * known yet (a `pending` part is still streaming it) has no key and is not counted: a count must never move between
  * keys as the input arrives.
  */
-export function toolCallKey(part: ToolPart): string | null {
+function toolCallKey(part: ToolPart): string | null {
   const status = part.state?.status
   if (status !== 'running' && status !== 'completed' && status !== 'error') return null
   const input = part.state?.input

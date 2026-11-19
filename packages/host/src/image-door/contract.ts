@@ -15,7 +15,7 @@ export const IMAGE_MODELS = [DEFAULT_ROUTES['image.flare'].model, DEFAULT_ROUTES
 export type ImageModel = string
 
 /** An id an older app build still sends; routed like `auto` and reported as routed, naming it. */
-export const LEGACY_REQUEST_MODELS = ['gpt-image-2'] as const
+const LEGACY_REQUEST_MODELS = ['gpt-image-2'] as const
 
 /** Upstream limits of the edit path (`EDIT_LIMITS`). */
 export const EDIT_LIMITS = {
@@ -72,7 +72,7 @@ export const editRequestSchema = z
   .superRefine(streamingRequiresSingleImage)
 export type EditRequest = z.infer<typeof editRequestSchema>
 
-export const usageSchema = z.object({
+const usageSchema = z.object({
   input_tokens: z.number(),
   output_tokens: z.number(),
   total_tokens: z.number(),
@@ -87,13 +87,13 @@ export const usageSchema = z.object({
 })
 export type Usage = z.infer<typeof usageSchema>
 
-export const costSchema = z.object({
+const costSchema = z.object({
   usd: z.number().nullable(),
   source: z.enum(['computed', 'none']),
 })
 export type Cost = z.infer<typeof costSchema>
 
-export const generatedImageSchema = z.object({
+const generatedImageSchema = z.object({
   b64_json: z.string(),
   format: z.enum(['png', 'webp', 'jpeg']),
 })
@@ -114,9 +114,6 @@ export const generateResponseSchema = z.object({
   latency_ms: z.number(),
 })
 export type GenerateResponse = z.infer<typeof generateResponseSchema>
-
-/** `POST /edit` answers with the same envelope as `/generate`. */
-export const editResponseSchema = generateResponseSchema
 
 /** SSE frames of `/generate` and `/edit` when `partial_images > 0`: previews, then exactly one `completed` or one `error`. */
 export const streamEventSchema = z.discriminatedUnion('type', [
@@ -153,7 +150,7 @@ export type ErrorBody = {
 
 // --- POST /enhance (the plan contract) ---
 
-export const INTENTS = [
+const INTENTS = [
   'auto',
   'icon',
   'hero',
@@ -164,8 +161,8 @@ export const INTENTS = [
   'figure-art',
   'texture',
 ] as const
-export const PLAN_MODES = ['auto', 'full', 'gaps', 'off'] as const
-export const MAX_PROMPT_FRAGMENT_WORDS = 40
+const PLAN_MODES = ['auto', 'full', 'gaps', 'off'] as const
+const MAX_PROMPT_FRAGMENT_WORDS = 40
 
 const promptFragmentSchema = z
   .string()

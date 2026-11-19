@@ -2,13 +2,13 @@ import { z } from 'zod'
 import { complete, type LlmDeps } from '../llm/model-call.ts'
 import { defineCapability } from '../procedure.ts'
 
-export const summarizeInput = z.object({
+const summarizeInput = z.object({
   text: z.string().min(1).describe('The text to summarize'),
   maxWords: z.int().min(10).max(1000).default(100).describe('Upper bound for the summary length'),
   style: z.enum(['paragraph', 'bullets']).default('paragraph').describe('Prose paragraph or a bullet list'),
 })
 
-export const summarizeOutput = z.object({ summary: z.string() })
+const summarizeOutput = z.object({ summary: z.string() })
 
 const SYSTEM =
   'You summarize text faithfully. Keep what matters, drop what does not, add nothing the text does not say. ' +

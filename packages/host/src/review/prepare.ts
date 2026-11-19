@@ -24,7 +24,7 @@ import type { PrepareInputValue, PrepareOutputValue } from './schema.ts'
 /** The cap is for a fix loop: submitted rounds in a row that ended with an open important finding. */
 export const MAX_ROUNDS = 3
 /** A runaway guard far above the factory's busiest day (112 deep jobs in 24 h on 2026-11-16, ~73 counted); the quota reading is only recorded. */
-export const DEFAULT_DEEP_CAP = 300
+const DEFAULT_DEEP_CAP = 300
 /** A deep review that a sensitive path forces may pass the cap by this share of it: routine deep ones do not eat it. */
 const SENSITIVE_RESERVE = 0.5
 const PRIOR_LIMIT = 20
@@ -35,7 +35,7 @@ const STALE_JOB_MS = 14 * 24 * 3_600_000
 const CLONE_TIMEOUT_MS = 120_000
 const BASE32 = 'abcdefghijklmnopqrstuvwxyz234567'
 
-export const newJobId = (): string => `rv_${[...randomBytes(20)].map((b) => BASE32[b % 32]).join('')}`
+const newJobId = (): string => `rv_${[...randomBytes(20)].map((b) => BASE32[b % 32]).join('')}`
 
 const nextUtcMidnight = (now: Date) => new Date(utcMidnight(now).getTime() + 86_400_000)
 
@@ -83,7 +83,7 @@ async function readQuota(ctx: ReviewContext, account: string | null): Promise<Qu
 const utcMidnight = (now: Date) => new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
 
 /** Best effort: job trees after 24 h, whole job dirs after 14 days, stale review clones. */
-export function sweepJobs(ctx: ReviewContext): void {
+function sweepJobs(ctx: ReviewContext): void {
   const root = jobsRoot(ctx)
   const now = ctx.now().getTime()
   try {

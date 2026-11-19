@@ -4,10 +4,10 @@ import { asRecord } from '../research/util.ts'
 import { type OtelInputValue, OtelOutput, Severity, Status } from './schema.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
-export const OTEL_SCORER_VERSION = '2026-10-29.1'
+const OTEL_SCORER_VERSION = '2026-10-29.1'
 
 /** A case's expected result, written from direct queries before any arm runs: the status and 1-3 key facts. */
-export const OtelReference = z.object({
+const OtelReference = z.object({
   status: Status,
   facts: z.array(z.string().min(1)).min(1).max(3),
 })
@@ -17,7 +17,7 @@ export type OtelReference = z.output<typeof OtelReference>
  * The shape both arms share: agent-gateway's `OTEL_OUTPUT` (the legacy tool's answer) with the new flag optional.
  * `valid` is this shape, so the legacy arm is scored by the same function; `grounded` needs the new arm's `queries`.
  */
-export const Scorable = OtelOutput.pick({
+const Scorable = OtelOutput.pick({
   status: true,
   environment: true,
   timeRange: true,

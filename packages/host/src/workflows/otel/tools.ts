@@ -17,7 +17,7 @@ export const OTEL_TOOLS = {
 } as const satisfies Record<string, string>
 
 /** ClickStack tools that read telemetry; the rest of `AGENT_READ_TOOLS` is metadata (sources, dashboards, alerts). */
-export const DATA_TOOLS: ReadonlySet<string> = new Set([
+const DATA_TOOLS: ReadonlySet<string> = new Set([
   'clickstack_timeseries',
   'clickstack_table',
   'clickstack_search',

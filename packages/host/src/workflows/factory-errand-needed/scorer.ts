@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { FactoryErrandNeededOutput } from './schema.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
-export const FACTORY_ERRAND_NEEDED_SCORER_VERSION = '2026-11-13.1'
+const FACTORY_ERRAND_NEEDED_SCORER_VERSION = '2026-11-13.1'
 
 /** A case's expected verdict: what a careful owner would have answered for the request and its evidence. */
 export const FactoryErrandNeededReference = z.object({

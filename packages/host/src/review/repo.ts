@@ -112,7 +112,7 @@ export const threadId = (repo: string, key: string): string =>
  * The work tree's changes as a commit on HEAD, through a temporary index: only unreferenced objects land in the
  * caller's object store. No change against HEAD → HEAD itself (an empty diff).
  */
-export async function snapshot(exec: Exec, root: string): Promise<{ head: string; snapshot: boolean }> {
+async function snapshot(exec: Exec, root: string): Promise<{ head: string; snapshot: boolean }> {
   const index = join(tmpdir(), `agw-review-index-${randomBytes(8).toString('hex')}`)
   const run = async (args: string[], env: Record<string, string> = {}) => {
     const r = await exec(['git', ...args], {

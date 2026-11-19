@@ -27,7 +27,7 @@ const MAX_SETTLED = 20
 const MAX_TEXT_CHARS = 8_000
 const MAX_PRECEDENTS = 12
 /** The most `after` edges one Issue may name: the number the prompt states, the schema allows and the guard enforces. */
-export const MAX_AFTER = 3
+const MAX_AFTER = 3
 
 /** The owner's mark on one past Spec, the same shape as software-factory's `SpecPrecedent`; `title` and `note` are untrusted data. */
 const specPrecedent = z.object({
@@ -214,7 +214,7 @@ ${JSON_ANSWER}
 
 {"amend": null | "<issue id>", "settled": null | "<closed issue id>", "after": ["<issue id>"], "kind": null | "feature" | "bug" | "chore" | "docs" | "incident", "size": null | "small" | "medium" | "large", "checkpoint": null | "spec", "reason": "${REASON_ASK}"}`
 
-export function buildFactoryTriagePrompt(input: FactoryTriageInput, nonce: string): string {
+function buildFactoryTriagePrompt(input: FactoryTriageInput, nonce: string): string {
   const safe = neutralizeFenceMarkers
   const open = input.candidates.length
     ? input.candidates.map((c) => `- ${c.id} [${c.kind}, ${c.state}]: ${safe(c.title)}`).join('\n')

@@ -5,14 +5,14 @@ import { GoldenExpect, liveTarget, liveValue, matchExpect, withinMaxChars } from
 import { type ResearchInputValue, ResearchOutput, type ResearchResult } from './schema.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
-export const RESEARCH_SCORER_VERSION = '2026-11-16.1'
+const RESEARCH_SCORER_VERSION = '2026-11-16.1'
 
 /** A golden case's expected result (research-gateway `evals/golden.jsonl`: `expect`, optional `maxChars`). */
-export const ResearchReference = z.object({ expect: GoldenExpect, maxChars: z.number().int().positive().optional() })
+const ResearchReference = z.object({ expect: GoldenExpect, maxChars: z.number().int().positive().optional() })
 export type ResearchReference = z.output<typeof ResearchReference>
 
 /** Citations judged per report: the judge fetches each cited page, so this bounds the scoring cost. */
-export const SUPPORTED_SAMPLE = 3
+const SUPPORTED_SAMPLE = 3
 /** Page text the judge reads per citation: the `decide` route reads 60k characters, the claim needs a margin. */
 const PAGE_CHARS = 20_000
 
@@ -26,7 +26,7 @@ const SUPPORT_QUESTION = {
 } as const
 
 /** The first `n` citations with distinct URLs, in report order: deterministic, so every report is judged alike. */
-export function sampleCitations(citations: ResearchResult['citations'], n = SUPPORTED_SAMPLE) {
+function sampleCitations(citations: ResearchResult['citations'], n = SUPPORTED_SAMPLE) {
   const seen = new Set<string>()
   return citations.filter((c) => !seen.has(c.url) && seen.add(c.url)).slice(0, n)
 }
@@ -142,9 +142,3 @@ async function scoreReport(output: Json | null, ctx: ScorerContext<ResearchRefer
   const pass = ctx.reference ? goldenPass === true : result.status === 'ok'
   return { scores, pass, ...(problems.length ? { feedback: problems.join('; ') } : {}) }
 }
-
-/** A golden case's reference, from a `cases.jsonl` line. */
-export const researchReference = (item: { expect: GoldenExpect; maxChars?: number }): Json => ({
-  expect: item.expect as Json,
-  ...(item.maxChars === undefined ? {} : { maxChars: item.maxChars }),
-})

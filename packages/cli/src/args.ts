@@ -32,7 +32,7 @@ function unionType(types: FieldType[]): FieldType {
   return types.includes('any') ? 'any' : 'scalar'
 }
 
-export function fieldType(schema: Schema): FieldType {
+function fieldType(schema: Schema): FieldType {
   if (Array.isArray(schema.enum) || schema.const !== undefined) return 'enum'
   const variants = (schema.anyOf ?? schema.oneOf)?.filter(notNull)
   if (variants) {
@@ -149,7 +149,7 @@ function globalFlags(command: Command): string[] {
 
 const flagFields = (command: Command) => command.fields.filter((f) => !command.x.positional.includes(f.name))
 
-export function validFlags(command: Command): string[] {
+function validFlags(command: Command): string[] {
   return [
     ...flagFields(command).flatMap((f) => (isBoolean(f) ? [f.flag, `no-${f.flag}`] : [f.flag])),
     ...globalFlags(command),

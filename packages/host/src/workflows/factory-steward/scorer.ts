@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { FactoryStewardOutput } from './schema.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
-export const FACTORY_STEWARD_SCORER_VERSION = '2026-11-16.1'
+const FACTORY_STEWARD_SCORER_VERSION = '2026-11-16.1'
 
 /**
  * A case's expected action: the one that the Issue's later record shows was enough. `basis` says which record

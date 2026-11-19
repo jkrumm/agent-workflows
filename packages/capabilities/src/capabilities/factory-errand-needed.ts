@@ -104,7 +104,7 @@ Age alone is never a reason: an old request that nothing contradicts is still ne
 
 {"verdict": "needed" | "not_needed" | "unsure", "reason": "…"}`
 
-export function buildFactoryErrandNeededPrompt(request: FactoryErrandNeededInput, nonce: string): string {
+function buildFactoryErrandNeededPrompt(request: FactoryErrandNeededInput, nonce: string): string {
   const safe = neutralizeFenceMarkers
   const { errand, evidence } = request
   const optional = (text: string | null) => (text === null ? '(none)' : safe(text) || '(none)')

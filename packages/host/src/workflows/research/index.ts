@@ -44,7 +44,7 @@ const CONTEXT_STEP: ContextStep[] = [
 const AGENT_ATTEMPTS = 2
 
 /** What the `tools` step journals: the evidence of the step's recorded tool calls, summed. */
-export const Evidence = z.object({
+const Evidence = z.object({
   retrieved: z.array(z.string()),
   seen: z.array(z.string()),
   failed: z.number().int(),
@@ -169,7 +169,7 @@ export function isPlaceholderReport(report: string): boolean {
  * of failing the whole report, which is what the agent's rules say to do with a claim it could not source. Production's
  * re-asks were mostly this (a replay of the whole session to fix one entry).
  */
-export function moveUnsourcedCitations(raw: unknown): unknown {
+function moveUnsourcedCitations(raw: unknown): unknown {
   if (typeof raw !== 'object' || raw === null || !Array.isArray((raw as { citations?: unknown }).citations)) return raw
   const draft = raw as { citations: unknown[]; unverified?: unknown }
   const hasUrl = (c: unknown) =>

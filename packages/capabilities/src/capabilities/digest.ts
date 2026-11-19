@@ -23,12 +23,12 @@ export const DIGEST_TEXT_LIMITS: Record<DigestKind, number> = {
   reply: 4_000,
   window: 6_000,
 }
-export const MAX_DIGEST_CONTEXT_CHARS = 1_000
+const MAX_DIGEST_CONTEXT_CHARS = 1_000
 /** A whole batch stays far below any context window; the per-kind limits alone would allow 64 windows of 6 000. */
-export const MAX_DIGEST_TOTAL_CHARS = 120_000
-export const MAX_SHORT_WORDS = 8
-export const MAX_HEADLINE_WORDS = 16
-export const MAX_PARAGRAPH_WORDS = 60
+const MAX_DIGEST_TOTAL_CHARS = 120_000
+const MAX_SHORT_WORDS = 8
+const MAX_HEADLINE_WORDS = 16
+const MAX_PARAGRAPH_WORDS = 60
 
 const words = (text: string) => text.trim().split(/\s+/).filter(Boolean).length
 const oneLine = (text: string) => !/[\r\n\u2028\u2029]/.test(text)

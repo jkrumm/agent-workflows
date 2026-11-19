@@ -39,7 +39,7 @@ export interface FakeRoom extends ModelPort {
 }
 
 /** Six plain turns of ~9 words: under a 60-word target, no stock phrase, no lecture, questions on both sides. */
-export function fakeTurns(index: number, mark = 'draft') {
+function fakeTurns(index: number, mark = 'draft') {
   const lines = [
     `Heute geht es im Abschnitt ${index + 1} um eine einfache Frage für dich?`,
     'Genau, und die Antwort ist kürzer als man zunächst denkt.',

@@ -53,7 +53,7 @@ const LANGUAGE_NAME: Record<ProseLanguage, string> = {
 // ── The fence ───────────────────────────────────────────────────────────────────────────────
 
 /** A fresh 128-bit delimiter suffix. Never derived from the text it fences: nothing written beforehand can know it. */
-export const randomNonce = () => randomBytes(16).toString('hex')
+const randomNonce = () => randomBytes(16).toString('hex')
 
 /** Tries before a fence is given up on: a random 128-bit token already inside a body means the generator is broken. */
 const MAX_NONCE_TRIES = 8

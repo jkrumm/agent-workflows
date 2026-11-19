@@ -49,11 +49,11 @@ import {
 // step 4 on, `publishEpisode`, the ntfy notice, `writeEpisodeBrainNote`). Internal: only the room's `ctx.workflow`
 // (and a resume) starts it. Its follow-up `podcast-publish` (legacy `POST /:id/publish`) is `publish.ts`.
 
-export const PRODUCE_VERSION = '2026-10-29.1'
-export { ProduceInput, type ProduceInputValue }
+const PRODUCE_VERSION = '2026-10-29.1'
+export { type ProduceInputValue }
 
 /** The artifact store's workflow directory: `<root>/podcast/<episode id>/`, legacy's per-job directory. */
-export const ARTIFACT_WORKFLOW = 'podcast'
+const ARTIFACT_WORKFLOW = 'podcast'
 
 const Abs = z.object({ url: z.string(), libraryItemId: z.string(), episodeId: z.string().nullable() })
 const Publish = z.object({
@@ -72,7 +72,7 @@ const Segmentation = z.object({
   findings: z.array(z.string()),
 })
 
-export const ProduceOutput = z.object({
+const ProduceOutput = z.object({
   /** The mastered episode in the artifact store (30-day retention). */
   mp3Path: z.string(),
   coverPath: z.string().nullable(),
@@ -149,7 +149,7 @@ const json = (value: unknown): Json => JSON.parse(JSON.stringify(value)) as Json
 const as = async <T>(value: Promise<Json>): Promise<T> => (await value) as unknown as T
 
 /** A best-effort stage's failure: its fallback stands, unless the step was aborted (cancel, lease loss, shutdown). */
-export function fallBack<T>(stage: string, error: unknown, signal: AbortSignal, fallback: T): T {
+function fallBack<T>(stage: string, error: unknown, signal: AbortSignal, fallback: T): T {
   if (signal.aborted) throw error
   log.warn(`podcast ${stage} failed, continuing without it`, { error: messageOf(error) })
   return fallback
@@ -197,8 +197,7 @@ export function planSynthesis(
 }
 
 /** The episode's artifact directory. */
-export const episodeDir = (episodeId: string, root?: string) =>
-  artifactDir(ARTIFACT_WORKFLOW, episodeId, root ? { root } : {})
+const episodeDir = (episodeId: string, root?: string) => artifactDir(ARTIFACT_WORKFLOW, episodeId, root ? { root } : {})
 
 // ---------------------------------------------------------------------------
 // The effects: shared with `podcast-publish`. Each never throws but on abort.

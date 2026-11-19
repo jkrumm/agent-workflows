@@ -1,8 +1,8 @@
 /** Keys a keyed call steps through before it gives up: each failed attempt left its key holding a failure. */
-export const MAX_KEY_ATTEMPTS = 5
+const MAX_KEY_ATTEMPTS = 5
 
 /** The key of attempt `n`: the base, then `base:2`, `base:3`, … */
-export const attemptKey = (base: string, attempt: number) => (attempt === 1 ? base : `${base}:${attempt}`)
+const attemptKey = (base: string, attempt: number) => (attempt === 1 ? base : `${base}:${attempt}`)
 
 /** What one attempt found under its key: a value, or a run or job that already ended badly there. */
 export type KeyAttempt<T> = { value: T } | { failedBefore: true }

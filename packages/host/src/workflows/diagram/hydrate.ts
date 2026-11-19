@@ -14,15 +14,15 @@ export type Hydration = { ok: true; file: ExcalidrawFile } | { ok: false; error:
 export type Hydrate = (skeleton: unknown[], signal: AbortSignal) => Promise<Hydration>
 
 /** The library converts 30 elements in about 30 ms after a 100 ms import; this only bounds a hung child. */
-export const HYDRATE_TIMEOUT_MS = 30_000
+const HYDRATE_TIMEOUT_MS = 30_000
 /** A call waits this long for one of the {@link MAX_CONCURRENT_HYDRATIONS} slots before it gives up. */
-export const QUEUE_WAIT_MS = 60_000
+const QUEUE_WAIT_MS = 60_000
 /** Children alive at once; the rest of the calls queue. Each holds the library and the fonts, about 150 MB. */
-export const MAX_CONCURRENT_HYDRATIONS = 2
+const MAX_CONCURRENT_HYDRATIONS = 2
 /** The child's own deadline is the host's timeout plus this, so it never fires before the host has acted. */
-export const CHILD_DEADLINE_MARGIN_MS = 5_000
+const CHILD_DEADLINE_MARGIN_MS = 5_000
 /** A 400-element document is about 0.4 MB; this bounds a child that floods its stdout. */
-export const MAX_REPLY_BYTES = 32 * 1024 * 1024
+const MAX_REPLY_BYTES = 32 * 1024 * 1024
 /** The last of stderr that makes it into an error message; the rest is read and dropped. */
 const STDERR_KEEP = 4 * 1024
 /** The child only needs to find Bun's packages, a home and a temp dir; nothing else of the host's environment (secrets). */

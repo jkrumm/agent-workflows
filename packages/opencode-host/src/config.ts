@@ -234,7 +234,7 @@ function variantSettings(effort: string, provider: string): Record<string, unkno
  * the gateway's Anthropic leg, which pays from a credit pool. Compaction stays on the session's model: a summary of an
  * agent's whole history is not a label.
  */
-export const HOUSEKEEPING_ROUTE: RouteId = 'cheap.title'
+const HOUSEKEEPING_ROUTE: RouteId = 'cheap.title'
 
 /** `<provider>/<model>[#effort]`, the form of an agent's `model` in the server config. */
 function housekeepingModel(): string {

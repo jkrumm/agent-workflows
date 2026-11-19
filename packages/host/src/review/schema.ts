@@ -5,11 +5,11 @@ import { ACCOUNT_ID_PATTERN } from '../fleet/quota.ts'
 import { TIERS } from './route.ts'
 
 export const REVIEW_OUTPUT_VERSION = 4
-export const TAGS = ['important', 'nit', 'pre-existing'] as const
-export const CLASSES = ['intent', 'domain', 'duplication', 'architecture', 'bug', 'security'] as const
+const TAGS = ['important', 'nit', 'pre-existing'] as const
+const CLASSES = ['intent', 'domain', 'duplication', 'architecture', 'bug', 'security'] as const
 export const DISPOSITIONS = ['open', 'fixed', 'wrong', 'intentional', 'irrelevant'] as const
-export const JOB_STATES = ['prepared', 'submitted', 'abandoned'] as const
-export const OUTCOMES = ['clean', 'actionable', 'needs-human'] as const
+const JOB_STATES = ['prepared', 'submitted', 'abandoned'] as const
+const OUTCOMES = ['clean', 'actionable', 'needs-human'] as const
 export type Tag = (typeof TAGS)[number]
 export type FindingClass = (typeof CLASSES)[number]
 export type Disposition = (typeof DISPOSITIONS)[number]
@@ -24,7 +24,7 @@ const optionalText = z
   .transform((s) => (s?.trim() ? s : undefined))
 
 /** One finding as the reviewer replies it; unknown fields are dropped. */
-export const ReplyFinding = z.object({
+const ReplyFinding = z.object({
   id: optionalText.describe('Only with stillOpen: the id of the prior finding still present'),
   tag: z.enum(TAGS),
   class: z.enum(CLASSES),
@@ -69,7 +69,7 @@ const SEAT = z.object({
   vote: z.number().optional(),
 })
 
-export const OutputFinding = z.object({
+const OutputFinding = z.object({
   id: z.string(),
   tag: z.enum(TAGS),
   class: z.enum(CLASSES),
@@ -244,7 +244,7 @@ export const DisposeInput = z
   })
   .strict()
 
-export const FindingRecord = z.object({
+const FindingRecord = z.object({
   id: z.string(),
   jobId: z.string(),
   lastJobId: z.string(),
@@ -272,7 +272,7 @@ export const StatusInput = z
   })
   .strict()
 
-export const JobSummary = z.object({
+const JobSummary = z.object({
   id: z.string(),
   state: z.enum(JOB_STATES),
   thread: z.string(),
@@ -285,7 +285,7 @@ export const JobSummary = z.object({
   ageS: z.number().int(),
 })
 
-export const StalledThread = z.object({
+const StalledThread = z.object({
   thread: z.string(),
   threadKey: z.string().optional().describe('The key the thread was started with (absent on older jobs)'),
   jobId: z.string().describe('The last submitted round, outcome actionable'),

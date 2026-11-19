@@ -8,7 +8,7 @@ import type { HostRegistry } from '../index.ts'
 import { ImageInput, type ImageInputValue, ImageOutput, type ImageOutputValue } from './schema.ts'
 import { imageScorer } from './scorer.ts'
 
-export const IMAGE_VERSION = '2026-10-29.1'
+const IMAGE_VERSION = '2026-10-29.1'
 
 const describeCost = (cost: { usd: number | null }) => (cost.usd === null ? 'cost unknown' : `$${cost.usd}`)
 

@@ -2,7 +2,7 @@ import { readVoiceGuide, voiceGuidePath } from '@agent-workflows/capabilities'
 import { WorkflowError } from '@agent-workflows/runtime'
 
 /** The voice guide cannot be read: a configuration failure, not a verdict on the draft. Names the variable. */
-export class VoiceGuideError extends WorkflowError {
+class VoiceGuideError extends WorkflowError {
   override name = 'VoiceGuideError'
   constructor(cause: unknown) {
     super('error', (cause as Error).message, { cause })

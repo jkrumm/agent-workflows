@@ -16,7 +16,7 @@ export const OFFER_SOURCES = [...AGGREGATORS, ...DIRECT_SHOPS] as const
 export type OfferSource = (typeof OFFER_SOURCES)[number]
 export type DirectShop = (typeof DIRECT_SHOPS)[number]
 /** A Shopify storefront read through its JSON endpoints (shop-shopify-parse.ts): shopify:<host>. */
-export const shopifySourceSchema = z.templateLiteral(['shopify:', z.string()])
+const shopifySourceSchema = z.templateLiteral(['shopify:', z.string()])
 /** Every source an offer can come from: the fixed ones and a listed Shopify store. */
 export type AnySource = OfferSource | z.infer<typeof shopifySourceSchema>
 export const anySourceSchema = z.union([z.enum(OFFER_SOURCES), shopifySourceSchema])

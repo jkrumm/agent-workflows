@@ -22,13 +22,13 @@ import { setProduceLogger } from './log.ts'
 // Audiobookshelf link. The id is the `podcast` run (or its `podcast.produce` child). A public workflow of its own:
 // `agw podcast publish` cannot exist, because `podcast` is a command and no command may be the prefix of another.
 
-export const PUBLISH_VERSION = '2026-10-29.1'
+const PUBLISH_VERSION = '2026-10-29.1'
 
-export const PublishInput = z
+const PublishInput = z
   .object({ runId: z.string().min(1).describe('The podcast run (or its podcast.produce child) to publish') })
   .strict()
 
-export const PublishOutput = z.object({
+const PublishOutput = z.object({
   /** The `podcast.produce` run whose episode was published. */
   produceRunId: z.string(),
   abs: z.object({ url: z.string(), libraryItemId: z.string(), episodeId: z.string().nullable() }).nullable(),

@@ -16,7 +16,7 @@ export type Unit = (typeof UNITS)[number]
 
 const attributeValue = z.union([z.string(), z.number(), z.boolean()])
 
-export const unitPriceSchema = z.strictObject({
+const unitPriceSchema = z.strictObject({
   kind: z.literal('unit'),
   unit: z.enum(UNITS),
   /** USD per `per` units. */
@@ -29,7 +29,7 @@ export const unitPriceSchema = z.strictObject({
     .optional(),
 })
 
-export const imageTokenPriceSchema = z.strictObject({
+const imageTokenPriceSchema = z.strictObject({
   kind: z.literal('image-tokens'),
   /** USD per million prompt (text) tokens. */
   textInPerM: z.number().nonnegative(),
@@ -43,7 +43,7 @@ export const imageTokenPriceSchema = z.strictObject({
  * A token-billed speech-to-text model: the audio share of the input at `audioInPerM`, the rest at `textInPerM`. Without
  * the split the whole input is audio (STT input is audio-dominated; audio-gateway's rule, never an under-price).
  */
-export const audioTokenPriceSchema = z.strictObject({
+const audioTokenPriceSchema = z.strictObject({
   kind: z.literal('audio-tokens'),
   /** USD per million text input tokens (the prompt). */
   textInPerM: z.number().nonnegative(),

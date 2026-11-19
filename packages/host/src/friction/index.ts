@@ -1,6 +1,5 @@
 export { type GhPort, ghCli, issueNumber } from './gh.ts'
 export {
-  issueBody,
   issueTitle,
   type JobResult,
   markFollowUps,
@@ -11,7 +10,6 @@ export {
   workflowFriction,
 } from './job.ts'
 export {
-  DEFAULT_LIMITS,
   DEFAULT_SETTINGS,
   type FrictionLimits,
   type FrictionSettings,

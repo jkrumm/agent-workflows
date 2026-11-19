@@ -177,7 +177,7 @@ function hintFor(kind: AgwError['kind'], env: Env, command: Command | undefined,
 export class Unreachable extends AgwError {}
 
 /** The request may have reached the process but no answer came back (a reset, a cut body): a restart cuts a request like this. */
-export class LostAnswer extends AgwError {}
+class LostAnswer extends AgwError {}
 
 /** The pause before retry n of a refused or lost request: 0.25 s doubling to 2 s. */
 const RESTART_BACKOFF_MS = 250

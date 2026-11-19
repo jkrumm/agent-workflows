@@ -35,7 +35,7 @@ export const DEFAULT_PURPOSE = 'prod'
  * Literals, not the workflows' own constants: this module must not import the workflows; `test/purpose.test.ts` pins
  * the two to each other.
  */
-export const EVAL_PURPOSE = 'eval'
+const EVAL_PURPOSE = 'eval'
 export const EVAL_WORKFLOW_IDS: ReadonlySet<string> = new Set(['eval.run', 'eval.compare', 'eval.mine'])
 
 /** What the host's fetch hands every procedure. */
@@ -116,15 +116,7 @@ export interface HostWorkflow {
 }
 
 /** The CLI's own flags always win (`--format`, `--commit`, `--idempotency-key`, `--wait`, `--budget`, `--help`): no input may take them. */
-export const RESERVED_FLAGS = [
-  'format',
-  'commit',
-  'idempotencyKey',
-  'idempotency-key',
-  'wait',
-  'budget',
-  'help',
-] as const
+const RESERVED_FLAGS = ['format', 'commit', 'idempotencyKey', 'idempotency-key', 'wait', 'budget', 'help'] as const
 
 export function assertNoReservedFlags(owner: string, input: z.ZodObject) {
   for (const name of Object.keys(input.shape)) {
@@ -134,7 +126,7 @@ export function assertNoReservedFlags(owner: string, input: z.ZodObject) {
   }
 }
 
-export const RESUME = { command: ['run', 'wait'], positional: ['runId'] } as const
+const RESUME = { command: ['run', 'wait'], positional: ['runId'] } as const
 
 export interface OperationDeps {
   runtime: Runtime
@@ -250,7 +242,7 @@ export async function startRun(
  * milliseconds normally; five seconds is far above that and still bounded when a hook is slow or stuck, in which case
  * the answer says `costPending`.
  */
-export const RECORD_WAIT_MS = 5000
+const RECORD_WAIT_MS = 5000
 
 const POLL_MIN_MS = 25
 const POLL_MAX_MS = 250
@@ -353,7 +345,7 @@ export async function waitFor(options: WaitOptions): Promise<RunState | null> {
  * there: `null` means the cost is unknown (a call nobody priced, no positive known cost); `0` that every step was
  * free, or that no step ran.
  */
-export function toRunState(run: StoredRun): RunState {
+function toRunState(run: StoredRun): RunState {
   const { cost, unpricedCalls, postHooksDone, postHooksFailed, ...state } = run
   if (!isTerminal(run.status)) return state
   if (!postHooksDone) return { ...state, costPending: true }

@@ -14,7 +14,7 @@ import {
 
 const FACTORY_HYGIENE_WORKFLOW_ID = 'factory-hygiene'
 const FACTORY_HYGIENE_VERSION = '2026-11-08.1'
-export const HYGIENE_AGENT = 'factory-hygiene'
+const HYGIENE_AGENT = 'factory-hygiene'
 
 const isInvalidOutput = (error: unknown) => error instanceof StepFailed && error.stepKind === 'invalid_output'
 

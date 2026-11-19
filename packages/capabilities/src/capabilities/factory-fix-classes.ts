@@ -134,7 +134,7 @@ ${JSON_ANSWER}
 {"answers": [{"sha": "<a sha from the block>", "class": "<a class key>", "reason": "…"}]}`
 
 /** The fenced prompt: rules, the factory's class list, the untrusted commits under a per-call fence, a re-assertion after. */
-export function buildFactoryFixClassesPrompt(request: FactoryFixClassesInput, nonce: string): string {
+function buildFactoryFixClassesPrompt(request: FactoryFixClassesInput, nonce: string): string {
   const classes = request.classes.map((c) => `- ${c.key}: ${oneLine(c.meaning)}`).join('\n')
   const safe = neutralizeFenceMarkers
   const commits = request.commits

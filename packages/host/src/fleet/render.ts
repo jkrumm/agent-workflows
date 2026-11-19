@@ -42,7 +42,7 @@ const MAX_STANDING_CHARS = MAX_LINE_CHARS - 8
 // `cols` unset keeps the fixed widths above; set, every visible width is derived from it.
 export const MIN_COLS = 40
 export const MAX_COLS = 200
-export const DEFAULT_COLS = 110
+const DEFAULT_COLS = 110
 // Below this width "  [N agents]" on the project line is the difference between fitting and wrapping on a phone.
 const DROP_AGENT_COUNT_BELOW_COLS = 90
 // Below this width the single header line (counts, ISO timestamp, overview age) exceeds `cols` on its own: split it.

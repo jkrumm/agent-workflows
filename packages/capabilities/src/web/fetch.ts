@@ -44,7 +44,7 @@ export const fetchInput = z.object({
 })
 
 /** The reads of the chain, in the order they ran. An alternate is the same page under another spelling of its URL. */
-export const LEG_NAMES = [
+const LEG_NAMES = [
   'direct',
   'browser',
   'alternate-direct',
@@ -58,9 +58,9 @@ export const LEG_NAMES = [
  * `wayback` an archived copy from the Internet Archive; both run only after a wall stopped the reads before them.
  */
 export const VIA_NAMES = ['direct', 'browser', 'stackexchange-api', 'wayback', 'tavily-extract'] as const
-export const LEG_OUTCOMES = ['ok', 'incomplete', 'blocked', 'challenge', 'missing', 'timeout', 'failed'] as const
+const LEG_OUTCOMES = ['ok', 'incomplete', 'blocked', 'challenge', 'missing', 'timeout', 'failed'] as const
 
-export const legSchema = z.object({
+const legSchema = z.object({
   leg: z.enum(LEG_NAMES),
   /** Wall time of the read, the browser's wait for a tab slot included. */
   ms: z.number().int().nonnegative(),

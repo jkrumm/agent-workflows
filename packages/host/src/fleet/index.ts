@@ -6,8 +6,7 @@ import { claudeAccountCli, createQuota, type Quota } from './quota.ts'
 import { type AgentEnrichment, parseCols, renderText } from './render.ts'
 import type { AccountQuota, OverviewOutput, OverviewPayload, Snapshot } from './schema.ts'
 
-export { buildAgentFacts, type ClassifyInput, classifyInput, reconcileKnown, reconcileOverview } from './overview.ts'
-export { fleetConfig } from './factory.ts'
+export { type ClassifyInput, classifyInput, reconcileKnown } from './overview.ts'
 export type { Quota } from './quota.ts'
 
 /**

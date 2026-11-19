@@ -28,7 +28,7 @@ export function repoLabel(cwd: string): string {
  * (README §Machine budget): vitest reads `VITEST_MAX_WORKERS`; `bun test` runs serially unless `--parallel` is passed and
  * has no variable; jest takes `--maxWorkers` only.
  */
-export function workerCapEnv(cores = availableParallelism()): Record<string, string> {
+function workerCapEnv(cores = availableParallelism()): Record<string, string> {
   return { VITEST_MAX_WORKERS: String(Math.max(1, Math.floor(cores / 2))) }
 }
 
