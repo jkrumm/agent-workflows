@@ -4,6 +4,7 @@ import { fail } from '../errors.ts'
 import type { Env } from '../transports/config.ts'
 import type { HttpOptions } from '../transports/http.ts'
 import { type BrowserRead, browserFromEnv, parseMaxTabs, type RequestPolicy } from './browser.ts'
+import { askHumanAssist, type HumanAssist } from './human-assist.ts'
 import { pinnedFetch } from './pinned.ts'
 
 /**
@@ -26,6 +27,8 @@ export interface WebDeps {
   warn?: (message: string) => void
   /** Reads a page in a real browser. Default: the loopback CDP endpoint `AGW_BROWSER_CDP_URL` names, if it is set. */
   browser?: BrowserRead
+  /** Asks the owner to pass a check the browser cannot, when a call set `humanAssist`. Default: `ask-human.sh` (see `human-assist.ts`). */
+  humanAssist?: HumanAssist
   /** How long Tavily Extract may take, retries included, once the plain read of the page timed out. Default 15 s. */
   extractAfterTimeoutMs?: number
 }
@@ -43,6 +46,7 @@ export interface ResolvedWebDeps {
   warn: (message: string) => void
   /** The browser reader, decided per call (the environment is read on each call); undefined when none is configured. `policy` vets every request an environment-configured browser makes. */
   browser: (policy: RequestPolicy) => BrowserRead | undefined
+  humanAssist: HumanAssist
   extractAfterTimeoutMs: number
 }
 
@@ -61,6 +65,7 @@ export function resolveWebDeps(deps: WebDeps = {}): ResolvedWebDeps {
     env: () => deps.env ?? process.env,
     retry: deps.retry ?? {},
     warn,
+    humanAssist: deps.humanAssist ?? askHumanAssist({ env: deps.env ?? process.env, warn }),
     extractAfterTimeoutMs: deps.extractAfterTimeoutMs ?? EXTRACT_AFTER_TIMEOUT_MS,
     browser: (policy) => {
       if (deps.browser) return deps.browser
