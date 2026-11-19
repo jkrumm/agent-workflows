@@ -1,6 +1,8 @@
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { z } from 'zod'
 
-/** One credit pool: the `platform` block of an account in dotfiles `config/claude-accounts.json`. */
+/** One credit pool: the `platform` block of an account in the Claude account registry. */
 export interface RegistryPool {
   id: string
   creditUsd: number
@@ -29,6 +31,20 @@ const Platform = z.object({
   apiKeyRef: z.string().min(1),
   adminKeyRef: z.string().min(1).optional(),
 })
+
+/**
+ * Where the registry file is, resolved as the accounts package does (`packages/accounts/src/paths.ts` in
+ * software-factory): `$CLAUDE_ACCOUNTS_REGISTRY`, else `~/.config/claude-accounts/registry.json` when it exists, else
+ * the shared dotfiles file of a machine that still has one. `$AGW_GATEWAY_ACCOUNTS_FILE` overrides all three. The
+ * registry is a JSON file read here by shape only; keys this reader does not know (a mode, a host block, a version) are
+ * ignored.
+ */
+export function registryFile(env: Record<string, string | undefined>, home: string): string {
+  const named = env.AGW_GATEWAY_ACCOUNTS_FILE || env.CLAUDE_ACCOUNTS_REGISTRY
+  if (named) return named
+  const own = join(home, '.config', 'claude-accounts', 'registry.json')
+  return existsSync(own) ? own : join(home, 'SourceRoot', 'dotfiles', 'config', 'claude-accounts.json')
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)

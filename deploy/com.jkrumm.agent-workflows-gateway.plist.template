@@ -38,9 +38,8 @@
     <!-- The ledger (SQLite) lives here; the gateway has no journal. -->
     <key>AGW_GATEWAY_STATE_DIR</key>
     <string>__DATA_DIR__/gateway</string>
-    <!-- The picker's registry: edit it, then kickstart the gateway (the build does not change, so a deploy leaves it running). -->
-    <key>AGW_GATEWAY_ACCOUNTS_FILE</key>
-    <string>__HOME__/SourceRoot/dotfiles/config/claude-accounts.json</string>
+    <!-- No registry path: the gateway resolves it as the accounts package does ($CLAUDE_ACCOUNTS_REGISTRY, else
+         ~/.config/claude-accounts/registry.json). Edit the registry, then kickstart the gateway (the build does not change, so a deploy leaves it running). -->
   </dict>
 
   <!-- Without it launchd runs the gateway at scheduling priority 20 with throttled CPU and I/O (a login shell runs at 31),

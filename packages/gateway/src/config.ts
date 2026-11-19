@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { secretProblem } from '@agent-workflows/host/auth'
 import { readDoorTokens } from '@agent-workflows/host/door-tokens'
 import { z } from 'zod'
-import { parseRegistry, type RegistryPool } from './pools/index.ts'
+import { parseRegistry, registryFile, type RegistryPool } from './pools/index.ts'
 
 const DEFAULT_PORT = 7794
 
@@ -104,7 +104,7 @@ function readRegistry(file: string): RegistryPool[] {
   try {
     text = readFileSync(file, 'utf8')
   } catch {
-    throw new Error(`AGW_GATEWAY_ACCOUNTS_FILE: ${file} cannot be read`)
+    throw new Error(`account registry: ${file} cannot be read (AGW_GATEWAY_ACCOUNTS_FILE, CLAUDE_ACCOUNTS_REGISTRY)`)
   }
   return parseRegistry(JSON.parse(text))
 }
@@ -114,7 +114,6 @@ export function loadConfig(env: Env): GatewayConfig {
   const problems: string[] = []
   const listen = fieldOf(port, env.AGW_GATEWAY_PORT, problems)
   const stateDir = fieldOf(required('AGW_GATEWAY_STATE_DIR'), env.AGW_GATEWAY_STATE_DIR, problems)
-  const accountsFile = fieldOf(required('AGW_GATEWAY_ACCOUNTS_FILE'), env.AGW_GATEWAY_ACCOUNTS_FILE, problems)
   const iuKey = fieldOf(required('IU_API_KEY'), env.IU_API_KEY, problems)
   const iuBase = fieldOf(required('IU_BASE_URL'), env.IU_BASE_URL, problems)
   fieldOf(iuKeyId, env.IU_KEY_ID, problems)
@@ -125,9 +124,9 @@ export function loadConfig(env: Env): GatewayConfig {
   if (secretError !== null) problems.push(secretError)
 
   const iu = iuKey === undefined || iuBase === undefined ? null : iuUpstream(iuKey, iuBase, problems)
-  const registry = accountsFile === undefined ? null : attempt(problems, () => readRegistry(accountsFile))
   const text = (name: string) => fieldOf(optional, env[name], problems)
   const home = text('HOME') ?? homedir()
+  const registry = attempt(problems, () => readRegistry(registryFile(env, home)))
   const doorFile = text('AGW_DOOR_CALLERS_FILE') ?? join(home, '.agent-workflows', 'data', 'door-tokens')
   const doorTokens = attempt(problems, () => readDoorTokens(doorFile))
 

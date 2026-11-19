@@ -58,7 +58,7 @@ a concrete id passes untouched. agw routes keep owning roles (which family a sea
 
 ## Picking a pool
 
-Registry: `dotfiles/config/claude-accounts.json`, the picker's single source, gets a `platform` block per account:
+Registry: the account registry, the picker's single source, gets a `platform` block per account. The gateway finds it as the accounts package does: `$CLAUDE_ACCOUNTS_REGISTRY`, else `~/.config/claude-accounts/registry.json`, else the dotfiles file of a machine that still has one (`AGW_GATEWAY_ACCOUNTS_FILE` overrides all three). It reads the file as JSON and ignores keys it does not know (a `mode`, a `host` block, a `version`):
 
 ```json
 "platform": { "creditUsd": 200, "cycleDay": 14, "headroomUsd": 2, "enabled": true,

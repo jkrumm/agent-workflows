@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
-import { parseRegistry, reserveAboveCredit } from './registry.ts'
+import { parseRegistry, registryFile, reserveAboveCredit } from './registry.ts'
 
 const platform = {
   creditUsd: 200,
@@ -11,7 +14,54 @@ const platform = {
   adminKeyRef: 'op://vault/item/ADMIN_KEY',
 }
 
+describe('registryFile', () => {
+  const withHome = (run: (home: string) => void) => {
+    const home = mkdtempSync(join(tmpdir(), 'registry-home-'))
+    try {
+      run(home)
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  }
+
+  test('$CLAUDE_ACCOUNTS_REGISTRY wins, $AGW_GATEWAY_ACCOUNTS_FILE beats it', () =>
+    withHome((home) => {
+      expect(registryFile({ CLAUDE_ACCOUNTS_REGISTRY: '/r/a.json' }, home)).toBe('/r/a.json')
+      expect(
+        registryFile({ CLAUDE_ACCOUNTS_REGISTRY: '/r/a.json', AGW_GATEWAY_ACCOUNTS_FILE: '/r/b.json' }, home),
+      ).toBe('/r/b.json')
+    }))
+
+  test('the per-user file when it exists, else the dotfiles file', () =>
+    withHome((home) => {
+      expect(registryFile({}, home)).toBe(join(home, 'SourceRoot', 'dotfiles', 'config', 'claude-accounts.json'))
+      const own = join(home, '.config', 'claude-accounts', 'registry.json')
+      mkdirSync(join(home, '.config', 'claude-accounts'), { recursive: true })
+      writeFileSync(own, '{}')
+      expect(registryFile({}, home)).toBe(own)
+    }))
+})
+
 describe('parseRegistry', () => {
+  test('a v2 registry (a version, a mode, a host block) yields the same pools as the v1 one', () => {
+    const v1 = { accounts: { iu: { dir: null, enabled: true, platform }, me: { dir: '~/.claude-me', platform } } }
+    const v2 = {
+      version: 2,
+      host: { name: 'mini', role: 'primary' },
+      accounts: {
+        iu: {
+          dir: null,
+          enabled: true,
+          mode: 'subscription',
+          host: { name: 'mini' },
+          platform: { ...platform, future: 1 },
+        },
+        me: { dir: '~/.claude-me', mode: 'api', platform },
+      },
+    }
+    expect(parseRegistry(v2)).toEqual(parseRegistry(v1))
+  })
+
   test('reads the platform block of each account in registry order', () => {
     const pools = parseRegistry({
       _note: 'ignored',

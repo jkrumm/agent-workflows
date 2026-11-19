@@ -182,6 +182,8 @@ describeZsh('deploy.sh gateway: the restart rule', () => {
     }
     const rendered = readFileSync(t.plist(GATEWAY), 'utf8')
     expect(rendered).not.toMatch(/__[A-Z_]+__/)
+    expect(rendered).not.toContain('dotfiles')
+    expect(rendered).not.toContain('AGW_GATEWAY_ACCOUNTS_FILE')
     expect(rendered).toContain(`${dir}/launch-gateway.sh`)
     expect(rendered).not.toContain(join(t.aw, 'releases'))
     for (const expected of [
@@ -190,7 +192,6 @@ describeZsh('deploy.sh gateway: the restart rule', () => {
       `<key>AGW_VERSION</key>\n    <string>${PREV}</string>`,
       `<string>${join(t.aw, 'data', 'door-tokens')}</string>`,
       `<string>${join(t.aw, 'data', 'gateway')}</string>`,
-      `<string>${t.home}/SourceRoot/dotfiles/config/claude-accounts.json</string>`,
       '<key>ExitTimeOut</key>\n  <integer>120</integer>',
     ]) {
       expect(rendered).toContain(expected)
