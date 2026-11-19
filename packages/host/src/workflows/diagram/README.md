@@ -61,7 +61,7 @@ hang again). A native crash on a Linux host whose `core_pattern` is apport (GitH
 arrows, 8 sequential calls, load 8: **Worker** 304-666 ms for the first, then 66-77 ms (median 69-71): warm only because
 the library and the fonts stay in the host; **child process** 295-340 ms for every call (median 298-326), 4 calls through
 the cap of 2 in 670-720 ms. Hydration is one journaled `hydrate` step. Dependencies, exact: `@excalidraw/excalidraw` 0.18.1 (legacy's 0.18 line, with the Mermaid XSS backport),
-`@napi-rs/canvas` 1.0.13 (a prebuilt native module per platform, optional dependencies in the lockfile), `react`
+`@napi-rs/canvas` 1.1.1 (a prebuilt native module per platform, optional dependencies in the lockfile), `react`
 and `react-dom` 19.3.1 (the library's peers, loaded but never rendered).
 
 Traps found on the way, all handled in `hydrate.ts` / `dom-shim.ts`:
