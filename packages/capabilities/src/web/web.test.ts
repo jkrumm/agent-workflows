@@ -3857,6 +3857,30 @@ describe('web.fetch: humanAssist (the owner passes a check on the mini)', () => 
     expect(browser.reads).toHaveLength(2)
   })
 
+  test('a read with the flag never shares a flight with one without it', async () => {
+    let release!: () => void
+    const held = new Promise<void>((resolve) => (release = resolve))
+    const reads: (number | undefined)[] = []
+    const browser = {
+      read: async (url: string, _signal: AbortSignal, options?: BrowserReadOptions) => {
+        reads.push(options?.challengeMs)
+        if (options?.challengeMs !== undefined) await held
+        return options?.challengeMs === undefined
+          ? { finalUrl: url, title: GATE.title, text: GATE.text, challenge: true }
+          : { finalUrl: url, title: 'Manual', text: REAL, challenge: false }
+      },
+    }
+    const { asks, assist } = owner()
+    const { call } = setup(browser, assist)
+    const assisted = call('web.fetch', { url: URL_, humanAssist: true })
+    await Bun.sleep(50) // the assisted read is waiting on the owner
+    const unattended = await failure(call('web.fetch', { url: URL_ }))
+    expect(blockedReason(unattended.message)).toBe('needs-human')
+    expect(asks).toHaveLength(1)
+    release()
+    expect(await assisted).toMatchObject({ via: 'browser' })
+  })
+
   test('flag on: a page that passes lifts the wall; a host remembered as walled is read again, not answered from memory', async () => {
     const stuck = gatedBrowser(false)
     const { asks, assist } = owner({ approved: false, why: 'the owner did not answer the request' })
