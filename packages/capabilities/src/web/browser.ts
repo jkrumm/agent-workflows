@@ -22,6 +22,11 @@ export interface BrowserReadOptions {
    * (ten pages of one script-rendered docs site are not serialised), unless a read of it is in a challenge right now.
    */
   challengedHost?: boolean
+  /**
+   * How long a challenge may take to clear, in place of the default (`CHALLENGE_MS`): set when a person is passing it (the owner
+   * approved a `humanAssist` request). The tab stays open for the whole time, and the read ends the moment the challenge is gone.
+   */
+  challengeMs?: number
 }
 
 /**
@@ -54,7 +59,8 @@ const SETTLE_MS = 20_000
  *
  * Hard limit: agw never sends input to a challenge widget and never answers a "verify you are human" check (no `Input.*`
  * command is dispatched to a page, a test pins it). An interactive check never clears by itself, and agw does not hand it to
- * the owner: the read ends blocked (`needs-human`) and the caller goes on with other sources. No signal that tells an interactive check from one still working was proven reliable
+ * the owner on its own: the read ends blocked (`needs-human`), and only a caller that set `humanAssist` has the owner asked
+ * (`human-assist.ts`), after which the read is repeated with a longer limit for the owner to clear it. No signal that tells an interactive check from one still working was proven reliable
  * (the widget is a cross-origin frame outside the tab's session), so an interactive check costs this whole limit.
  */
 const CHALLENGE_MS = 45_000
@@ -94,7 +100,7 @@ export function parseMaxTabs(raw: string | undefined): number {
 }
 
 const CHALLENGE_TITLE =
-  /just a moment|nur einen moment|prove your humanity|something has gone wrong|attention required|verify you are human|checking your browser|ddos protection|access denied|are you a robot|blocked by network security/i
+  /just a moment|nur einen moment|continue to your page|prove your humanity|something has gone wrong|attention required|verify you are human|checking your browser|ddos protection|access denied|are you a robot|blocked by network security/i
 
 /** A bot wall: a known challenge title, or a short page whose opening lines say so. */
 export function isChallenge(title: string, text: string): boolean {
@@ -490,7 +496,7 @@ export async function readViaCdp(
       }
       const began = Date.now()
       const settleMs = timing.settleMs ?? SETTLE_MS
-      const challengeMs = timing.challengeMs ?? CHALLENGE_MS
+      const challengeMs = Math.max(timing.challengeMs ?? CHALLENGE_MS, options.challengeMs ?? 0)
       // The hydration window starts when the challenge is gone: a page that cleared at 30 s still gets `settleMs` to render.
       let settledFrom = began
       let last: BrowserPage | undefined

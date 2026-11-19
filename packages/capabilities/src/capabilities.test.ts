@@ -396,6 +396,45 @@ describe('web.read', () => {
     expect((error as Error).message).toContain('(429)')
   })
 
+  test('humanAssist reaches the fetch chain: a page behind a check only the owner passes is read after he approved', async () => {
+    iu.requests.length = 0
+    const asks: string[] = []
+    const gated = {
+      retry: { backoffMs: 0 },
+      resolve: async () => ['93.184.216.34'],
+      fetch: async () => new Response('<title>Just a moment...</title> challenge-platform', { status: 403 }),
+      browser: async (url: string, _signal: AbortSignal, options?: { challengeMs?: number }) =>
+        options?.challengeMs === undefined
+          ? { finalUrl: url, title: 'Continue to your page', text: 'Select Continue to retry.', challenge: true }
+          : { finalUrl: url, title: 'Manual', text: 'Nur ein Satz.', challenge: false },
+      humanAssist: {
+        solveMs: 1_000,
+        ask: async ({ host }: { host: string }) => {
+          asks.push(host)
+          return { approved: true as const }
+        },
+      },
+    }
+    const registry = createRegistry(
+      createCapabilities(
+        { transports: gatewayTransports({ env: { AGW_API_SECRET: 'k', AGW_GATEWAY_URL: iu.url } }), env: {} },
+        gated,
+      ),
+    )
+    const refused = await registry
+      .call('web.read', { url: 'https://manuals.example.com/1' }, { addUsage: () => {} })
+      .catch((e: unknown) => e)
+    expect((refused as Error).message).toContain('--human-assist')
+    expect(asks).toEqual([])
+    const out = await registry.call(
+      'web.read',
+      { url: 'https://manuals.example.com/1', humanAssist: true },
+      { addUsage: () => {} },
+    )
+    expect(out).toMatchObject({ extract: 'Nur ein Satz.', via: 'browser' })
+    expect(asks).toEqual(['manuals.example.com'])
+  })
+
   test('a short page is returned as read, with no model call', async () => {
     iu.requests.length = 0
     const out = (await reader().call(

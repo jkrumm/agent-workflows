@@ -4,6 +4,7 @@ import { CapabilityError, fail } from '../errors.ts'
 import { defineCapability } from '../procedure.ts'
 import { describe, failedResponse, isAbort, readJson, withRetries } from '../transports/http.ts'
 import { BrowserFailure, BrowserRefused } from './browser.ts'
+import type { HumanAnswer } from './human-assist.ts'
 import { WALL_INTERVAL_MS, WallMemory } from './wall.ts'
 import { type Pin, type ResolvedWebDeps, requireKey, webUsage, within } from './deps.ts'
 import { extractPdfPages, PdfTimeout } from './pdf.ts'
@@ -33,6 +34,12 @@ export const fetchInput = z.object({
     .default(false)
     .describe(
       'Read the page in the real browser, which waits for it to render: for a page whose content is built by script and comes back empty or as "no results" from a plain read. Falls back to the normal chain when no browser is configured',
+    ),
+  humanAssist: z
+    .boolean()
+    .default(false)
+    .describe(
+      'When the real browser lands on a check only a person can pass (an interactive challenge, a "Continue" gate), ask the owner once to pass it in the Chrome on the mini over screen sharing, wait for him, and read the page again. Off by default: an unattended run never waits on a person, and the read ends blocked (needs-human) with a hint naming this flag. Needs a browser to be configured',
     ),
 })
 
@@ -244,12 +251,21 @@ const NEXT_STEP: Record<BlockReason, string> = {
   'no-text': 'the page holds no readable text; retry once with render, else use web.search for another source',
   'unsupported-type': 'the page is not text or a PDF; do not retry, use web.search for a text source',
   'needs-human':
-    'an interactive check agw cannot pass and the owner is not asked; do not retry, use web.search for another source',
+    'an interactive check agw cannot pass; retry once with humanAssist (--human-assist) to ask the owner to pass it on the mini, else use web.search for another source',
 }
 
+/** What a failed read of a check only a person can pass ends with once the owner was asked (`humanAssist`) and it still stands. */
+const ASKED_STEP = 'an interactive check the owner did not clear; do not retry, use web.search for another source'
+
 /** The one action a failed `web.fetch` ends with, from why it failed: a gone page, a block, a slow or down host. */
-function nextStep(blocked: BlockReason | undefined, status: number | undefined, failures: readonly string[]): string {
+function nextStep(
+  blocked: BlockReason | undefined,
+  status: number | undefined,
+  failures: readonly string[],
+  humanAssist = false,
+): string {
   if (status === 404 || status === 410) return 'gone; do not retry, use web.search for the current location'
+  if (blocked === 'needs-human' && humanAssist) return ASKED_STEP
   if (blocked) return NEXT_STEP[blocked]
   if (failures.some((line) => /timed out/i.test(line))) return 'host slow or down; try later or use web.search'
   if (status !== undefined && status >= 400 && status < 500)
@@ -627,6 +643,26 @@ export const createFetch = (deps: ResolvedWebDeps) => {
   const walls = new WallMemory<BlockReason>()
   /** Hosts whose plain read met a Cloudflare challenge, remembered for 24 h in this process: read in the browser first, one tab at a time. */
   const challengedHosts = new WallMemory<'cloudflare-challenge'>(CHALLENGED_HOST_MS)
+  /** The owner's answer per host, kept for the wall interval: parallel reads of one host share one request, and a request he turned down or left unanswered is not repeated. */
+  const asked = new Map<string, { at: number; answer: Promise<HumanAnswer>; result?: HumanAnswer }>()
+  /** The owner asked about `host`, or the request still under way or answered lately. An approval is reused only while he can still be at the screen share. */
+  const askOwner = (host: string, url: string, signal: AbortSignal): Promise<HumanAnswer> => {
+    const now = Date.now()
+    const known = asked.get(host)
+    const lapsed = known?.result?.approved === true && now - known.at >= deps.humanAssist.solveMs
+    if (known && !lapsed && now - known.at < WALL_INTERVAL_MS) return known.answer
+    const entry: { at: number; answer: Promise<HumanAnswer>; result?: HumanAnswer } = {
+      at: now,
+      answer: deps.humanAssist.ask({ host, url }, signal).then((result) => {
+        entry.result = result
+        // A cancel is the caller's own: the next caller asks for itself.
+        if (!result.approved && result.why === 'cancelled' && asked.get(host) === entry) asked.delete(host)
+        return result
+      }),
+    }
+    asked.set(host, entry)
+    return entry.answer
+  }
   /** What the Stack Exchange API said about the daily quota and its `backoff`, for the whole process (the quota is per address). */
   const stackExchangeQuota = new StackExchangeQuota()
   /** Reads under way by render flag and URL; a parallel caller of the same page waits on it instead of reading again. */
@@ -638,7 +674,7 @@ export const createFetch = (deps: ResolvedWebDeps) => {
     input: fetchInput,
     output: fetchOutput,
     cli: { positional: ['url'], defaultFormat: 'json' },
-    async handler({ url, maxChars, fresh, render }, ctx) {
+    async handler({ url, maxChars, fresh, render, humanAssist }, ctx) {
       const key = ReadCache.key(url)
       const startedAt = Date.now()
       // A rendered read is not answered by a plain read of the same page: that is what it was asked to get past.
@@ -651,7 +687,7 @@ export const createFetch = (deps: ResolvedWebDeps) => {
       // A host that turned the last read away at a wall is not read again for the wall interval: no browser settle, no
       // paid read. `fresh` asks for a read of its own, and a pass of it clears the verdict.
       const host = hostOf(url)
-      const wall = fresh || !host ? undefined : walls.recall(host)
+      const wall = fresh || humanAssist || !host ? undefined : walls.recall(host)
       if (wall) {
         const minutes = Math.max(1, Math.round((Date.now() - wall.at) / 60_000))
         const again = `${nextStep(wall.reason, undefined, [])}; fresh reads the host again`
@@ -770,10 +806,16 @@ export const createFetch = (deps: ResolvedWebDeps) => {
           }
           return undefined
         }
-        /** The browser's read of `target`: a complete page is the answer, a shell is kept, a failure is one more line. */
-        const browsed = async (target = url) => {
+        /** The last browser read of the chain ended on a check no wait clears: only a person can pass it. */
+        let metCheck = false
+        /**
+         * One browser read of `target`: a complete page is the answer, a shell is kept, a failure is one more line.
+         * `ownerClearing`: the owner approved, and the tab stays open for him to clear the check.
+         */
+        const browseOnce = async (target: string, ownerClearing: boolean) => {
           if (!browser) return undefined
-          if (target !== url || kept.found || rendered) tried.push(where('browser', target))
+          metCheck = false
+          if (!ownerClearing && (target !== url || kept.found || rendered)) tried.push(where('browser', target))
           const leg = target === url ? 'browser' : 'alternate-browser'
           const began = Date.now()
           let waitMs = 0
@@ -782,6 +824,7 @@ export const createFetch = (deps: ResolvedWebDeps) => {
             const page = await browser(target, ctx.signal, {
               onTabWait: (ms) => (waitMs = ms),
               ...(host && challengedHosts.recall(host) ? { challengedHost: true } : {}),
+              ...(ownerClearing ? { challengeMs: deps.humanAssist.solveMs } : {}),
             })
             ctx.addUsage(webUsage('browser', 0))
             if (page.challenge) {
@@ -789,7 +832,10 @@ export const createFetch = (deps: ResolvedWebDeps) => {
               // Still a wall after the settle time: a person has to pass it once (the profile keeps the cookie). The page's
               // own title is not repeated: it is untrusted text.
               blocked = 'needs-human'
-              failures.push(`${where('browser', target)}: challenge not cleared`)
+              metCheck = true
+              failures.push(
+                `${where('browser', target)}: challenge not cleared${ownerClearing ? ' after the owner approved' : ''}`,
+              )
             } else if (page.text === '') {
               outcome = 'incomplete'
               failures.push(`${where('browser', target)}: no text on the page`)
@@ -825,6 +871,22 @@ export const createFetch = (deps: ResolvedWebDeps) => {
             timeline(leg, began, outcome, waitMs)
           }
           return undefined
+        }
+        /**
+         * The browser's read of `target`. With `humanAssist`, a check no wait clears is handed to the owner once (a dialog
+         * on the MacBook that opens screen share to the mini); when he approves, the page is read again with the tab held
+         * open for him to clear it, and a pass is cached like any browser read. Only the page as asked, never an alternate spelling.
+         */
+        const browsed = async (target = url) => {
+          const page = await browseOnce(target, false)
+          if (page || !humanAssist || !metCheck || target !== url || !host) return page
+          const answer = await askOwner(host, url, ctx.signal)
+          if (ctx.signal.aborted) throw fail('CANCELLED', 'cancelled')
+          if (!answer.approved) {
+            failures.push(`owner: ${answer.why}`)
+            return undefined
+          }
+          return browseOnce(target, true)
         }
         // A rendered read goes to the browser first (the plain client would only return the empty shell) and falls back
         // to the plain read when the browser gives nothing.
@@ -959,7 +1021,7 @@ export const createFetch = (deps: ResolvedWebDeps) => {
           walls.remember(host, blocked)
         throw fail(
           'UPSTREAM_ERROR',
-          `web.fetch: ${blocked ? `blocked (${blocked}) · ` : ''}${failures.join(' · ')} · ${nextStep(blocked, pageStatus, failures)}`,
+          `web.fetch: ${blocked ? `blocked (${blocked}) · ` : ''}${failures.join(' · ')} · ${nextStep(blocked, pageStatus, failures, humanAssist)}`,
           failureData(pageStatus),
         )
       }

@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { complete, type LlmDeps } from '../llm/model-call.ts'
 import { defineCapability } from '../procedure.ts'
-import { type createFetch, VIA_NAMES } from '../web/fetch.ts'
+import { type createFetch, fetchInput, VIA_NAMES } from '../web/fetch.ts'
 
 export const readInput = z.object({
   url: z
@@ -32,6 +32,7 @@ export const readInput = z.object({
     .describe(
       'Read the page in the real browser, which waits for it to render: for a page whose content is built by script and comes back empty or as "no results" from a plain read',
     ),
+  humanAssist: fetchInput.shape.humanAssist,
 })
 
 export const readOutput = z.object({
@@ -77,8 +78,8 @@ export const createWebRead = (deps: LlmDeps, fetchPage: ReturnType<typeof create
     input: readInput,
     output: readOutput,
     cli: { positional: ['url'], defaultFormat: 'plain', plainField: 'extract' },
-    async handler({ url, ask, maxChars, fresh, render }, ctx) {
-      const page = await fetchPage.call({ url, maxChars, fresh, render }, ctx)
+    async handler({ url, ask, maxChars, fresh, render, humanAssist }, ctx) {
+      const page = await fetchPage.call({ url, maxChars, fresh, render, humanAssist }, ctx)
       const base = {
         url: page.url,
         finalUrl: page.finalUrl,

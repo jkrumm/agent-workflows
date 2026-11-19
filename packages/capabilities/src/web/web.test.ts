@@ -16,6 +16,7 @@ import {
   readViaCdp,
   type RequestPolicy,
 } from './browser.ts'
+import { askHumanAssist, type HumanAnswer, type HumanAssist } from './human-assist.ts'
 import { pinnedFetch } from './pinned.ts'
 import { formatTranscript, videoIdOf } from './youtube.ts'
 import { isPrivateAddress } from './ssrf.ts'
@@ -2945,7 +2946,9 @@ describe('web.fetch: tuning of the chain', () => {
       const first = await failure(call('web.fetch', { url: 'https://shop.example.com/a' }))
       expect(blockedReason(first.message)).toBe('needs-human')
       expect(first.message).not.toMatch(/owner was asked/)
-      expect(first.message).toEndWith('do not retry, use web.search for another source')
+      expect(first.message).toEndWith(
+        'retry once with humanAssist (--human-assist) to ask the owner to pass it on the mini, else use web.search for another source',
+      )
       const sent = n.calls.length
       expect(browser.urls).toHaveLength(1)
 
@@ -3772,5 +3775,271 @@ describe('web.fetch: the Stack Exchange API and archive legs', () => {
       const out = (await call('web.fetch', { url: 'https://shop.example.com/a' })) as { via: string }
       expect(out.via).toBe('wayback')
     })
+  })
+})
+
+describe('web.fetch: humanAssist (the owner passes a check on the mini)', () => {
+  const REAL = 'Die Jura E4 kostet 549 Euro. '.repeat(20)
+  const WALL = '<title>Just a moment...</title> challenge-platform'
+  const URL_ = 'https://shop.example.com/manual/1?token=secret'
+  const GATE = { title: 'Continue to your page | shop.example.com', text: 'Select Continue to retry.' }
+
+  /** A browser that stands at a check until the owner clears it: a read given a longer challenge limit passes when `clears`. */
+  function gatedBrowser(clears: boolean) {
+    const reads: { url: string; challengeMs?: number }[] = []
+    return {
+      reads,
+      read: async (url: string, _signal: AbortSignal, options?: BrowserReadOptions) => {
+        reads.push({ url, ...(options?.challengeMs === undefined ? {} : { challengeMs: options.challengeMs }) })
+        return clears && options?.challengeMs !== undefined
+          ? { finalUrl: url, title: 'Manual', text: REAL, challenge: false }
+          : { finalUrl: url, title: GATE.title, text: GATE.text, challenge: true }
+      },
+    }
+  }
+  function owner(answer: HumanAnswer = { approved: true }) {
+    const asks: { host: string; url: string }[] = []
+    const assist: HumanAssist = {
+      solveMs: 7_000,
+      ask: async (request) => {
+        asks.push(request)
+        return answer
+      },
+    }
+    return { asks, assist }
+  }
+  const setup = (browser: { read: (...args: never[]) => unknown }, assist: HumanAssist) => {
+    const n = net({
+      'https://shop.example.com/': status(403, WALL),
+      'https://api.tavily.com/extract': json({ results: [] }),
+    })
+    return run({ ...n.deps, env: { TAVILY_API_KEY: 't' }, browser: browser.read as never, humanAssist: assist })
+  }
+
+  test('flag off: the read ends blocked (needs-human), nobody is asked, and the error names the flag', async () => {
+    const browser = gatedBrowser(true)
+    const { asks, assist } = owner()
+    const { call } = setup(browser, assist)
+    const error = await failure(call('web.fetch', { url: URL_ }))
+    expect(blockedReason(error.message)).toBe('needs-human')
+    expect(error.message).toContain('browser: challenge not cleared')
+    expect(error.message).toContain('direct: HTTP 403 (cloudflare-challenge)')
+    expect(error.message).toEndWith(
+      'retry once with humanAssist (--human-assist) to ask the owner to pass it on the mini, else use web.search for another source',
+    )
+    expect(asks).toEqual([])
+    expect(browser.reads).toHaveLength(1)
+  })
+
+  test('flag on: the owner is asked once with the page, the read is repeated with his time, and the page is cached', async () => {
+    const browser = gatedBrowser(true)
+    const { asks, assist } = owner()
+    const { call, usage } = setup(browser, assist)
+    const out = (await call('web.fetch', { url: URL_, humanAssist: true })) as {
+      via: string
+      text: string
+      legs: { leg: string; outcome: string }[]
+    }
+    expect(out).toMatchObject({ via: 'browser', cached: false })
+    expect(out.text).toStartWith('Die Jura E4')
+    expect(asks).toEqual([{ host: 'shop.example.com', url: URL_ }])
+    expect(browser.reads.map((r) => r.challengeMs)).toEqual([undefined, 7_000])
+    expect(out.legs.map((l) => [l.leg, l.outcome])).toEqual([
+      ['direct', 'blocked'],
+      ['browser', 'challenge'],
+      ['browser', 'ok'],
+    ])
+    expect(usage.filter((u) => u.model === 'browser')).toHaveLength(2)
+    // The next call is the cache's: no read, no request.
+    const again = (await call('web.fetch', { url: URL_, humanAssist: true })) as { cached: boolean }
+    expect(again.cached).toBe(true)
+    expect(asks).toHaveLength(1)
+    expect(browser.reads).toHaveLength(2)
+  })
+
+  test('flag on: a page that passes lifts the wall; a host remembered as walled is read again, not answered from memory', async () => {
+    const stuck = gatedBrowser(false)
+    const { asks, assist } = owner({ approved: false, why: 'the owner did not answer the request' })
+    const { call } = setup(stuck, assist)
+    const first = await failure(call('web.fetch', { url: 'https://shop.example.com/a' }))
+    expect(first.message).not.toContain('known wall')
+    // Without the flag the wall memory answers; with it the host is read again.
+    const memory = await failure(call('web.fetch', { url: 'https://shop.example.com/b' }))
+    expect(memory.message).toContain('known wall')
+    expect(memory.message).toContain('--human-assist')
+    expect(stuck.reads).toHaveLength(1)
+    const retried = await failure(call('web.fetch', { url: 'https://shop.example.com/b', humanAssist: true }))
+    expect(retried.message).not.toContain('known wall')
+    expect(stuck.reads.length).toBeGreaterThan(1)
+    expect(asks).toHaveLength(1) // the asked host is not asked again within the wall interval
+  })
+
+  test('flag on, the owner turns the request down: no repeat read, the reason is in the error, and he is not asked again', async () => {
+    const browser = gatedBrowser(true)
+    const { asks, assist } = owner({ approved: false, why: 'the owner turned the request down' })
+    const { call } = setup(browser, assist)
+    const error = await failure(call('web.fetch', { url: URL_, humanAssist: true }))
+    expect(blockedReason(error.message)).toBe('needs-human')
+    expect(error.message).toContain('owner: the owner turned the request down')
+    expect(error.message).toEndWith(
+      'an interactive check the owner did not clear; do not retry, use web.search for another source',
+    )
+    expect(browser.reads).toHaveLength(1)
+    await failure(call('web.fetch', { url: 'https://shop.example.com/other', humanAssist: true, fresh: true }))
+    expect(asks).toHaveLength(1)
+  })
+
+  test("flag on, approved but the check is still up after the owner's time: the read ends blocked and says so", async () => {
+    const browser = gatedBrowser(false)
+    const { asks, assist } = owner()
+    const { call } = setup(browser, assist)
+    const error = await failure(call('web.fetch', { url: URL_, humanAssist: true }))
+    expect(error.message).toContain(
+      'browser: challenge not cleared · browser: challenge not cleared after the owner approved',
+    )
+    expect(blockedReason(error.message)).toBe('needs-human')
+    expect(asks).toHaveLength(1)
+    expect(browser.reads.map((r) => r.challengeMs)).toEqual([undefined, 7_000])
+  })
+
+  test('flag on, no challenge met: nobody is asked', async () => {
+    const browser = { read: async (url: string) => ({ finalUrl: url, title: 'Manual', text: REAL, challenge: false }) }
+    const { asks, assist } = owner()
+    const { call } = setup(browser, assist)
+    expect(await call('web.fetch', { url: URL_, humanAssist: true })).toMatchObject({ via: 'browser' })
+    expect(asks).toEqual([])
+  })
+
+  test('parallel reads of one walled host share one request', async () => {
+    const browser = gatedBrowser(true)
+    const { asks, assist } = owner()
+    const { call } = setup(browser, assist)
+    const outs = await Promise.all(
+      ['a', 'b', 'c'].map((p) => call('web.fetch', { url: `https://shop.example.com/${p}`, humanAssist: true })),
+    )
+    for (const out of outs) expect(out).toMatchObject({ via: 'browser' })
+    expect(asks).toHaveLength(1)
+  })
+
+  describe('the browser reader', () => {
+    const allowAll: RequestPolicy = { allowUrl: async () => true, allowAddress: () => true }
+    const signal = new AbortController().signal
+    const timing = { settleMs: 400, challengeMs: 400, pollMs: 40 }
+
+    test('a "Continue to your page" gate is a challenge, not a page that answered HTTP 403', async () => {
+      const gate = fakeBrowser([{ ...GATE }], [], { status: 403 })
+      try {
+        const page = await readViaCdp(gate.base, 'https://shop.example.com/', signal, allowAll, timing)
+        expect(page.challenge).toBe(true)
+        expect(gate.methods.filter((m) => m.startsWith('Input.'))).toEqual([])
+      } finally {
+        gate.stop()
+      }
+    })
+
+    test('challengeMs holds the tab open past the default limit until the check is gone', async () => {
+      // 20 polls of the gate = 800 ms: past the 400 ms limit, inside the 2,000 ms the owner gets.
+      const snapshots = [...Array.from({ length: 20 }, () => ({ ...GATE })), { title: 'Manual', text: REAL }]
+      const slow = fakeBrowser(snapshots, [], { status: 403 })
+      const patient = fakeBrowser(snapshots, [], { status: 200 })
+      try {
+        expect((await readViaCdp(slow.base, 'https://shop.example.com/', signal, allowAll, timing)).challenge).toBe(
+          true,
+        )
+        const page = await readViaCdp(patient.base, 'https://shop.example.com/', signal, allowAll, timing, {
+          challengeMs: 2_000,
+        })
+        expect(page).toMatchObject({ challenge: false, title: 'Manual' })
+        expect(patient.closed).toHaveLength(1)
+      } finally {
+        slow.stop()
+        patient.stop()
+      }
+    })
+  })
+})
+
+describe('askHumanAssist (the ask-human.sh adapter)', () => {
+  const runs: { argv: string[]; env: Record<string, string | undefined> }[] = []
+  const adapter = (code: number | Error, extra: Partial<Parameters<typeof askHumanAssist>[0]> = {}) => {
+    runs.length = 0
+    const warnings: string[] = []
+    const assist = askHumanAssist({
+      env: { AGW_ASK_HUMAN: '/bin/ask-human.sh', HOME: '/home/x' },
+      warn: (m) => warnings.push(m),
+      exists: () => true,
+      run: async (argv, env) => {
+        runs.push({ argv, env })
+        if (code instanceof Error) throw code
+        return code
+      },
+      ...extra,
+    })
+    return { assist, warnings }
+  }
+  const signal = new AbortController().signal
+
+  test('asks with the page (no query), a screen share command, a key and no Errand; exit 0 is an approval', async () => {
+    const { assist } = adapter(0)
+    expect(
+      await assist.ask({ host: 'device.report', url: 'https://device.report/manual/1?token=secret#x' }, signal),
+    ).toEqual({ approved: true })
+    const { argv, env } = runs[0]!
+    expect(argv.slice(0, 2)).toEqual(['/bin/ask-human.sh', 'ask'])
+    expect(argv[2]).toContain('https://device.report/manual/1')
+    expect(argv[2]).not.toContain('secret')
+    expect(argv.slice(3)).toEqual([
+      '--cmd',
+      'if ping -c 1 -t 2 mini.local. >/dev/null 2>&1; then open vnc://mini.local.; else open vnc://mini; fi',
+      '--key',
+      'agw-human-assist:device.report',
+      '--expires',
+      '30m',
+    ])
+    expect(env.HUMAN_QUEUE_ERRANDS).toBe('0')
+  })
+
+  test("the exit code is the owner's answer", async () => {
+    const answer = async (code: number) =>
+      (await adapter(code).assist.ask({ host: 'a.example', url: 'https://a.example/' }, signal)) as {
+        approved: false
+        why: string
+      }
+    expect((await answer(1)).why).toBe('the owner turned the request down')
+    expect((await answer(75)).why).toBe('the owner did not answer the request')
+    expect((await answer(69)).why).toContain('could not be reached')
+    expect((await answer(3)).why).toBe('the request ended with exit 3')
+  })
+
+  test('a missing script turns the handoff off with one warning; a host that is no plain name never reaches the command', async () => {
+    const missing = adapter(0, { exists: () => false })
+    for (let i = 0; i < 2; i++)
+      expect(await missing.assist.ask({ host: 'a.example', url: 'https://a.example/' }, signal)).toMatchObject({
+        approved: false,
+      })
+    expect(missing.warnings).toHaveLength(1)
+    expect(runs).toEqual([])
+    const hostile = adapter(0, { env: { AGW_ASK_HUMAN: '/bin/x', AGW_SCREENSHARE_HOST: 'mini; rm -rf ~' } })
+    expect(await hostile.assist.ask({ host: 'a.example', url: 'https://a.example/' }, signal)).toMatchObject({
+      approved: false,
+    })
+    expect(runs).toEqual([])
+  })
+
+  test('an odd host is asked about without a key; a cancel is no failure; a script that cannot start is one line', async () => {
+    const { assist } = adapter(0)
+    await assist.ask({ host: '[::1]', url: 'http://[::1]/' }, signal)
+    expect(runs[0]!.argv).toContain('agw-human-assist')
+    const stopped = new AbortController()
+    stopped.abort()
+    expect(
+      await adapter(new Error('aborted')).assist.ask({ host: 'a.example', url: 'https://a.example/' }, stopped.signal),
+    ).toEqual({ approved: false, why: 'cancelled' })
+    const broken = adapter(new Error('spawn ENOENT'))
+    expect(await broken.assist.ask({ host: 'a.example', url: 'https://a.example/' }, signal)).toEqual({
+      approved: false,
+      why: 'the request could not be started',
+    })
+    expect(broken.warnings[0]).toContain('spawn ENOENT')
   })
 })
