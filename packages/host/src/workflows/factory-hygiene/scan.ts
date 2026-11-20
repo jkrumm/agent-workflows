@@ -9,7 +9,7 @@ const MAX_ENTRIES = 200_000
  * The first symlink below `root` whose target leaves it, as a path relative to `root`; `null` when none does. The agent's
  * grant is matched against the path it names, not where a link leads (packages/opencode-host/README.md §Symlinks inside an
  * allowed directory), so a checkout with such a link is not handed to it. `.git` and `node_modules` are not entered.
- * Throws when the tree has more than {@link MAX_ENTRIES} entries: the caller fails closed.
+ * Throws when the tree has more than {@link MAX_ENTRIES} entries: the throw fails the run.
  */
 export async function findEscapingLink(root: string): Promise<string | null> {
   const base = await realpath(root)
