@@ -4,10 +4,10 @@ import { decideBooleans } from '../judge-decide.ts'
 import { IrisGistInput, IrisGistOutput } from './schema.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
-export const IRIS_GIST_SCORER_VERSION = '2026-11-20.1'
+const IRIS_GIST_SCORER_VERSION = '2026-11-20.1'
 
 /** Iris cuts a gist at this many characters (`GIST_MAX` in its `adapters/agw.ts`): a longer answer reaches the user cut off. */
-export const IRIS_GIST_MAX_CHARS = 240
+const IRIS_GIST_MAX_CHARS = 240
 
 const ZERO = { valid: 0, words: 0, fits: 0, plain: 0, language: 0, clean: 0, mentions: 0 }
 /** An answer that opens by talking about the task, not the text. */

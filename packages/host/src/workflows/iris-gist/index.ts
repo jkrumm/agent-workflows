@@ -4,7 +4,7 @@ import type { HostRegistry } from '../index.ts'
 import { irisGistScorer } from './scorer.ts'
 import { IrisGistInput, IrisGistOutput } from './schema.ts'
 
-export const IRIS_GIST_WORKFLOW_ID = 'iris-gist'
+const IRIS_GIST_WORKFLOW_ID = 'iris-gist'
 const IRIS_GIST_VERSION = '2026-11-20.1'
 
 /** The one capability the workflow calls; any registry that has `llm.summarize` fits. */

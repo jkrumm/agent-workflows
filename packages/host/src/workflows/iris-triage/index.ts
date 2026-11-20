@@ -4,7 +4,7 @@ import type { HostRegistry } from '../index.ts'
 import { irisTriageScorer } from './scorer.ts'
 import { IrisTriageInput, IrisTriageOutput } from './schema.ts'
 
-export const IRIS_TRIAGE_WORKFLOW_ID = 'iris-triage'
+const IRIS_TRIAGE_WORKFLOW_ID = 'iris-triage'
 const IRIS_TRIAGE_VERSION = '2026-11-20.1'
 
 /** The one capability the workflow calls; any registry that has `triage` fits. */
