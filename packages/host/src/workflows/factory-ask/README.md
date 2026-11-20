@@ -9,8 +9,7 @@ echo '{"question":"…","options":["…","…"],"default":"…","facts":"…","p
 
 | | |
 |-|-|
-| Input (stdin JSON) | one of two shapes. Today's ask: `{question, options[], default, facts, plan, repo}`; the CLI reads it as the workflow's one `ask` property, so the HTTP body is `{"ask": {…}}`. `question` (1..2000), `options` (0..10 items of 1..1000), `default` (1..1000 or null), `facts` (≤ 20 000) and `plan` (≤ 40 000) are untrusted data; `repo` is an identifier |
-| Input, Decision shape | software-factory's new core sends its Decision instead: `{decision, repo, issue, question, recommendation, checked, options[{label, reversible, cost}], noAnswer{consequence, default, waitMinutes}, precedents[{question, answer, settledBy, worthAsking, repo}]}`. The workflow turns it into today's ask (the options are the labels, the facts carry the form and the precedents), so one seat judges both; `answer` is one of the labels. Both shapes work; the running factory keeps sending today's |
+| Input (stdin JSON) | software-factory's Decision: `{decision, repo, issue, question, recommendation, checked, options[{label, reversible, cost}], noAnswer{consequence, default, waitMinutes}, precedents[{question, answer, settledBy, worthAsking, repo}]}`. The CLI reads it as the workflow's one `ask` property, so the HTTP body is `{"ask": {…}}`. Everything but `decision` and `repo` is untrusted data; `repo` is an identifier. The workflow turns it into the seat's ask (the options are the labels, the facts carry the form and the precedents); `answer` is one of the labels |
 | Output | the run envelope's `output`: `FactoryAskOutput` (`schema.ts`): `{verdict: answer\|owner, answer, reason, source}`. `owner`: `answer` and `source` are `''`. `answer`: both non-empty; `source` names where (`default`, `plan: …`, `facts: …`); with options, `answer` is exactly one of them |
 | Shape | one journaled step (`judge`), one tool-free call to the internal `factory.ask` capability |
 | Pending | exit 10 like every workflow (`agw run wait <runId>`) |
@@ -32,7 +31,7 @@ echo '{"question":"…","options":["…","…"],"default":"…","facts":"…","p
 - **Code guard.** With options, the capability's schema is built per call: an answer outside them fails and is re-asked once.
   `guardAsk` (`factory-ask.ts`), applied by the workflow after the step so a replay gets it too, turns an `answer` that is not
   an option, or has no source, into `owner`.
-- **The Decision shape adds two things.** The prompt knows an option marked irreversible is never the answer, and reads
+- **The Decision adds two things to a plain ask.** The prompt knows an option marked irreversible is never the answer, and reads
   precedents (an owner-settled one may be the source, `precedent: <quote>`; one the owner flagged worth asking is the owner's).
   `guardJudge` holds the first in code after the step: an irreversible option becomes `owner`.
 - **Fail closed.** Any failure of the call (capability error, schema failure after the re-ask, provider error, timeout) gives
