@@ -172,7 +172,7 @@ evalReserveUsd > 0` at the current meter; a request's own cost is not known befo
 usual one, soonest expiry first. **An eval request never reaches IU.** With no candidate it is refused, `x-agw-fallback`
 or not. So it is when it is Claude-Code-shaped (it could only go to IU) or **forced** (`x-agw-upstream: iu`): eval beats
 forced, and a probe that needs IU must not carry `x-agw-purpose: eval`. The refusal is recorded in `gateway_picks` as
-`picked = refused`, `reason = eval-reserve`, `eval-claude-code` or `eval-forced`, with no ledger row and no upstream call. Every other
+`picked = refused`, `reason = eval-reserve`, `eval-claude-code` or `eval-forced`, with no ledger row and no upstream call. Its span ends unset, not as an Error: the designed answer, read from `agw.gateway.status` and `agw.gateway.pick_reason`. Every other
 purpose picks, orders and falls back exactly as before.
 
 **The overshoot.** The meter counts a response once it ends, so concurrent eval requests overshoot the reserve by up to their

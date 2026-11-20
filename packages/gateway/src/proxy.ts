@@ -18,6 +18,8 @@ const REFUSED = 'refused'
 type RefuseReason = Extract<Pick, { kind: 'refuse' }>['reason']
 /** An `eval` request with no pool above its reserve; see `refusalFor`. */
 const EVAL_REFUSAL_STATUS = 403
+/** The refusals an eval request gets by design: the client's answer, not a gateway fault, so their span is not an Error. */
+const DESIGNED_REFUSALS = new Set<RefuseReason>(['eval-reserve', 'eval-forced', 'eval-claude-code'])
 /** The reason on a path with no pick: IU is the only upstream. */
 const PASSTHROUGH = 'passthrough'
 /** nginx's status for a caller that left before the request was read; no upstream saw it. */
@@ -642,7 +644,7 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
   const refuse = (x: Exchange, reason: RefuseReason): Response => {
     const { status, type, message, headers } = refusalFor(reason)
     x.span.set({ 'agw.gateway.pool': REFUSED, 'agw.gateway.pick_reason': reason })
-    close(x, status, true)
+    close(x, status, !DESIGNED_REFUSALS.has(reason))
     return errorResponse(status, type, message, { ...headers, 'x-agw-request-id': x.requestId, 'x-agw-pool': REFUSED })
   }
 

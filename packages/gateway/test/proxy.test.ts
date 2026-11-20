@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { gzipSync } from 'node:zlib'
 import { BALANCE_MARKER, claudeRate, costFromUsage, isBalanceFailure, resolveModelAlias } from '@agent-workflows/routes'
 import { routeRate } from '@agent-workflows/routes/rates'
+import { SpanStatusCode } from '@opentelemetry/api'
 import { InMemorySpanExporter } from '@opentelemetry/sdk-trace'
 import { Ledger } from '../src/ledger.ts'
 import { createTelemetry } from '../src/telemetry.ts'
@@ -1450,6 +1451,18 @@ describe('credit pacing: purpose=eval', () => {
     expect(anthropic.seen).toHaveLength(0)
     expect(gw.rows().records).toHaveLength(0)
     expect(gw.rows().picks.map(({ row }) => [row.picked, row.reason])).toEqual([['refused', 'eval-reserve']])
+  })
+
+  test('an eval refusal is a designed 403: the span keeps its reason and is not an Error', async () => {
+    const exporter = new InMemorySpanExporter()
+    const telemetry = createTelemetry({ env: {}, logger: silentLogger(), exporter, scheduledDelayMillis: 1 })
+    const gw = start({ registry: [underReserve('iu')], telemetry })
+    await (await gw.call(MESSAGES, as('eval'))).text()
+    for (let i = 0; i < 100 && exporter.getFinishedSpans().length === 0; i++) await Bun.sleep(5)
+    const spans = exporter.getFinishedSpans()
+    expect(spans).toHaveLength(1)
+    expect(spans[0]?.attributes).toMatchObject({ 'agw.gateway.status': 403, 'agw.gateway.pick_reason': 'eval-reserve' })
+    expect(spans[0]?.status.code).toBe(SpanStatusCode.UNSET)
   })
 
   test('the refusal is not a provider-balance failure and not a retried status', async () => {
