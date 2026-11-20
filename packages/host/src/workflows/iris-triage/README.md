@@ -41,10 +41,13 @@ transcript, the reply and the answer. A question it cannot answer is left out of
 ## Arms
 
 ```
-agw eval run iris-triage --yes                                                       # high: the route today
-agw eval run iris-triage --yes --arm <(echo '{"routes":{"triage":{"effort":"low"}}}')  # file with {"routes":{"triage":{"effort":"low"}}}
-agw eval compare iris-triage --a <fingerprint of high> --b <fingerprint of low> --b-args '{...}'
+agw eval run iris-triage --yes                                                 # no arm: the route as the table has it (triage: low since 2026-11-20)
+agw eval run iris-triage --yes --arm '{"routes":{"triage":{"effort":"high"}}}'  # the former route, to compare against
+agw eval compare iris-triage --a <fingerprint of the first> --b <fingerprint of the second>
 ```
+
+`iris-gist` is the other way round: no arm is `cheap.summarize` at high, its table entry. The numbers of the 2026-11-20 run are in
+`docs/evals/2026-11-20-iris-effort-arms.md`.
 
 `--arm` takes a JSON file's content; the efforts are `none` (thinking disabled), `low`, `medium`, `high`. The case's cost,
 wall time and tokens are in `agw eval compare` as spend metrics; the call's own latency is in each run's output (`latencyMs`).

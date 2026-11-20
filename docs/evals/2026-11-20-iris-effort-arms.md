@@ -6,7 +6,7 @@ transcribe-only memo triage is on the path to the notification, and its call lat
 
 **Decision: `triage` moves to effort `low` (new constant `QUICK`, `packages/routes/src/table/_shared.ts`). The gist stays on `EASY`
 (effort high).** At `low` triage holds on every quality score (no difference whose interval excludes zero) and the call takes 2.0 s
-instead of 3.5 s at p50 (3.4 to 2.0 s). The gist loses its word bound below `high`: 96 % of gists fit 30 words at `high`, 46 % at
+instead of 3.4 s at p50. The gist loses its word bound below `high`: 96 % of gists fit 30 words at `high`, 46 % at
 `medium`, 0 % at `low`.
 
 ## Method
@@ -42,7 +42,7 @@ the prompt's compliance, not the arm.) Paired difference to `high` (30 cases, 95
 | none | language -0.07 [-0.13, -0.02] | -0.97 s [-1.27, -0.67] | -291 [-508, -82] |
 
 Reading: `low` is the knee. `none` is no faster than `low` (2.2 against 2.0 s at p50) and loses: 3 of 60 runs return no answer (the
-schema check failed twice, on long transcribe-only memos), the notification is in the wrong language in 4 of 60, and the interval
+headline broke the 60-character bound on both attempts, always on the same long transcribe-only memos; `medium` lost one run the same way), the notification is in the wrong language in 4 of 60, and the interval
 of that loss excludes zero. `medium` held but failed once of 60 and is 0.1 s slower than `low`.
 
 Side by side, 4 transcribe-only and 3 replied memos, `high` against `low` against `none`: `high` and `low` carry the same facts in the
@@ -71,6 +71,9 @@ that makes the bound hold without thinking; that is a change to the `llm.summari
 language and holds it (1.00).
 
 ## Limits
+
+The 60-character headline bound is what a lower effort breaks first: the call is re-asked once and then fails, and Iris then ships the
+memo with no summary. `low` lost none of 60 runs, which bounds its failure rate at about 5 % (95 % upper limit, rule of three), not at zero.
 
 30 triage cases and 13 gist cases from one speaker's memos, German with some English. One judge, one decision API, no human check
 beyond the 7 cases read. Two repetitions per arm bound the sampling noise only coarsely, and the baseline's own `spoken ok` and
