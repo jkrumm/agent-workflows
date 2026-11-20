@@ -12,6 +12,7 @@ const summarizeOutput = z.object({ summary: z.string() })
 
 const SYSTEM =
   'You summarize text faithfully. Keep what matters, drop what does not, add nothing the text does not say. ' +
+  'Write the summary in the language of the text: a German text gets a German summary, an English text an English one. ' +
   'Reply with the summary only: no preamble, no title, no commentary about the task.'
 
 export const createSummarize = (deps: LlmDeps) =>
@@ -26,7 +27,7 @@ export const createSummarize = (deps: LlmDeps) =>
       const { text: summary } = await complete(deps, {
         routeId: 'cheap.summarize',
         system: SYSTEM,
-        prompt: `Summarize the text below as ${shape} of at most ${maxWords} words.\n\n<text>\n${text}\n</text>`,
+        prompt: `Summarize the text below as ${shape} of at most ${maxWords} words, in the language of the text.\n\n<text>\n${text}\n</text>`,
         ctx,
       })
       return { summary }
