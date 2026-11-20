@@ -3,9 +3,17 @@ import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import sharp from 'sharp'
-import { encodeIco, encodeIcns, ICNS_SIZES, ICNS_TYPES } from '../src/workflows/image-icon/containers.ts'
+import { decodeArgb, premultiply } from './support/icns.ts'
+import {
+  encodeIco,
+  encodeIcns,
+  encodeIcnsArgb,
+  ICNS_SIZES,
+  ICNS_TYPES,
+} from '../src/workflows/image-icon/containers.ts'
 
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47]
+const MAX_MEAN_DIFF = 2
 
 function solidPng(size: number): Promise<Buffer> {
   return sharp({
@@ -18,6 +26,34 @@ function solidPng(size: number): Promise<Buffer> {
   })
     .png()
     .toBuffer()
+}
+
+/** A non-uniform image with transparent, translucent and opaque bands and a gradient: noise or a swapped channel cannot pass for it. */
+function patternPng(size: number): Promise<Buffer> {
+  const rgba = Buffer.alloc(size * size * 4)
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = (y * size + x) * 4
+      rgba[i] = Math.round((x / size) * 255)
+      rgba[i + 1] = Math.round((y / size) * 255)
+      rgba[i + 2] = x < size / 2 ? 40 : 220
+      rgba[i + 3] = y < size / 4 ? 0 : y < size / 2 ? 128 : 255
+    }
+  }
+  return sharp(rgba, { raw: { width: size, height: size, channels: 4 } })
+    .png()
+    .toBuffer()
+}
+
+async function rawRgba(image: string | Buffer): Promise<Buffer> {
+  return sharp(image).ensureAlpha().raw({ depth: 'uchar' }).toBuffer()
+}
+
+function meanAbsDiff(a: Buffer, b: Buffer): number {
+  if (a.length !== b.length) return Number.POSITIVE_INFINITY
+  let sum = 0
+  for (let i = 0; i < a.length; i++) sum += Math.abs((a[i] as number) - (b[i] as number))
+  return sum / a.length
 }
 
 describe('encodeIco', () => {
@@ -64,8 +100,8 @@ describe('encodeIco', () => {
 describe('encodeIcns', () => {
   test('writes magic, total length and walkable chunks', async () => {
     const chunks = [
-      { type: 'icp4', png: await solidPng(16) },
-      { type: 'ic07', png: await solidPng(128) },
+      { type: 'ic12', data: await solidPng(64) },
+      { type: 'ic07', data: await solidPng(128) },
     ]
     const icns = encodeIcns(chunks)
 
@@ -76,23 +112,30 @@ describe('encodeIcns', () => {
     for (const chunk of chunks) {
       expect(icns.subarray(offset, offset + 4).toString('ascii')).toBe(chunk.type)
       const length = icns.readUInt32BE(offset + 4)
-      expect(length).toBe(8 + chunk.png.byteLength)
-      expect(icns.subarray(offset + 8, offset + length).equals(chunk.png)).toBe(true)
+      expect(length).toBe(8 + chunk.data.byteLength)
+      expect(icns.subarray(offset + 8, offset + length).equals(chunk.data)).toBe(true)
       offset += length
     }
     expect(offset).toBe(icns.byteLength)
   })
 
   test('rejects a type that is not four characters', () => {
-    expect(() => encodeIcns([{ type: 'abc', png: new Uint8Array(1) }])).toThrow()
+    expect(() => encodeIcns([{ type: 'abc', data: new Uint8Array(1) }])).toThrow()
   })
 
-  // The ic09-ic14 OSTypes come from secondary sources; macOS' own iconutil is the ground truth.
+  // macOS' own iconutil is the ground truth for the OSTypes and the ARGB body: it must hand back the pixels.
   test.skipIf(process.platform !== 'darwin')(
-    'round-trips through iconutil into the 10 iconset files at the right pixel sizes',
+    'round-trips through iconutil into the 10 iconset files with the rendered pixels',
     async () => {
-      const bySize = new Map(await Promise.all(ICNS_SIZES.map(async (size) => [size, await solidPng(size)] as const)))
-      const icns = encodeIcns(ICNS_TYPES.map(({ type, size }) => ({ type, png: bySize.get(size) as Buffer })))
+      const bySize = new Map(await Promise.all(ICNS_SIZES.map(async (size) => [size, await patternPng(size)] as const)))
+      const icns = encodeIcns(
+        await Promise.all(
+          ICNS_TYPES.map(async ({ type, size, format }) => {
+            const png = bySize.get(size) as Buffer
+            return { type, data: format === 'argb' ? encodeIcnsArgb(await rawRgba(png), size) : png }
+          }),
+        ),
+      )
 
       const dir = await mkdtemp(join(tmpdir(), 'icns-'))
       try {
@@ -121,10 +164,38 @@ describe('encodeIcns', () => {
         for (const [name, size] of Object.entries(expected)) {
           const meta = await sharp(join(iconsetPath, name)).metadata()
           expect([name, meta.width, meta.height]).toEqual([name, size, size])
+          // Noise (a PNG under an OSType macOS reads as pixels) differs by ~85 on average.
+          const diff = meanAbsDiff(
+            premultiply(await rawRgba(join(iconsetPath, name))),
+            premultiply(await rawRgba(bySize.get(size) as Buffer)),
+          )
+          expect([name, diff <= MAX_MEAN_DIFF]).toEqual([name, true])
         }
       } finally {
         await rm(dir, { recursive: true, force: true })
       }
     },
   )
+})
+
+describe('encodeIcnsArgb', () => {
+  test('writes the ARGB magic and decodes back to the same RGBA, runs and literals alike', async () => {
+    const size = 32
+    const rgba = await rawRgba(await patternPng(size))
+    const body = encodeIcnsArgb(rgba, size)
+    expect(body.subarray(0, 4).toString('ascii')).toBe('ARGB')
+    expect(decodeArgb(body, size).equals(premultiply(rgba))).toBe(true)
+  })
+
+  test('splits runs past 130 and literals past 128 bytes', () => {
+    const size = 32
+    const flat = Buffer.alloc(size * size * 4, 7)
+    expect(decodeArgb(encodeIcnsArgb(flat, size), size).equals(premultiply(flat))).toBe(true)
+    const noisy = Buffer.from(Array.from({ length: size * size * 4 }, (_, i) => (i * 37 + (i >> 3)) % 251))
+    expect(decodeArgb(encodeIcnsArgb(noisy, size), size).equals(premultiply(noisy))).toBe(true)
+  })
+
+  test('rejects a buffer that is not size x size RGBA', () => {
+    expect(() => encodeIcnsArgb(new Uint8Array(10), 16)).toThrow()
+  })
 })

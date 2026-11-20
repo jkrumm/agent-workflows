@@ -2,7 +2,7 @@ import { WorkflowError } from '@agent-workflows/runtime'
 import sharp from 'sharp'
 import { optimize } from 'svgo'
 import { hexRgb, luminance } from './color.ts'
-import { encodeIcns, encodeIco, ICNS_SIZES, ICNS_TYPES } from './containers.ts'
+import { encodeIcns, encodeIcnsArgb, encodeIco, ICNS_SIZES, ICNS_TYPES } from './containers.ts'
 import {
   detectTile,
   fullBleed,
@@ -454,11 +454,13 @@ export async function renderRasters(
 
   const icnsBySize = new Map(icnsPngs)
   const icns = encodeIcns(
-    ICNS_TYPES.map(({ type, size }) => {
-      const png = icnsBySize.get(size)
-      if (!png) throw new Error(`no ICNS render for ${size}px`)
-      return { type, png }
-    }),
+    await Promise.all(
+      ICNS_TYPES.map(async ({ type, size, format }) => {
+        const png = icnsBySize.get(size)
+        if (!png) throw new Error(`no ICNS render for ${size}px`)
+        return { type, data: format === 'argb' ? encodeIcnsArgb((await decodeRgba(png)).data, size) : png }
+      }),
+    ),
   )
 
   return [
