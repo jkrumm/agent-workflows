@@ -11,7 +11,7 @@ echo '{"errand":{"id":"e_7","summary":"Approve the sign-in prompt on the test de
 | | |
 |-|-|
 | Input (stdin JSON) | `{errand{id, summary, detail}, issue{id, repo, title, kind}}`. `summary` (1..500) and `detail` (at most 8000, or null) are untrusted data, as is `issue.title`. The CLI reads it as the workflow's one `request` property, so the HTTP body is `{"request": {…}}` |
-| Output | the run envelope's `output`: `{verdict, reason}`, nothing else. `reason` is 1..300 characters on one line; on a `turn_away` it is written to the lead and says what to do instead |
+| Output | the run envelope's `output`: `{verdict, reason}`, nothing else. `reason` is one line of at most 240 characters; on a `turn_away` it is written to the lead and says what to do instead |
 | Shape | one journaled step (`errand`), one tool-free call to the internal `factory.errand` capability, then `guardErrand` |
 | Idempotency | the key `factory-errand:<errand>:<try>` is the caller's (`agw run`); the workflow implements nothing for it |
 | Pending | exit 10 like every workflow (`agw run wait <runId>`) |
@@ -26,7 +26,7 @@ echo '{"errand":{"id":"e_7","summary":"Approve the sign-in prompt on the test de
   when it needs hands and is worth them.
 - **When unsure, pass.** A wrong turn-away costs the lead a round trip, a wrong pass costs the owner a minute.
 - **Guard.** `guardErrand` runs in the workflow after the step, so a replay gets it too: the answer is exactly
-  `{verdict, reason}` with the reason on one line and clipped to 300; a `turn_away` without a reason becomes a `pass`.
+  `{verdict, reason}` with the reason on one line and clipped to 240 (the model's own reason may be any length, never a re-ask); a `turn_away` without a reason becomes a `pass`.
 - **Fails open to a retry, not to a verdict.** There is no catch: a failed or invalid call fails the run and the factory
   retries with a backoff. Cancelled, InfraError and StepFailed propagate.
 

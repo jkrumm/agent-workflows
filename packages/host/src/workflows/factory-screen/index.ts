@@ -6,7 +6,7 @@ import { factoryScreenScorer } from './scorer.ts'
 import { FactoryScreenInput, FactoryScreenOutput } from './schema.ts'
 
 const FACTORY_SCREEN_WORKFLOW_ID = 'factory-screen'
-const FACTORY_SCREEN_VERSION = '2026-11-08.1'
+const FACTORY_SCREEN_VERSION = '2026-11-20.1'
 
 /** The one capability the workflow calls; any registry that has `factory.screen` fits. */
 export type ScreenCaller = Pick<HostRegistry, 'call'>

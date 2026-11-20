@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { completeJson, type LlmDeps } from '../llm/model-call.ts'
 import { defineCapability } from '../procedure.ts'
 import { identifier } from './identifier.ts'
+import { clipReason, collapseLine, rawReason, REASON_ASK, REASON_MAX_CHARS, strictLine } from './one-line.ts'
 import {
   endOfData,
   fenceNonce,
@@ -27,7 +28,6 @@ const MAX_TITLE_CHARS = 200
 const MAX_CONTENT_CHARS = 20_100
 const MAX_NOTE_CHARS = 2_000
 const MAX_PRECEDENTS = 12
-const MAX_REASON_CHARS = 300
 
 export const factorySpecScreenInput = z.object({
   spec: z.object({
@@ -64,28 +64,29 @@ export const factorySpecScreenInput = z.object({
 })
 export type FactorySpecScreenInput = z.output<typeof factorySpecScreenInput>
 
+const reasonText = 'settle: why its lead can decide it, as a note the lead reads; pass: what makes it the owner’s'
+
 export const factorySpecScreenOutput = z.object({
   verdict: z.enum(SPEC_SCREEN_VERDICTS),
-  reason: z
-    .string()
-    .trim()
-    .min(1)
-    .max(MAX_REASON_CHARS)
-    .describe('settle: why its lead can decide it, as a note the lead reads; pass: what makes it the owner’s'),
+  reason: strictLine(REASON_MAX_CHARS).describe(reasonText),
 })
 export type FactorySpecScreenOutput = z.output<typeof factorySpecScreenOutput>
 
-const oneLine = (text: string) => text.replace(/[\r\n\u2028\u2029]+/g, ' ').trim()
+/** The answer as the model writes it: the reason is any string up to a sanity cap, brought to the contract by `clipReason`. */
+const factorySpecScreenAnswer = z.object({
+  verdict: z.enum(SPEC_SCREEN_VERDICTS),
+  reason: rawReason.describe(reasonText),
+})
 
 /**
  * The code-side guard, applied by the workflow after the step: the answer is exactly `{ verdict, reason }`, the reason on one
- * line and at most 300 characters. A `settle` without a reason becomes `pass`: a wrong settle costs the owner a Spec he wanted
+ * line and clipped to the factory's contract. A `settle` without a reason becomes `pass`: a wrong settle costs the owner a Spec he wanted
  * to see, so the factory never settles on a guess.
  */
 export function guardSpecScreen(answer: FactorySpecScreenOutput): FactorySpecScreenOutput {
-  const reason = oneLine(answer.reason).slice(0, MAX_REASON_CHARS).trim()
-  if (answer.verdict === 'settle' && reason === '') return { verdict: 'pass', reason: 'guard: settle without a reason' }
-  return { verdict: answer.verdict, reason }
+  if (answer.verdict === 'settle' && collapseLine(answer.reason) === '')
+    return { verdict: 'pass', reason: 'guard: settle without a reason' }
+  return { verdict: answer.verdict, reason: clipReason(answer.reason) }
 }
 
 // `JUDGE_RULES` in `packages/host/src/workflows/factory-spec-screen/scorer.ts` mirrors the pass/settle rules below for the drift
@@ -136,7 +137,7 @@ settle.
 
 ## Output
 
-"reason" is one short sentence (at most 300 characters). ${JSON_ANSWER}
+"reason" is one short sentence (${REASON_ASK}). ${JSON_ANSWER}
 
 {"verdict": "pass" | "settle", "reason": "…"}`
 
@@ -192,9 +193,9 @@ export const createFactorySpecScreen = (deps: LlmDeps) =>
       const { data } = await completeJson(deps, {
         routeId: 'factory.specscreen',
         prompt: buildFactorySpecScreenPrompt(request, fenceNonce(text.map((t) => neutralizeFenceMarkers(t)))),
-        schema: factorySpecScreenOutput,
+        schema: factorySpecScreenAnswer,
         ctx,
       })
-      return data
+      return { verdict: data.verdict, reason: clipReason(data.reason) }
     },
   })

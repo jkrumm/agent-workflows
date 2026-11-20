@@ -6,7 +6,7 @@ import { factoryDigestScorer } from './scorer.ts'
 import { FactoryDigestInput, FactoryDigestOutput } from './schema.ts'
 
 export const FACTORY_DIGEST_WORKFLOW_ID = 'factory.digest'
-const FACTORY_DIGEST_VERSION = '2026-11-12.1'
+const FACTORY_DIGEST_VERSION = '2026-11-20.1'
 
 /** The one capability the workflow calls; any registry that has `factory.digest` fits. */
 export type DigestCaller = Pick<HostRegistry, 'call'>

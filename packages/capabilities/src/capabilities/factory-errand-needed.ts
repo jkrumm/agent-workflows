@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { completeJson, type LlmDeps } from '../llm/model-call.ts'
 import { defineCapability } from '../procedure.ts'
 import { identifier } from './identifier.ts'
+import { clipReason, collapseLine, rawReason, REASON_ASK, REASON_MAX_CHARS, strictLine } from './one-line.ts'
 import {
   endOfData,
   fenceNonce,
@@ -23,7 +24,6 @@ const MAX_SUMMARY_CHARS = 200
 const MAX_DETAIL_CHARS = 4_000
 const MAX_COMMAND_CHARS = 2_000
 const MAX_EVIDENCE_CHARS = 4_000
-const MAX_REASON_CHARS = 300
 
 export const factoryErrandNeededInput = z.object({
   errand: z.object({
@@ -47,31 +47,31 @@ export const factoryErrandNeededInput = z.object({
 })
 export type FactoryErrandNeededInput = z.output<typeof factoryErrandNeededInput>
 
+const reasonText = 'not_needed: the evidence that shows it; needed or unsure: the deciding fact'
+
 export const factoryErrandNeededOutput = z.object({
   verdict: z.enum(ERRAND_NEEDED_VERDICTS),
-  reason: z
-    .string()
-    .trim()
-    .min(1)
-    .max(MAX_REASON_CHARS)
-    .describe('not_needed: the evidence that shows it; needed or unsure: the deciding fact'),
+  reason: strictLine(REASON_MAX_CHARS).describe(reasonText),
 })
 export type FactoryErrandNeededOutput = z.output<typeof factoryErrandNeededOutput>
 
-const oneLine = (text: string) => text.replace(/[\r\n\u2028\u2029]+/g, ' ').trim()
+/** The answer as the model writes it: the reason is any string up to a sanity cap, brought to the contract by `clipReason`. */
+const factoryErrandNeededAnswer = z.object({
+  verdict: z.enum(ERRAND_NEEDED_VERDICTS),
+  reason: rawReason.describe(reasonText),
+})
 
 /**
  * The code-side guard, applied by the workflow after the step: the answer is exactly `{ verdict, reason }`, the reason on one
- * line and at most 300 characters. A `not_needed` without a reason, or on a request with no evidence at all, becomes
+ * line and clipped to the factory's contract. A `not_needed` without a reason, or on a request with no evidence at all, becomes
  * `unsure`: a wrong `not_needed` costs the owner a request he still wanted, so the factory never closes on a guess.
  */
 export function guardErrandNeeded(answer: FactoryErrandNeededOutput, evidence: string): FactoryErrandNeededOutput {
-  const reason = oneLine(answer.reason).slice(0, MAX_REASON_CHARS).trim()
-  if (answer.verdict === 'not_needed' && reason === '')
+  if (answer.verdict === 'not_needed' && collapseLine(answer.reason) === '')
     return { verdict: 'unsure', reason: 'guard: not_needed without a reason' }
   if (answer.verdict === 'not_needed' && evidence.trim() === '')
     return { verdict: 'unsure', reason: 'guard: not_needed without any evidence' }
-  return { verdict: answer.verdict, reason }
+  return { verdict: answer.verdict, reason: clipReason(answer.reason) }
 }
 
 const INSTRUCTIONS = `You decide whether an open request for the owner's hands is still needed. A lead agent raised it earlier; the
@@ -100,7 +100,7 @@ Age alone is never a reason: an old request that nothing contradicts is still ne
 
 ## Output
 
-"reason" is one short sentence (at most 300 characters). ${JSON_ANSWER}
+"reason" is one short sentence (${REASON_ASK}). ${JSON_ANSWER}
 
 {"verdict": "needed" | "not_needed" | "unsure", "reason": "…"}`
 
@@ -151,9 +151,9 @@ export const createFactoryErrandNeeded = (deps: LlmDeps) =>
       const { data } = await completeJson(deps, {
         routeId: 'factory.errandneeded',
         prompt: buildFactoryErrandNeededPrompt(request, fenceNonce(text.map((t) => neutralizeFenceMarkers(t)))),
-        schema: factoryErrandNeededOutput,
+        schema: factoryErrandNeededAnswer,
         ctx,
       })
-      return data
+      return { verdict: data.verdict, reason: clipReason(data.reason) }
     },
   })

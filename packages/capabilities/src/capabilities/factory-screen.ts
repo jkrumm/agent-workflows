@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { completeJson, type LlmDeps } from '../llm/model-call.ts'
 import { defineCapability } from '../procedure.ts'
 import { identifier } from './identifier.ts'
+import { clipReason, rawReason, REASON_ASK, REASON_MAX_CHARS, strictLine } from './one-line.ts'
 import {
   endOfData,
   fenceNonce,
@@ -22,7 +23,6 @@ export const SCREEN_VERDICTS = ['promote', 'dismiss', 'leave'] as const
 const MAX_OPEN_ISSUES = 40
 const MAX_PROJECTS = 60
 const MAX_TEXT_CHARS = 8_000
-const MAX_REASON_CHARS = 300
 
 const openIssue = z.object({
   id: identifier(64).describe('An open Issue id, e.g. issue_12; an identifier the factory supplies'),
@@ -54,21 +54,31 @@ export const factoryScreenInput = z.object({
 })
 export type FactoryScreenInput = z.output<typeof factoryScreenInput>
 
-const clipped = z.string().trim().min(1).max(MAX_REASON_CHARS)
+const repoField = identifier(200, '/')
+  .nullable()
+  .describe('promote without signal.repo: one of the projects; else null')
+const duplicateField = identifier(64).nullable().describe('dismiss as a duplicate: the open Issue id; else null')
 
 export const factoryScreenOutput = z.object({
   verdict: z.enum(SCREEN_VERDICTS),
-  reason: clipped.describe('The deciding fact'),
-  repo: identifier(200, '/').nullable().describe('promote without signal.repo: one of the projects; else null'),
-  duplicateOf: identifier(64).nullable().describe('dismiss as a duplicate: the open Issue id; else null'),
-  recommendation: clipped.nullable().describe('leave: one sentence for the owner; else null'),
+  reason: strictLine(REASON_MAX_CHARS).describe('The deciding fact'),
+  repo: repoField,
+  duplicateOf: duplicateField,
+  recommendation: strictLine(REASON_MAX_CHARS).nullable().describe('leave: one sentence for the owner; else null'),
 })
 export type FactoryScreenOutput = z.output<typeof factoryScreenOutput>
 
-const oneLine = (text: string) => text.replace(/[\r\n\u2028\u2029]+/g, ' ').trim()
+/** The answer as the model writes it: the reasons are any string up to a sanity cap, brought to the contract by `clipReason`. */
+const factoryScreenAnswer = z.object({
+  verdict: z.enum(SCREEN_VERDICTS),
+  reason: rawReason.describe('The deciding fact'),
+  repo: repoField,
+  duplicateOf: duplicateField,
+  recommendation: rawReason.nullable().describe('leave: one sentence for the owner; else null'),
+})
 
 const downgrade = (note: string, reason: string): FactoryScreenOutput => {
-  const text = oneLine(`${note}; ${reason}`).slice(0, MAX_REASON_CHARS).trim()
+  const text = clipReason(`${note}; ${reason}`)
   return { verdict: 'leave', reason: text, repo: null, duplicateOf: null, recommendation: text }
 }
 
@@ -77,7 +87,8 @@ const downgrade = (note: string, reason: string): FactoryScreenOutput => {
  * then one of the projects; a dismiss names a duplicate only among the open Issues shown. A claim that does not hold
  * downgrades to `leave` (never to another acting verdict); unused fields are cleared. The factory re-checks before it acts.
  */
-export function guardScreen(answer: FactoryScreenOutput, request: FactoryScreenInput): FactoryScreenOutput {
+export function guardScreen(given: FactoryScreenOutput, request: FactoryScreenInput): FactoryScreenOutput {
+  const answer = { ...given, reason: clipReason(given.reason) }
   if (answer.verdict === 'promote') {
     if (request.signal.repo !== null) return { ...answer, repo: null, duplicateOf: null, recommendation: null }
     if (answer.repo === null || !request.projects.includes(answer.repo))
@@ -89,7 +100,7 @@ export function guardScreen(answer: FactoryScreenOutput, request: FactoryScreenI
       return downgrade('guard: duplicate of an Issue that was not shown', answer.reason)
     return { ...answer, repo: null, recommendation: null }
   }
-  const recommendation = answer.recommendation ?? oneLine(answer.reason).slice(0, MAX_REASON_CHARS)
+  const recommendation = clipReason(answer.recommendation ?? answer.reason)
   return { ...answer, repo: null, duplicateOf: null, recommendation }
 }
 
@@ -117,7 +128,7 @@ the repo and the duplicate id before it acts, so a wrong claim only downgrades t
 
 ## Output
 
-"reason" is one short sentence (at most 300 characters): the deciding fact. ${JSON_ANSWER}
+"reason" is one short sentence (${REASON_ASK}): the deciding fact. ${JSON_ANSWER}
 
 {"verdict": "promote" | "dismiss" | "leave", "reason": "…", "repo": null | "<project>", "duplicateOf": null | "<issue id>", "recommendation": null | "one sentence for the owner"}`
 
@@ -178,9 +189,13 @@ export const createFactoryScreen = (deps: LlmDeps) =>
       const { data } = await completeJson(deps, {
         routeId: 'factory.screen',
         prompt: buildFactoryScreenPrompt(request, fenceNonce(text.map((t) => neutralizeFenceMarkers(t)))),
-        schema: factoryScreenOutput,
+        schema: factoryScreenAnswer,
         ctx,
       })
-      return data
+      return {
+        ...data,
+        reason: clipReason(data.reason),
+        recommendation: data.recommendation === null ? null : clipReason(data.recommendation),
+      }
     },
   })

@@ -6,7 +6,7 @@ import { factoryErrandNeededScorer } from './scorer.ts'
 import { FactoryErrandNeededInput, FactoryErrandNeededOutput } from './schema.ts'
 
 const FACTORY_ERRAND_NEEDED_WORKFLOW_ID = 'factory-errand-needed'
-const FACTORY_ERRAND_NEEDED_VERSION = '2026-11-13.1'
+const FACTORY_ERRAND_NEEDED_VERSION = '2026-11-20.1'
 
 /** The one capability the workflow calls; any registry that has `factory.errandneeded` fits. */
 export type ErrandNeededCaller = Pick<HostRegistry, 'call'>
