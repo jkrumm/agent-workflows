@@ -29,12 +29,14 @@ const open: { close(): Promise<void> }[] = []
 const runtimes: Runtime[] = []
 
 // One runtime at a time on the schema: an open one would claim the next test's runs without its middleware.
+// The rules close here too: each holds a pool of its own, and left open to the end of the file they were 20 idle
+// connections of the role's 48 at once.
 afterEach(async () => {
   for (const rt of runtimes.splice(0)) await rt.close()
+  for (const o of open.splice(0).reverse()) await o.close()
 })
 
 afterAll(async () => {
-  for (const o of open.reverse()) await o.close()
   await sql.close()
   await db.drop()
 })

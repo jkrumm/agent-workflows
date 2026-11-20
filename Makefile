@@ -45,9 +45,13 @@ HEAVY_TESTS := $(shell sed -e 's/\#.*//' .heavy-tests)
 # as on CI). `make usage` runs them on the mini, so the step host's `make test` leaves them out.
 USAGE_TESTS := packages/middleware/test/usage-pg.test.ts packages/gateway/test/outbox-pg.test.ts
 BUN_TEST_BASE ?= --timings=.bun-test-timings.json
-BUN_TEST_FLAGS ?= --parallel=$(TEST_WORKERS) $(BUN_TEST_BASE)
-# Both passes always run; the exit code is the worst of the two.
-TEST_CMD = rc=0; bun test $(BUN_TEST_FLAGS) $(foreach f,$(HEAVY_TESTS) $(USAGE_TESTS),--path-ignore-patterns=$(f)) || rc=$$?; bun test --parallel=$(HEAVY_WORKERS) $(BUN_TEST_BASE) $(HEAVY_TESTS) || rc=$$?; exit $$rc
+# A red run costs slot-minutes and proves nothing that ships: a first pass that fails skips the heavy pass (a green run runs
+# both, so what ships is covered the same), and TEST_BAIL failures stop a pass from starting new files (bun's coordinator
+# bails at file granularity: the files already running finish). Ten is above what one change breaks in practice and below a
+# cascade (a connection limit, a broken import), which used to run the whole suite to the end with 40-100 red tests.
+TEST_BAIL ?= 10
+BUN_TEST_FLAGS ?= --parallel=$(TEST_WORKERS) --bail=$(TEST_BAIL) $(BUN_TEST_BASE)
+TEST_CMD = bun test $(BUN_TEST_FLAGS) $(foreach f,$(HEAVY_TESTS) $(USAGE_TESTS),--path-ignore-patterns=$(f)) || { rc=$$?; echo "==> the heavy pass is skipped: the first pass failed"; exit $$rc; }; bun test --parallel=$(HEAVY_WORKERS) --bail=$(TEST_BAIL) $(BUN_TEST_BASE) $(HEAVY_TESTS)
 
 # The factory's step host (project.yaml `steps`, docs/architecture.md "Steps off the mini" in software-factory) may run `static` and
 # `test` off the mini when the mini's test line would make them wait. Install and the registry lint stay here: the host
