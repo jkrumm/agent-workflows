@@ -143,7 +143,7 @@ async function prepareStep({ input, workDir }: IconRun): Promise<PrepareResult> 
   await writeFile(sourcePath, await encodePng(rgba))
   // The favicon comes from the flat source when there is one, else from the master.
   const flat = input.flat ? await loadSource(input.flat) : undefined
-  const faviconSvg = flat ? flat.svg : master.svg
+  const faviconSvg = input.svg === 'auto' ? (flat ? flat.svg : master.svg) : undefined
   // Optimised here, not at the publish step, so an SVG that cannot be published fails before anything is billed.
   const faviconSvgPath = faviconSvg ? join(workDir(), 'favicon-source.svg') : undefined
   if (faviconSvg && faviconSvgPath) {

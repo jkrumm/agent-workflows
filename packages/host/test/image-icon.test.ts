@@ -426,6 +426,17 @@ describe('image-icon end to end', () => {
     expect(fake.seen).toEqual([])
   })
 
+  test('svg: never does not read the SVG as a favicon: a source svgo would refuse still builds the raster set', async () => {
+    const sizeless = '<svg xmlns="http://www.w3.org/2000/svg"><rect width="8" height="8"/></svg>'
+    const { body } = await run({
+      file: await writeSource('sizeless2.svg', text(sizeless)),
+      svg: 'never',
+      cutout: 'never',
+    })
+    expect(body.status).toBe('done')
+    expect(existsSync(join(body.output.dir, 'favicon.svg'))).toBe(false)
+  })
+
   test('an SVG with a foreignObject, with no size, or that is not an SVG fails as invalid_input before any call', async () => {
     const foreign =
       '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8"/><foreignObject width="8" height="8"><div xmlns="http://www.w3.org/1999/xhtml">x</div></foreignObject></svg>'
