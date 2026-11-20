@@ -29,7 +29,7 @@ echo '{"errand":{"id":"e_5","source":"example-app","summary":"Approve the sign-i
 - **When unsure, `unsure`.** A wrong `not_needed` costs the owner a request he still wanted; a wrong `needed` or `unsure` costs
   a minute.
 - **Guard.** `guardErrandNeeded` runs in the workflow after the step, so a replay gets it too: the answer is exactly
-  `{verdict, reason}` with the reason on one line and clipped to 240 (the model's own reason may be any length, never a re-ask); a `not_needed` without a reason, or on a request whose
+  `{verdict, reason}` with the reason on one line and clipped to 240 (the model's own reason may be up to 2,000 characters before it is re-asked); a `not_needed` without a reason, or on a request whose
   evidence is empty, becomes `unsure`.
 - **Fails soft in the factory, not here.** There is no catch: a failed or invalid call fails the run; the factory leaves the
   request open and names the failure. Cancelled, InfraError and StepFailed propagate.
