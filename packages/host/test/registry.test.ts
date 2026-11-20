@@ -62,6 +62,7 @@ describe('workflow discovery', () => {
       'factory-steward',
       'factory-triage',
       'image-icon',
+      'image-sheet',
       'image',
       'learnings',
       'narrative',
