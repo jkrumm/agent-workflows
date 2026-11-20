@@ -472,7 +472,6 @@ describe('fallback', () => {
       'cheap.summarize',
       'cheap.extract',
       'overview.classify',
-      'triage',
       'factory.steward',
       'factory.queue',
       'factory.triage',
@@ -485,6 +484,14 @@ describe('fallback', () => {
       expect(resolveRoute(id, {})).toMatchObject({ wire: 'anthropic', model: 'claude-haiku-5-5', effort: 'high' })
       expect(resolveRoute(id, {}).fallback).toMatchObject(terraLow)
     }
+    // triage is QUICK (docs/evals/2026-11-20-iris-effort-arms.md): EASY's call at effort low, EASY's fallback and ceiling
+    expect(resolveRoute('triage', {})).toMatchObject({
+      wire: 'anthropic',
+      model: 'claude-haiku-5-5',
+      effort: 'low',
+      maxOutputTokens: 32_000,
+    })
+    expect(resolveRoute('triage', {}).fallback).toMatchObject(terraLow)
     for (const id of [
       'narrative',
       'factory.ask',

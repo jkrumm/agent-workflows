@@ -70,6 +70,8 @@ export const EASY = {
   call: { ...HAIKU, effort: 'high', maxOutputTokens: 32_000, fallback: callFallback(TERRA_LOW) },
   agent: { ...HAIKU, effort: 'high', fallback: agentFallback(TERRA_LOW) },
 } as const
+/** A call a person waits on whose answer held its quality at effort low (`triage`, docs/evals/2026-11-20-iris-effort-arms.md): EASY's call at effort low, so model, ceiling, rate and fallback are EASY's and move with it. A single call only: no agent step was measured. */
+export const QUICK = { call: { ...EASY.call, effort: 'low' } } as const
 /** Anything that judges or writes prose: the prose writer, the narrative, the retro agent, the podcast writers' room. Sonnet medium, 32k output ceiling, falls back to Terra medium. */
 export const HARD = {
   call: { ...SONNET, effort: 'medium', maxOutputTokens: 32_000, fallback: callFallback(TERRA_MEDIUM) },
