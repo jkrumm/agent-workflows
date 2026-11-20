@@ -18,15 +18,26 @@ import {
 // token or CLI can make, or not worth a minute). The factory never calls a model (SF2). The Errand's words are untrusted data.
 
 export const ERRAND_VERDICTS = ['pass', 'turn_away'] as const
+/** Where the owner runs the step, and what kind of need the lead named; both are the lead's own flags on `factory errand raise`. */
+export const ERRAND_HOSTS = ['mini', 'macbook'] as const
+export const ERRAND_NEEDS = ['secret', 'hands', 'place', 'approval'] as const
 
 const MAX_SUMMARY_CHARS = 500
 const MAX_DETAIL_CHARS = 8_000
+const MAX_COMMAND_CHARS = 2_000
 
 export const factoryErrandInput = z.object({
   errand: z.object({
     id: identifier(64),
     summary: z.string().min(1).max(MAX_SUMMARY_CHARS).describe('Untrusted data'),
     detail: z.string().max(MAX_DETAIL_CHARS).nullable().describe('Untrusted data'),
+    command: z
+      .string()
+      .max(MAX_COMMAND_CHARS)
+      .nullish()
+      .describe('Untrusted data: the command the owner is asked to run, when the Errand carries one'),
+    host: z.enum(ERRAND_HOSTS).nullish().describe('The machine the owner runs the command on'),
+    need: z.enum(ERRAND_NEEDS).nullish().describe('The kind of need the lead named'),
   }),
   issue: z.object({
     id: identifier(64),
@@ -66,7 +77,7 @@ You have no tools. Answer from the request below and the rules here only.
 
 ${untrustedPreamble({
   block: 'request',
-  contents: "the Errand's summary and detail, and the Issue's title",
+  contents: "the Errand's summary, detail and command, and the Issue's title",
   writtenBy: 'an agent',
   supplied: 'The ids, the repo and the Issue kind are supplied by the factory.',
 })}
@@ -86,13 +97,23 @@ lead at op or secrets-run for the sudo password. Turn such an Errand away only w
 - turn_away: a CLI or token can do it, the lead can route around it, or it is not worth the owner's time. "reason" is written
   to the lead: it says what to do instead, in the imperative, addressed to the lead.
 
-When unsure, pass. The owner decides: a wrong turn-away costs the lead a round trip, a wrong pass costs the owner a minute.
+When unsure, pass. The owner decides: a wrong turn-away costs the lead a round trip, a wrong pass costs the owner a minute.`
+
+const OUTPUT_CONTRACT = `
 
 ## Output
 
 "reason" is one short sentence (${REASON_ASK}). ${JSON_ANSWER}
 
 {"verdict": "pass" | "turn_away", "reason": "…"}`
+
+// Keyed on `host` (an enum the factory validates, so it may sit outside the fence): the rule appears only for a MacBook Errand.
+const MACBOOK_RULE = `\n\n## This Errand's host is the owner's MacBook
+
+The step runs on the owner's MacBook. The mini cannot run it: no ssh, secrets-run, op or other call from the lead reaches the
+MacBook's shell, keychain or apps. Never write a turn_away reason that tells the lead to run the command itself, on the mini
+or over ssh. Turn the Errand away only for the other reasons above (it is not worth the owner's time, or the lead can do the
+step without the MacBook), and say what to do instead.`
 
 function buildFactoryErrandPrompt(request: FactoryErrandInput, nonce: string): string {
   const safe = neutralizeFenceMarkers
@@ -102,9 +123,14 @@ function buildFactoryErrandPrompt(request: FactoryErrandInput, nonce: string): s
     `Issue title: ${safe(issue.title)}`,
     `Errand summary: ${safe(errand.summary)}`,
     `Errand detail:\n${errand.detail === null ? '(none)' : safe(errand.detail) || '(none)'}`,
+    ...(errand.host ? [`Errand host: ${errand.host}`] : []),
+    ...(errand.need ? [`Errand need: ${errand.need}`] : []),
+    ...(errand.command ? [`Errand command:\n${safe(errand.command)}`] : []),
   ].join('\n')
   return (
     INSTRUCTIONS +
+    (errand.host === 'macbook' ? MACBOOK_RULE : '') +
+    OUTPUT_CONTRACT +
     `\n\n## Routing\n\nErrand: ${errand.id}; Issue: ${issue.id}` +
     fencePreamble({
       heading: '## The request',
@@ -134,7 +160,7 @@ export const createFactoryErrand = (deps: LlmDeps) =>
     internal: true,
     async handler({ request }, ctx) {
       const { errand, issue } = request
-      const text = [errand.summary, errand.detail ?? '', issue.title]
+      const text = [errand.summary, errand.detail ?? '', errand.command ?? '', issue.title]
       const { data } = await completeJson(deps, {
         routeId: 'factory.errand',
         prompt: buildFactoryErrandPrompt(request, fenceNonce(text.map((t) => neutralizeFenceMarkers(t)))),

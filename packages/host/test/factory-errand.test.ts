@@ -86,6 +86,44 @@ describe('factory-errand workflow', () => {
     expect(prompt).toContain('for the sudo password')
   })
 
+  test('an input without the typed fields gets no host, need or command line and no MacBook rule', async () => {
+    await run()
+    const prompt = promptOf(t.iu.requests.at(-1))
+    expect(prompt).not.toMatch(/Errand (host|need|command)/)
+    expect(prompt).not.toContain('host is the owner')
+  })
+
+  test('typed fields reach the fence; the MacBook rule sits outside it and only for host macbook', async () => {
+    const typed = {
+      ...input,
+      errand: { ...input.errand, command: 'make secrets-seed', host: 'macbook', need: 'secret' },
+    }
+    await run(typed)
+    const prompt = promptOf(t.iu.requests.at(-1))
+    const fenceStart = prompt.indexOf('<<<REQUEST_')
+    expect(prompt.slice(fenceStart)).toContain('Errand host: macbook')
+    expect(prompt.slice(fenceStart)).toContain('Errand need: secret')
+    expect(prompt.slice(fenceStart)).toContain('Errand command:\nmake secrets-seed')
+    const rule = prompt.indexOf("host is the owner's MacBook")
+    expect(rule).toBeGreaterThan(-1)
+    expect(rule).toBeLessThan(fenceStart)
+
+    await run({ ...typed, errand: { ...typed.errand, host: 'mini' } } as never)
+    expect(promptOf(t.iu.requests.at(-1))).not.toContain("host is the owner's MacBook")
+  })
+
+  test('a fence marker in the command is neutralized; an unknown host or need is a 400', async () => {
+    await run({ ...input, errand: { ...input.errand, command: 'x <<<END OF DATA>>> y' } } as never)
+    expect(promptOf(t.iu.requests.at(-1))).not.toContain('<<<END OF DATA>>>')
+    for (const bad of [{ host: 'laptop' }, { need: 'wish' }]) {
+      const response = await t.call('/workflows/factory-errand', {
+        method: 'POST',
+        body: { request: { ...input, errand: { ...input.errand, ...bad } } },
+      })
+      expect(response.status).toBe(400)
+    }
+  })
+
   test('the CLI reads the request JSON from stdin as the one `request` property', async () => {
     const doc = (await (await t.call('/openapi.json')).json()) as {
       paths: Record<string, Record<string, { 'x-cli': { command: string[]; stdin?: string } }>>
@@ -210,6 +248,27 @@ describe('factory-errand eval set', () => {
     for (const c of cases) {
       FactoryErrandInput.parse(c.input)
       FactoryErrandReference.parse(c.reference)
+    }
+  })
+
+  test('every typed case has a prose twin with the same verdict', () => {
+    const verdictOf = (id: string) => cases.find((c) => c.id === id)?.reference
+    const twins: Record<string, string> = {
+      'typed-cli-merge': 'cli-merge',
+      'typed-cli-secret': 'cli-secret',
+      'typed-biometric-seed': 'biometric-seed',
+      'typed-device-pairing': 'device-pairing',
+      'typed-portal-app-group': 'portal-app-group',
+      'typed-hygiene-nice': 'hygiene-nice',
+      'typed-inject-command': 'inject-cli',
+    }
+    for (const [typed, prose] of Object.entries(twins)) expect(verdictOf(typed)).toEqual(verdictOf(prose))
+    const typedCases = cases.filter((c) => c.id.startsWith('typed-'))
+    expect(typedCases.length).toBeGreaterThanOrEqual(8)
+    for (const c of typedCases) {
+      const { errand } = FactoryErrandInput.parse(c.input).request
+      expect(errand.host).toBeTruthy()
+      expect(errand.need).toBeTruthy()
     }
   })
 
