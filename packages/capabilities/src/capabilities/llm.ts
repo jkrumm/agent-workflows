@@ -2,7 +2,6 @@ import type { LlmDeps } from '../llm/model-call.ts'
 import { createDecide } from './decide.ts'
 import { createDigest } from './digest.ts'
 import { createFactoryAsk } from './factory-ask.ts'
-import { createFactoryDigest } from './factory-digest.ts'
 import { createFactoryErrand } from './factory-errand.ts'
 import { createFactoryErrandNeeded } from './factory-errand-needed.ts'
 import { createFactoryFixClasses } from './factory-fix-classes.ts'
@@ -39,7 +38,6 @@ export function createLlmCapabilities(deps: LlmDeps) {
     createFactoryErrandNeeded(deps),
     createFactorySpecScreen(deps),
     createFactoryFixClasses(deps),
-    createFactoryDigest(deps),
     createDigest(deps),
   ] as const
 }

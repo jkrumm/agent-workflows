@@ -457,7 +457,7 @@ describe('fallback', () => {
       rate: terraRate,
     }
     const terraMedium = { ...terraLow, effort: 'medium' }
-    for (const id of ['cheap.title', 'factory.digest'] as const) {
+    for (const id of ['cheap.title', 'hermes.title'] as const) {
       expect(resolveRoute(id, {})).toMatchObject({ wire: 'anthropic', model: 'claude-haiku-5-5', effort: 'none' })
       expect(resolveRoute(id, {}).fallback).toMatchObject(luna)
     }

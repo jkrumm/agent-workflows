@@ -1,5 +1,7 @@
 # Judged drift scores for `digest`, `factory.digest` and `factory-spec-screen` (2026-11-16)
 
+> 2026-11-20: `factory.digest` was removed (software-factory builds the digest in code); its parts below are history.
+
 Drift scored a sample of production runs of `digest` (52 rows) and `factory-spec-screen` (2 rows) with `{valid: 1}` only: a
 scorer with no reference had nothing to say but "the JSON parsed", so 100 % on drift meant nothing about whether an answer was
 right. Each scorer now asks a judge on the sampled run itself, and the three workflows below carry a `judged` score beside

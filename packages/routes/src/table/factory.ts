@@ -1,5 +1,5 @@
 import type { RouteEntry } from '../schema.ts'
-import { EASY, FAST, HARD } from './_shared.ts'
+import { EASY, HARD } from './_shared.ts'
 
 const routes = {
   // Software-factory's check on a lead's `factory issue ask`: the owner's, or answerable from the plan or the declared
@@ -31,10 +31,6 @@ const routes = {
   // Software-factory's Improve screen: fix commits whose scope and subject do not settle the class, sorted into the classes the
   // caller sends, up to 40 per call. Eval: `factory-fix-classes`, 9 cases (docs/evals/2026-11-16-factory-decision-suites.md); the schema also checks the answer against the request.
   'factory.fixclasses': { wire: 'anthropic', ...EASY.call },
-  // Software-factory's per-project digest: a few bullets over a project's recently closed, running and queued Issues, every few
-  // hours. The cheapest Haiku tier (FAST, no thinking): grouping titles needs no judgment and the guard drops any bullet that cites
-  // an Issue the request did not show. Eval: `factory-digest`, 9 cases (docs/evals/2026-11-16-factory-decision-suites.md); its judged faithfulness score is 0.22, so the output schema and the guard stay the bound.
-  'factory.digest': { wire: 'anthropic', ...FAST.call },
   // Software-factory's hygiene loop: an agent step with read-only tools (read, glob, grep) over a checkout; it reads several
   // files and judges text, so the default agent tier. Eval: `factory-hygiene`, 3 cases (docs/evals/2026-11-16-factory-decision-suites.md); the guard bounds what it can say.
   'factory.hygiene': { wire: 'opencode', ...EASY.agent },
