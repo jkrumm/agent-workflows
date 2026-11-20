@@ -14,7 +14,7 @@ import {
 } from './prose-prompts.ts'
 
 // The seat behind `factory-queue`: software-factory's queue loop asks it, when the order of a repo's open Issues is unclear,
-// for `after` edges the work implies, existing edges to take back, and an order for the queued ones. The factory never calls a model (SF2). The owner's
+// for `after` edges the work implies, and an order for the queued ones. The factory never calls a model (SF2). The owner's
 // `prio` is the factory's, never the model's: the order the seat proposes may break a prio tie and nothing more. Titles and
 // summaries are untrusted data; the Issues shown are the only ones the answer may name, and the guard refuses any other.
 
@@ -23,7 +23,6 @@ const QUEUE_STATE = 'queued'
 const MAX_ISSUES = 40
 const MAX_EDGES = 10
 const MAX_EDGES_PER_ISSUE = 3
-const MAX_DROPS = 10
 const MAX_SUMMARY_CHARS = 600
 
 const queueIssue = z.object({
@@ -68,20 +67,6 @@ export const factoryQueueOutput = z.object({
     )
     .max(MAX_EDGES)
     .describe('Proposed new `after` edges; [] is the common answer'),
-  drop: z
-    .array(
-      z.object({
-        issue: identifier(64).describe('A queued Issue that waits for `after` now'),
-        after: identifier(64).describe('The Issue it waits for now, as its "waits for" list shows'),
-        reason: rawReason.describe(`Why the two do not need to run in sequence: ${REASON_ASK}`),
-      }),
-    )
-    .max(MAX_DROPS)
-    .default([])
-    .describe(
-      'Existing `after` edges of a queued Issue to take back because the two are independent; [] is the common answer. ' +
-        'The factory takes back only the edges it added itself, never one a person stated',
-    ),
   order: z
     .array(identifier(64))
     .max(MAX_ISSUES)
@@ -90,7 +75,7 @@ export const factoryQueueOutput = z.object({
 })
 export type FactoryQueueOutput = z.output<typeof factoryQueueOutput>
 
-const none = (reason: string): FactoryQueueOutput => ({ edges: [], drop: [], order: [], reason: clipReason(reason) })
+const none = (reason: string): FactoryQueueOutput => ({ edges: [], order: [], reason: clipReason(reason) })
 export { none as queueNone }
 
 /** The Issues `issue` waits for, directly or through others, over the shown edges. */
@@ -113,10 +98,6 @@ function waitsFor(edges: ReadonlyMap<string, ReadonlySet<string>>, issue: string
  * - `edges`: each names a queued Issue and another shown Issue, never itself, never twice, never an edge that exists already,
  *   at most three for one Issue, and none closes a cycle through the chain as shown, the edges kept so far included. Each edge
  *   is judged on its own, as the factory's own check does: a bad one is dropped with a note and the sound ones stand.
- * - `drop`: each names a queued Issue and an edge it has in the shown `after` list, once. The guard cannot tell a stated edge
- *   from a factory-added one (the request does not carry that): the factory checks every drop against its own record and
- *   refuses a stated edge. A drop never frees the edge for the checks below: the new edges, the cycle check and the order
- *   still treat every shown edge as standing, so a refused drop leaves nothing half done.
  * - `order`: ids that are not queued (a running or stalled Issue the model listed by mistake) are dropped; what is left is
  *   `[]` or every queued Issue once, a blocker before whoever waits for it, and the owner's `prio` untouched: an Issue goes
  *   before one of higher prio only when the higher one waits for it. A wrong order is `[]` (the factory's order), never
@@ -133,8 +114,6 @@ export function guardQueue(answer: FactoryQueueOutput, input: FactoryQueueInput)
 
   const { kept: edges, refused } = guardEdges(answer.edges, byId, existing())
   notes.push(...refused)
-  const { kept: drop, refused: refusedDrops } = guardDrops(answer.drop, byId)
-  notes.push(...refusedDrops)
   const chain = existing()
   for (const { issue, after } of edges) chain.get(issue)?.add(after)
 
@@ -145,8 +124,8 @@ export function guardQueue(answer: FactoryQueueOutput, input: FactoryQueueInput)
   if (refusedOrder !== null) notes.push(refusedOrder)
 
   if (notes.length === 0) return answer
-  if (edges.length === 0 && drop.length === 0 && order.length === 0) return none(`guard: ${notes.join('; ')}`)
-  return { edges, drop, order, reason: clipReason(`${answer.reason} (guard: ${notes.join('; ')})`) }
+  if (edges.length === 0 && order.length === 0) return none(`guard: ${notes.join('; ')}`)
+  return { edges, order, reason: clipReason(`${answer.reason} (guard: ${notes.join('; ')})`) }
 }
 
 /** The edges that are sound, each judged on its own against the chain and the edges kept before it, and the reason of each refusal (once per reason). */
@@ -169,28 +148,6 @@ function guardEdges(
     proposed.add(`${edge.issue}\u0000${edge.after}`)
     perIssue.set(edge.issue, (perIssue.get(edge.issue) ?? 0) + 1)
     waits.get(edge.issue)?.add(edge.after)
-  }
-  return { kept, refused: [...refused] }
-}
-
-/** The drops that name a queued Issue and an edge it has, once each, and the reason of each refusal (once per reason). */
-function guardDrops(
-  drops: FactoryQueueOutput['drop'],
-  byId: ReadonlyMap<string, FactoryQueueInput['issues'][number]>,
-): { kept: FactoryQueueOutput['drop']; refused: string[] } {
-  const seen = new Set<string>()
-  const kept: FactoryQueueOutput['drop'] = []
-  const refused = new Set<string>()
-  for (const drop of drops) {
-    const issue = byId.get(drop.issue)
-    const key = `${drop.issue}\u0000${drop.after}`
-    if (issue?.state !== QUEUE_STATE) refused.add('a drop names an Issue that is not queued')
-    else if (!issue.after.includes(drop.after)) refused.add('a drop names an edge the Issue does not have')
-    else if (seen.has(key)) refused.add('a drop is named twice')
-    else {
-      seen.add(key)
-      kept.push(drop)
-    }
   }
   return { kept, refused: [...refused] }
 }
@@ -266,19 +223,11 @@ never reorder against it. "waits for" lists the edges that already exist; they h
   priority prefer the smaller, the older, the one that unblocks others. Give [] when the factory's own order is fine; that is
   the common, correct answer too.
 
-## What you may take back
-
-- drop: an existing "waits for" edge of a queued Issue that the two Issues do not need: they change different files and
-  features, neither builds on the other's migration, refactor or fix, and the one it waits for is not holding something this
-  Issue reads. You cannot tell who added an edge; the factory takes back only the ones it added itself and refuses the rest, so
-  name an edge only when the two are clearly independent. Only a queued Issue's own edge, as its "waits for" line shows it,
-  never a running Issue's. Never also an edge between the same two. [] is the common, correct answer; when unsure, no drop.
-
 ## Output
 
 ${JSON_ANSWER}
 
-{"edges": [{"issue": "<queued issue id>", "after": "<issue id>", "reason": "${REASON_ASK}"}], "drop": [{"issue": "<queued issue id>", "after": "<issue id it waits for now>", "reason": "${REASON_ASK}"}], "order": ["<queued issue id>"], "reason": "${REASON_ASK}"}`
+{"edges": [{"issue": "<queued issue id>", "after": "<issue id>", "reason": "${REASON_ASK}"}], "order": ["<queued issue id>"], "reason": "${REASON_ASK}"}`
 
 function buildFactoryQueuePrompt(input: FactoryQueueInput, nonce: string): string {
   const safe = neutralizeFenceMarkers
@@ -313,8 +262,7 @@ function buildFactoryQueuePrompt(input: FactoryQueueInput, nonce: string): strin
 export const createFactoryQueue = (deps: LlmDeps) =>
   defineCapability({
     id: 'factory.queue',
-    summary:
-      'Propose `after` edges, edges to take back and an order for the queued Issues of a repo (route factory.queue)',
+    summary: 'Propose `after` edges and an order for the queued Issues of a repo (route factory.queue)',
     input: factoryQueueInput,
     output: factoryQueueOutput,
     // Not served: only the `factory-queue` workflow calls it (no free prompt on the seat).
@@ -330,7 +278,6 @@ export const createFactoryQueue = (deps: LlmDeps) =>
       return {
         ...data,
         edges: data.edges.map((e) => ({ ...e, reason: clipReason(e.reason) })),
-        drop: data.drop.map((d) => ({ ...d, reason: clipReason(d.reason) })),
         reason: clipReason(data.reason),
       }
     },

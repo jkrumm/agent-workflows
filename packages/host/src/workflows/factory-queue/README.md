@@ -1,8 +1,7 @@
 # factory-queue
 
 software-factory's queue loop asks, for one repo's open Issues, two things when the order is unclear: which queued Issue must
-wait for another (`after` edges), which existing edge of a queued Issue it does not need (`drop`), and in what order the queued
-ones should start. The factory never calls a model (SF2), so
+wait for another (`after` edges) and in what order the queued ones should start. The factory never calls a model (SF2), so
 the judgment lives here. The deterministic part (the cycle check, real blockers, the owner's `prio`, admission) stays in the
 factory; only the rest reaches this workflow, and the factory checks every edge again before it stores one.
 
@@ -13,7 +12,7 @@ echo '{"repo":"app","issues":[{"id":"issue_12","title":"…","kind":"bug","state
 | | |
 |-|-|
 | Input (stdin JSON) | `{repo, issues[]}`; an Issue is `{id, title, kind, state, prio, ageMinutes, size, summary, after[]}` (1 to 40). `state: "queued"` marks the Issues to order, any other state is chain context. `prio` is the owner's (−1000..1000), `after` the edges that exist. The CLI reads it as the workflow's one `queue` property, so the HTTP body is `{"queue": {…}}`. `title` and `summary` are untrusted data |
-| Output | the run envelope's `output`: `{edges[{issue, after, reason}], drop[{issue, after, reason}], order[], reason}` (every `reason` is one line, clipped to 240 in code). `edges`: proposed new edges (at most 10), `[]` is the common answer. `drop`: existing edges of a queued Issue the two Issues do not need (at most 10, `[]` is the common answer; a reply without it reads as `[]`, so an older journaled answer replays). `order`: every queued Issue once, first to start at the front, or `[]` when the factory's order stands |
+| Output | the run envelope's `output`: `{edges[{issue, after, reason}], order[], reason}` (every `reason` is one line, clipped to 240 in code). `edges`: proposed new edges (at most 10), `[]` is the common answer. `order`: every queued Issue once, first to start at the front, or `[]` when the factory's order stands |
 | Shape | one journaled step (`queue`), one tool-free call to the internal `factory.queue` capability |
 | Pending | exit 10 like every workflow (`agw run wait <runId>`) |
 
@@ -31,12 +30,7 @@ echo '{"repo":"app","issues":[{"id":"issue_12","title":"…","kind":"bug","state
   fourth for one Issue is dropped on its own, with a note; the sound edges stand, as in the factory's own check. In the order, ids that are not queued (a running Issue listed by mistake) are dropped;
   an order that is then not every queued Issue once, or puts a blocker after the Issue that waits for it, or goes against the
   owner's priority becomes `[]`. The part that is sound stands; when nothing survives the answer is the empty one
-  (`edges: [], drop: [], order: []`). It never reshuffles an order.
-- **A drop is a proposal the factory checks.** The request carries each Issue's `after` list but not who added an edge, so the
-  guard only holds a drop to a queued Issue and an edge that Issue shows, once each (the rest goes with a note). The factory
-  takes back only the edges it added itself, never one a person stated, and records the removal; the prompt says so. A drop
-  frees nothing here: the cycle check, the new edges and the order still treat every shown edge as standing. The eval scorer
-  does not score drops.
+  (`edges: [], order: []`). It never reshuffles an order.
 - **When unsure, nothing.** Most queues need no edge and no order.
 - **Fail closed.** Any failure of the call gives the empty answer with `reason: 'queue unavailable: <class>'`. A cancel, a
   shutdown (`InfraError`) or an aborted run still propagates to the runtime.
