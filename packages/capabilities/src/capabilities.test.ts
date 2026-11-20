@@ -42,6 +42,13 @@ const caught = async (promise: Promise<unknown>) => {
 }
 
 describe('llm.summarize (anthropic)', () => {
+  test('the prompts hold the summary to the language of the text', async () => {
+    iu.on('messages', () => messageResponse('Eine Zusammenfassung.', { input_tokens: 10, output_tokens: 5 }))
+    await call('llm.summarize', { text: 'Ein langer deutscher Text.', maxWords: 30 })
+    const body = JSON.stringify(iu.requests[0]?.body)
+    expect(body.match(/language of the text/g)).toHaveLength(2)
+  })
+
   test('summarizes over the Messages wire; usage is raw, priced from the route rate when the provider omits cost', async () => {
     iu.on('messages', () =>
       messageResponse('  The gist.  ', { input_tokens: 110, output_tokens: 20, cache_read_input_tokens: 40 }),

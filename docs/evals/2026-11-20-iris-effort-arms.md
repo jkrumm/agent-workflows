@@ -67,8 +67,13 @@ that makes the bound hold without thinking; that is a change to the `llm.summari
 ## A finding outside the question
 
 `language` of the gist is 0.58 at `high`: 6 of the 13 transcripts (German) come back summarized in English, because the
-`llm.summarize` system prompt names no language. It worsens as effort falls (0.42 low, 0.12 none). The triage prompt names the
+`llm.summarize` system prompt named no language (fixed by Issue 2534, below). It worsens as effort falls (0.42 low, 0.12 none). The triage prompt names the
 language and holds it (1.00).
+
+Follow-up (Issue 2534): the `llm.summarize` system prompt and the user prompt now say to answer in the language of the text. Measured
+in-process on the same 13 transcripts, 3 repetitions each (39 runs), `cheap.summarize` at `high`: language 0.64 before, 1.00 after;
+within 30 words 0.77 before, 0.87 after; within 240 characters 0.77 before, 0.72 after (German runs long; no separation at this n).
+The route stays at `high`: the word bound below `high` was not re-measured.
 
 ## Limits
 
