@@ -36,7 +36,7 @@ echo '{"spec":{"id":"artifact_1","revision":1,"title":"Raise the digest title li
   `settle`; a `needed: true`, above all one the screen `settled`, that a similar one is `pass`. Similar words alone are no evidence.
 - **When unsure, `pass`.** A wrong `settle` costs the owner a Spec he wanted to see; a wrong `pass` costs him one read.
 - **Guard.** `guardSpecScreen` runs in the workflow after the step, so a replay gets it too: the answer is exactly
-  `{verdict, reason}` with the reason on one line and clipped to 240 (the model's own reason may be any length, never a re-ask); a `settle` with an empty reason becomes `pass`.
+  `{verdict, reason}` with the reason on one line and clipped to 240 (the model's own reason may be up to 2,000 characters before it is re-asked); a `settle` with an empty reason becomes `pass`.
 - **Fails soft in the factory, not here.** There is no catch: a failed or invalid call fails the run; the factory retries the
   screen twice, 5 minutes apart, and then lets the Spec reach the owner unscreened. Cancelled, InfraError and StepFailed propagate.
 

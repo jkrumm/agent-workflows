@@ -4,7 +4,7 @@ software-factory's check on a lead's `factory issue ask`: is the question really
 plan, the Issue facts or the lead's declared default? The factory never calls a model (SF2), so the judgment lives here.
 
 ```
-echo '{"question":"…","options":["…","…"],"default":"…","facts":"…","plan":"…","repo":"argo"}' | agw factory-ask
+echo '{"decision":"decision_1","repo":"argo","issue":"…","question":"…","recommendation":"…","checked":"…","options":[{"label":"…","reversible":true,"cost":"…"}],"noAnswer":{"consequence":"…","default":null,"waitMinutes":null},"precedents":[]}' | agw factory-ask
 ```
 
 | | |
@@ -31,7 +31,7 @@ echo '{"question":"…","options":["…","…"],"default":"…","facts":"…","p
 - **Code guard.** With options, the capability's schema is built per call: an answer outside them fails and is re-asked once.
   `guardAsk` (`factory-ask.ts`), applied by the workflow after the step so a replay gets it too, turns an `answer` that is not
   an option, or has no source, into `owner`.
-- **The Decision adds two things to a plain ask.** The prompt knows an option marked irreversible is never the answer, and reads
+- **The Decision carries two things the question alone does not.** The prompt knows an option marked irreversible is never the answer, and reads
   precedents (an owner-settled one may be the source, `precedent: <quote>`; one the owner flagged worth asking is the owner's).
   `guardJudge` holds the first in code after the step: an irreversible option becomes `owner`.
 - **Fail closed.** Any failure of the call (capability error, schema failure after the re-ask, provider error, timeout) gives

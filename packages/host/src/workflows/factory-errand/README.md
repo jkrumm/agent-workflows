@@ -26,7 +26,7 @@ echo '{"errand":{"id":"e_7","summary":"Approve the sign-in prompt on the test de
   when it needs hands and is worth them.
 - **When unsure, pass.** A wrong turn-away costs the lead a round trip, a wrong pass costs the owner a minute.
 - **Guard.** `guardErrand` runs in the workflow after the step, so a replay gets it too: the answer is exactly
-  `{verdict, reason}` with the reason on one line and clipped to 240 (the model's own reason may be any length, never a re-ask); a `turn_away` without a reason becomes a `pass`.
+  `{verdict, reason}` with the reason on one line and clipped to 240 (the model's own reason may be up to 2,000 characters before it is re-asked); a `turn_away` without a reason becomes a `pass`.
 - **Fails open to a retry, not to a verdict.** There is no catch: a failed or invalid call fails the run and the factory
   retries with a backoff. Cancelled, InfraError and StepFailed propagate.
 
