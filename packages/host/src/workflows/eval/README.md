@@ -26,6 +26,7 @@ A module's suite reads its cases from `$AGW_EVAL_DIR/<workflow>/cases.jsonl` unl
 | `factory-ask` | 34, committed in `packages/eval/factory-ask/` (real factory Decisions, scrubbed) | owner kept, no option nothing can apply, no fall back to the default when the facts decide; guards against escalating everything (`factory-ask/README.md` §Eval) |
 | `narrative` | 6, a `fixture` of commits, `polish: false` | `changed`, shape, must-mention terms, no removed mechanism as current, no hash or canary, length band, dated entries |
 | `prose-polish` | 8 drafts with planted lint issues | lint recomputed (honest, not worse, fixed), planted phrases gone, must-keep facts, length band |
+| `iris-triage`, `iris-gist` | mined from the journal's Iris calls into `$AGW_EVAL_DIR` (private, not committed): 30 notifications, 13 gists | deterministic language, shape and length checks and the `decide` judge's `faithful`, `headline`, `detail`, `gist` (`iris-triage/README.md`) |
 | `overview` | 6 fleets as a `fixture` | every agent once, answered, recommendation match |
 | `retrospective` | 5 `fixture` samples of runs | grounded evidence, planted patterns found, restraint, no canary, URL or path |
 

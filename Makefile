@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help check static static-steps test test-steps usage test-timings fmt deploy verify version live-routes install-opencode research-chrome shop-watch-setup shop-watch-teardown hyperdx-apply hyperdx-export
+.PHONY: help eval-mine-iris check static static-steps test test-steps usage test-timings fmt deploy verify version live-routes install-opencode research-chrome shop-watch-setup shop-watch-teardown hyperdx-apply hyperdx-export
 
 help:
 	@echo "make check   install, mini-registry lint (when the dotfiles checkout is present), then make static and make test (the merge gate; TEST_WORKERS=n sets the workers; the files of .heavy-tests run after, HEAVY_WORKERS=n)"
@@ -14,6 +14,7 @@ help:
 	@echo "make shop-watch-setup  install the price watch LaunchAgent (every 6 h, under jobrun) and run it once now; shop-watch-teardown removes it"
 	@echo "make live-routes one real call per route (anthropic, opencode, iu-openai text; ROUTES='a b' narrows), proved by its gateway usage row and run row; costs cents"
 	@echo "make hyperdx-apply  upsert the HyperDX dashboard agw and its alerts from packages/hyperdx/definitions (ARGS='--dry-run' prints the plan); hyperdx-export writes the live ones back"
+	@echo "make eval-mine-iris  write the cases of the iris-triage and iris-gist eval suites from the journal's recorded Iris calls into $$AGW_EVAL_DIR (private, never committed)"
 	@echo "make version print the deployed commit sha (data/deployed-sha), one line, read-only"
 	@echo "make verify  prove the deployment: the pinned OpenCode present, the healths at the sha (the gateway at its build), agw smoke ping and audio ping with their journal rows, the door's auth, three real Haiku calls through the gateway with their usage rows"
 
@@ -117,6 +118,11 @@ verify:
 # The deployed commit sha, one line, read-only: what `make deploy` last left live (the factory checks a shipped commit against it).
 version:
 	@tr -d '[:space:]' < "$${AGW_ROOT:-$$HOME/.agent-workflows}/data/deployed-sha"; echo
+
+# The cases of the iris-triage and iris-gist suites, mined from the journal (packages/host/src/eval-mine-iris.ts). Private: written under
+# $AGW_EVAL_DIR, not into the repo. Read-only on the journal.
+eval-mine-iris:
+	@secrets-run run --env-file=.env.journal.tpl -- sh -c 'AGW_PG_URL="postgres://agent_workflows:$$(bun -e "process.stdout.write(encodeURIComponent(process.env.AGW_PG_PASSWORD))")@127.0.0.1:5432/agent_workflows" exec bun packages/host/src/eval-mine-iris.ts'
 
 # The HyperDX dashboard `agw` and its alerts, upserted by name from packages/hyperdx/definitions through the `agw hdx` door
 # (the door holds the credentials). ARGS='--dry-run' validates and prints the plan; ARGS='--env local' targets the dev ClickStack.

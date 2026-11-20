@@ -4,6 +4,7 @@ dist/
 .env.*
 !.env.tpl
 !.env.gateway.tpl
+!.env.journal.tpl
 *.log
 .DS_Store
 sc-note.md
