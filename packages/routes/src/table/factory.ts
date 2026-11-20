@@ -26,7 +26,7 @@ const routes = {
   'factory.errandneeded': { wire: 'anthropic', ...EASY.call },
   // Software-factory's screen on a Spec before the owner reads it: his to read (pass) or its lead's (settle, with a reason the lead
   // hears). The owner's marks on earlier Specs come as precedents; the guard turns a settle without a reason into a pass.
-  // Eval: `factory-spec-screen`, 17 cases, scored runs of 2026-11-16 (34 case runs, no hand-written report).
+  // Eval: `factory-spec-screen`, 21 cases (17 scored in the runs of 2026-11-16, 34 case runs, no hand-written report; the four added on 2026-11-20 are not yet scored).
   'factory.specscreen': { wire: 'anthropic', ...EASY.call },
   // Software-factory's Improve screen: fix commits whose scope and subject do not settle the class, sorted into the classes the
   // caller sends, up to 40 per call. Eval: `factory-fix-classes`, 9 cases (docs/evals/2026-11-16-factory-decision-suites.md); the schema also checks the answer against the request.
