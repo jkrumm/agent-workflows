@@ -2,16 +2,15 @@ import { CUTOUT_MODELS } from '@agent-workflows/capabilities'
 import { isAbsolute } from 'node:path'
 import { z } from 'zod'
 
-/** The largest master image accepted (image-gateway `ICONS_LIMITS.maxImageBytes`). */
-export const MAX_SOURCE_BYTES = 20 * 1024 * 1024
-
 export const ImageIconInput = z
   .object({
     file: z
       .string()
       .min(1)
       .refine(isAbsolute, 'file must be an absolute path')
-      .describe('Absolute path of the master image on this host (png, jpeg, webp; at most 20 MiB)'),
+      .describe(
+        'Absolute path of the master image on this host (png, jpeg, webp or svg; at most 20 MiB). An SVG is rasterised at 1024 px and, with no flat, is also the favicon.svg (optimised, no vectorize step)',
+      ),
     background: z
       .string()
       .regex(/^#[0-9a-fA-F]{6}$/, 'background must be a #rrggbb hex color')
@@ -25,7 +24,7 @@ export const ImageIconInput = z
       .refine(isAbsolute, 'flat must be an absolute path')
       .optional()
       .describe(
-        'Absolute path of a flat derivative of the master (png, jpeg, webp; at most 20 MiB) that drives favicon.ico and favicon.svg instead of the master, so the master may stay metallic or gradient',
+        'Absolute path of a flat derivative of the master (png, jpeg, webp or svg; at most 20 MiB) that drives favicon.ico and favicon.svg instead of the master, so the master may stay metallic or gradient. An SVG here is the favicon.svg itself (optimised, no vectorize step)',
       ),
     cardTitle: z
       .string()
@@ -54,7 +53,7 @@ export const ImageIconInput = z
       .enum(['auto', 'never'])
       .default('auto')
       .describe(
-        'favicon.svg through recraft-vectorize ($0.01): auto (default) or never. The SVG is left out when the optimized file is over 64 KB',
+        'favicon.svg: auto (default) or never. A raster favicon source goes through recraft-vectorize ($0.01), an SVG source is only optimised with svgo (free). The SVG is left out when the optimized file is over 64 KB',
       ),
   })
   .strict()

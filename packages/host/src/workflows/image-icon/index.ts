@@ -1,10 +1,11 @@
 import { mkdirSync } from 'node:fs'
-import { rename, stat } from 'node:fs/promises'
+import { rename } from 'node:fs/promises'
 import { join } from 'node:path'
 import { defineWorkflow, type StepScope, WorkflowError } from '@agent-workflows/runtime'
 import { type ArtifactOptions, artifactDir } from '../../artifacts.ts'
 import type { HostWorkflow } from '../../operations.ts'
 import type { HostRegistry } from '../index.ts'
+import { readImageSource, rasterizeSvg } from '../image-source.ts'
 import { CARD_HEIGHT, CARD_WIDTH, renderCard } from './card.ts'
 import {
   assertCutoutReachable,
@@ -16,6 +17,7 @@ import {
   ICONS_MANIFEST,
   iconsHtml,
   lacksTransparency,
+  optimizeAuthoredSvg,
   prepareCutoutInput,
   renderRasters,
   SVG_MAX_BYTES,
@@ -30,10 +32,9 @@ import {
   type ImageIconInputValue,
   ImageIconOutput,
   type ImageIconOutputValue,
-  MAX_SOURCE_BYTES,
 } from './schema.ts'
 
-const IMAGE_ICON_VERSION = '2026-11-09.1'
+const IMAGE_ICON_VERSION = '2026-11-20.1'
 
 /** The registry the workflow calls: the host's, typed by the image capabilities it holds. */
 export type ImageIconCaller = Pick<HostRegistry, 'call'>
@@ -41,7 +42,8 @@ export type ImageIconCaller = Pick<HostRegistry, 'call'>
 type Cost = { usd: number | null; source: 'provider' | 'rate' | 'unknown' }
 type ModelStep = { model: string; cost: Cost; latencyMs: number }
 
-type PrepareResult = { scale: number | null; sourcePath: string; flatPath?: string }
+/** `faviconSvgPath`: the optimised SVG the master (or the flat source) was given as, which becomes favicon.svg without a model. */
+type PrepareResult = { scale: number | null; sourcePath: string; flatPath?: string; faviconSvgPath?: string }
 type UpscaleResult = ModelStep & { path: string }
 type CutoutResult = { ran: false; path: string } | ({ ran: true; path: string } & ModelStep)
 type RenderResult = {
@@ -52,7 +54,8 @@ type RenderResult = {
   assets: IconFileValue[]
   card?: IconFileValue
 }
-type VectorizeResult = ModelStep & ({ file: IconFileValue } | { skippedReason: string })
+type FaviconSvg = { file: IconFileValue } | { skippedReason: string }
+type VectorizeResult = ModelStep & FaviconSvg
 
 type Billed = { step: string; usd: number | null }
 
@@ -95,26 +98,12 @@ async function writeFile(path: string, bytes: Uint8Array | string): Promise<void
 
 const decodeBase64 = (b64: string) => Buffer.from(b64, 'base64')
 
-const SOURCE_MAGIC = {
-  png: (b: Uint8Array) => b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47,
-  jpeg: (b: Uint8Array) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
-  webp: (b: Uint8Array) =>
-    Buffer.from(b.subarray(0, 4)).toString('latin1') === 'RIFF' &&
-    Buffer.from(b.subarray(8, 12)).toString('latin1') === 'WEBP',
-}
-
-/** The master image as bytes: a regular file within the size limit that is a PNG, JPEG or WebP by its first bytes. */
-async function readSource(path: string): Promise<Uint8Array> {
-  const info = await stat(path).catch(() => null)
-  if (!info?.isFile()) throw new WorkflowError('invalid_input', `no such file: ${path}`)
-  if (info.size > MAX_SOURCE_BYTES) {
-    throw new WorkflowError('invalid_input', `image is ${info.size} bytes, over the ${MAX_SOURCE_BYTES} byte limit`)
-  }
-  const bytes = await Bun.file(path).bytes()
-  if (!Object.values(SOURCE_MAGIC).some((matches) => matches(bytes))) {
-    throw new WorkflowError('invalid_input', `image must be png, jpeg or webp: ${path}`)
-  }
-  return bytes
+/** A source image as the pixels the pipeline reads; an SVG is rendered at 1024 px and its text is kept for the favicon. */
+async function loadSource(path: string): Promise<{ pixels: Uint8Array; svg?: Uint8Array }> {
+  const source = await readImageSource(path)
+  return source.kind === 'svg'
+    ? { pixels: await rasterizeSvg(source.bytes), svg: source.bytes }
+    : { pixels: source.bytes }
 }
 
 /** What every step needs: the registry, the validated input and where the run keeps its files. */
@@ -146,15 +135,25 @@ async function prepareStep({ input, workDir }: IconRun): Promise<PrepareResult> 
   if (input.cardLine !== undefined && input.cardTitle === undefined) {
     throw new WorkflowError('invalid_input', 'cardLine needs a cardTitle')
   }
-  const rgba = await decodeRgba(await readSource(input.file))
+  const master = await loadSource(input.file)
+  const rgba = await decodeRgba(master.pixels)
   const scale = upscaleScale(input.upscale, rgba)
   assertCutoutReachable({ rgba, scale, cutout: input.cutout })
   const sourcePath = join(workDir(), 'source.png')
   await writeFile(sourcePath, await encodePng(rgba))
-  if (!input.flat) return { scale, sourcePath }
+  // The favicon comes from the flat source when there is one, else from the master.
+  const flat = input.flat ? await loadSource(input.flat) : undefined
+  const faviconSvg = flat ? flat.svg : master.svg
+  // Optimised here, not at the publish step, so an SVG that cannot be published fails before anything is billed.
+  const faviconSvgPath = faviconSvg ? join(workDir(), 'favicon-source.svg') : undefined
+  if (faviconSvg && faviconSvgPath) {
+    await writeFile(faviconSvgPath, optimizeAuthoredSvg(Buffer.from(faviconSvg).toString('utf8')))
+  }
+  const svgPart = faviconSvgPath ? { faviconSvgPath } : {}
+  if (!flat) return { scale, sourcePath, ...svgPart }
   const flatPath = join(workDir(), 'flat-source.png')
-  await writeFile(flatPath, await encodePng(await decodeRgba(await readSource(input.flat))))
-  return { scale, sourcePath, flatPath }
+  await writeFile(flatPath, await encodePng(await decodeRgba(flat.pixels)))
+  return { scale, sourcePath, flatPath, ...svgPart }
 }
 
 async function upscaleStep(
@@ -237,21 +236,36 @@ async function vectorizeStep(
   )
   const out = await afterBilled(billed, () => run.registry.call('image.vectorize', { file: inputPath }, callContext))
   const step = { model: out.model, cost: out.cost, latencyMs: out.latencyMs }
-  return afterBilled([...billed, { step: 'vectorize', usd: out.cost.usd }], async () => {
-    const svg = Buffer.from(cleanVectorized(out.svg))
-    if (svg.byteLength > SVG_MAX_BYTES) {
-      return {
-        ...step,
-        skippedReason: `vectorized SVG is ${Math.round(svg.byteLength / 1024)} KB - art with gradients/photo detail does not vectorize well; raster favicons only`,
-      }
-    }
-    await writeFile(join(run.dir(), 'favicon.svg'), svg)
-    // 0x0: an SVG has no intrinsic pixel size (its viewBox is vectorize's own coordinate space).
-    return {
-      ...step,
-      file: listing(run, { name: 'favicon.svg', mime: 'image/svg+xml', width: 0, height: 0, bytes: svg }),
-    }
-  })
+  return afterBilled([...billed, { step: 'vectorize', usd: out.cost.usd }], async () => ({
+    ...step,
+    ...(await publishFaviconSvg(
+      run,
+      Buffer.from(cleanVectorized(out.svg)),
+      (kb) =>
+        `vectorized SVG is ${kb} KB - art with gradients/photo detail does not vectorize well; raster favicons only`,
+    )),
+  }))
+}
+
+/** favicon.svg from the SVG the caller gave, already optimised by `prepare`: no model call and no cost. */
+function faviconSvgStep(run: IconRun, svgPath: string, billed: Billed[]): Promise<FaviconSvg> {
+  return afterBilled(billed, async () =>
+    publishFaviconSvg(
+      run,
+      Buffer.from(await Bun.file(svgPath).bytes()),
+      (kb) => `favicon SVG is ${kb} KB after svgo, over the ${SVG_MAX_BYTES / 1024} KB limit; raster favicons only`,
+    ),
+  )
+}
+
+/** Writes favicon.svg, or says why it is left out when it is over the size limit. */
+async function publishFaviconSvg(run: IconRun, svg: Buffer, oversize: (kb: number) => string): Promise<FaviconSvg> {
+  if (svg.byteLength > SVG_MAX_BYTES) return { skippedReason: oversize(Math.round(svg.byteLength / 1024)) }
+  await writeFile(join(run.dir(), 'favicon.svg'), svg)
+  // 0x0: an SVG has no intrinsic pixel size (its viewBox is its own coordinate space).
+  return {
+    file: listing(run, { name: 'favicon.svg', mime: 'image/svg+xml', width: 0, height: 0, bytes: svg }),
+  }
 }
 
 /** The run's price: unknown if any step's is, else the sum, `rate` when no model step ran or any was priced by rate. */
@@ -263,7 +277,14 @@ function totalCost(costs: Cost[]): Cost {
   }
 }
 
-type Results = { rendered: RenderResult; upscaled?: UpscaleResult; cutOut: CutoutResult; vectorized?: VectorizeResult }
+type Results = {
+  rendered: RenderResult
+  upscaled?: UpscaleResult
+  cutOut: CutoutResult
+  vectorized?: VectorizeResult
+  /** favicon.svg made from the SVG the caller gave: no model step. */
+  authored?: FaviconSvg
+}
 
 /** The model steps that ran, in order. */
 const ranSteps = ({ upscaled, cutOut, vectorized }: Results) => [
@@ -284,9 +305,10 @@ function listFiles(
 
 /** Final assembly: deterministic from the journaled results of the steps. */
 async function assemble(run: IconRun, started: number, results: Results): Promise<ImageIconOutputValue> {
-  const { rendered, vectorized } = results
+  const { rendered } = results
   const { dir } = run
-  const svgFile = vectorized && 'file' in vectorized ? vectorized.file : undefined
+  const faviconSvg = results.authored ?? results.vectorized
+  const svgFile = faviconSvg && 'file' in faviconSvg ? faviconSvg.file : undefined
   const { cardTitle, cardLine } = run.input
   const files = listFiles(rendered.assets, svgFile, rendered.card)
   const html = iconsHtml(
@@ -299,7 +321,7 @@ async function assemble(run: IconRun, started: number, results: Results): Promis
   await writeFile(manifestPath, `${JSON.stringify(ICONS_MANIFEST, null, 2)}\n`)
 
   const ran = ranSteps(results)
-  const skippedReason = vectorized && 'skippedReason' in vectorized ? vectorized.skippedReason : undefined
+  const skippedReason = faviconSvg && 'skippedReason' in faviconSvg ? faviconSvg.skippedReason : undefined
 
   return ImageIconOutput.parse({
     dir: dir(),
@@ -369,14 +391,19 @@ export function createImageIconWorkflows(
         renderStep(run, { finalImage: cutOut.path, flatPath: prepared.flatPath }, billed),
       )
 
+      const { faviconSvgPath } = prepared
+      const authored =
+        input.svg === 'auto' && faviconSvgPath
+          ? await ctx.step('favicon-svg', () => faviconSvgStep(run, faviconSvgPath, billed))
+          : undefined
       const vectorized =
-        input.svg === 'auto'
+        input.svg === 'auto' && !faviconSvgPath
           ? await ctx.step('vectorize', (scope: StepScope) =>
               vectorizeStep(run, scope, rendered.smallPath ?? rendered.masterPath, billed),
             )
           : undefined
 
-      return assemble(run, started, { rendered, upscaled, cutOut, vectorized })
+      return assemble(run, started, { rendered, upscaled, cutOut, vectorized, authored })
     },
   })
 
@@ -384,7 +411,7 @@ export function createImageIconWorkflows(
     {
       workflow: imageIcon,
       summary:
-        'Build a full icon set (favicon.ico and .svg, PWA, maskable, apple-touch, 1024 and AppIcon.icns, head tags and manifest) from one master image, and optionally a social card (og-image.png); a master on a rounded tile runs full bleed with the icns on the macOS grid, --flat takes a flat derivative for the favicon; upscales, cuts out and vectorizes with Replicate where the image needs it, and lists the files in the artifact store',
+        'Build a full icon set (favicon.ico and .svg, PWA, maskable, apple-touch, 1024 and AppIcon.icns, head tags and manifest) from one master image (png, jpeg, webp or svg), and optionally a social card (og-image.png); a master on a rounded tile runs full bleed with the icns on the macOS grid, --flat takes a flat derivative for the favicon; upscales, cuts out and vectorizes with Replicate where a raster needs it (an SVG is rasterised at 1024 px and, as master or flat, is optimised into favicon.svg for free), and lists the files in the artifact store',
       cli: { positional: ['file'], defaultFormat: 'json' },
     },
   ]

@@ -2,11 +2,12 @@ import { join } from 'node:path'
 import type { Scorer, Verdict } from '@agent-workflows/runtime'
 import sharp from 'sharp'
 import { z } from 'zod'
+import { isSvg } from '../image-source.ts'
 import { hexRgb } from './color.ts'
 import { ImageIconInput, type ImageIconInputValue, ImageIconOutput, type ImageIconOutputValue } from './schema.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
-const IMAGE_ICON_SCORER_VERSION = '2026-11-09.1'
+const IMAGE_ICON_SCORER_VERSION = '2026-11-20.1'
 
 /**
  * What a careful reader expects of one run beyond the output's own consistency: the model steps that ran (their order
@@ -181,8 +182,22 @@ async function manifestCheck(output: ImageIconOutputValue, listed: Map<string, L
   return c
 }
 
-/** `svg: never` leaves no svg, no reason and no vectorize call; `auto` calls it, and the file or the reason stands, not both. */
-function svgCheck(input: ImageIconInputValue, output: ImageIconOutputValue, hasSvg: boolean) {
+/** True when the file starts like an SVG: then favicon.svg is made from it, with no vectorize call. */
+const isSvgFile = async (path: string): Promise<boolean> =>
+  isSvg(
+    new Uint8Array(
+      await Bun.file(path)
+        .slice(0, 4096)
+        .arrayBuffer()
+        .catch(() => new ArrayBuffer(0)),
+    ),
+  )
+
+/**
+ * `svg: never` leaves no svg, no reason and no vectorize call; `auto` calls it (a raster favicon source) or, for an SVG
+ * source, makes the file from it with no call; the file or the reason stands, not both.
+ */
+async function svgCheck(input: ImageIconInputValue, output: ImageIconOutputValue, hasSvg: boolean) {
   const c = check()
   const vectorized = output.steps.some((s) => s.step === 'vectorize')
   if (input.svg === 'never') {
@@ -190,7 +205,9 @@ function svgCheck(input: ImageIconInputValue, output: ImageIconOutputValue, hasS
       c.fail('svg is never, yet an svg or its reason or call is there')
     return c
   }
-  if (!vectorized) c.fail('svg is auto, yet vectorize did not run')
+  const fromSvg = await isSvgFile(input.flat ?? input.file)
+  if (fromSvg && vectorized) c.fail('the favicon source is an svg, yet vectorize ran')
+  if (!fromSvg && !vectorized) c.fail('svg is auto, yet vectorize did not run')
   if (hasSvg && output.svgSkippedReason !== undefined) c.fail('favicon.svg is listed and also skipped')
   if (!hasSvg && !output.svgSkippedReason) c.fail('favicon.svg is missing and no reason is given')
   return c
@@ -245,7 +262,7 @@ async function alphaCheck(output: ImageIconOutputValue, want: boolean) {
  * - `dimensions`: listed and on-disk PNG sizes per the spec (48, 192, 512, 512, 180, 1024), ICO/ICNS/SVG headers;
  * - `manifest`: its icons name listed PNGs of the stated size and type, `manifest.webmanifest` and `head.html` match
  *   the output, the head links match the set;
- * - `svg`: `svg: never` left no svg, reason or call; `auto` called vectorize and has the file or the reason, not both;
+ * - `svg`: `svg: never` left no svg, reason or call; `auto` called vectorize (none for an SVG source) and has the file or the reason, not both;
  * - `background`: the opaque `apple-touch-icon.png` is flattened on the input's background (white when absent; opaque
  *   only, for a tile master without one); `og-image.png` is in the spec exactly when a `cardTitle` was given (1200x630);
  * - `cost`: the price is known and the sum of the steps that ran;
@@ -274,7 +291,7 @@ export const imageIconScorer: Scorer<unknown, ImageIconReference> = {
       files: await filesCheck({ input: given.data, output: out, withSvg: hasSvg, listed }),
       dimensions: await dimensionsCheck(out),
       manifest: await manifestCheck(out, listed),
-      svg: svgCheck(given.data, out, hasSvg),
+      svg: await svgCheck(given.data, out, hasSvg),
       background: await backgroundCheck(given.data, out),
       cost: costCheck(out),
     }

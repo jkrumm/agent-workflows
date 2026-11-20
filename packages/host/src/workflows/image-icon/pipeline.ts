@@ -498,8 +498,42 @@ export function cleanVectorized(svg: string): string {
       root.replace(/\s(?:width|height|style|preserveAspectRatio)=(?:"[^"]*"|'[^']*')/g, ''),
     )
     .replace(/\s+transform="translate\(0,\s*0\)"/g, '')
-  const optimized = optimize(stripped, { multipass: true, plugins: ['preset-default', 'removeScripts'] }).data
-  if (ACTIVE_SVG_CONTENT.test(optimized)) throw new Error('vectorized SVG contains active content')
-  if (!/<svg\b[^>]*\sviewBox=/.test(optimized)) throw new Error('vectorized SVG has no viewBox')
+  return finishSvg(stripped, 'vectorized SVG')
+}
+
+function finishSvg(svg: string, what: string): string {
+  const optimized = optimize(svg, { multipass: true, plugins: ['preset-default', 'removeScripts'] }).data
+  if (ACTIVE_SVG_CONTENT.test(optimized)) throw new Error(`${what} contains active content`)
+  if (!/<svg\b[^>]*\sviewBox=/.test(optimized)) throw new Error(`${what} has no viewBox`)
   return optimized
+}
+
+const rootAttribute = (root: string, name: string): string | undefined =>
+  new RegExp(`\\s${name}=(?:"([^"]*)"|'([^']*)')`)
+    .exec(root)
+    ?.slice(1)
+    .find((v) => v !== undefined)
+
+/**
+ * An SVG the caller authored, ready for `favicon.svg`: the root keeps its `style` and `preserveAspectRatio`, loses its
+ * fixed `width`/`height` (a viewBox is made from them when it has none, so the icon scales) and svgo shrinks the rest.
+ * `invalid_input` when it has no size at all or carries active content, which is never published under `public/`.
+ */
+export function optimizeAuthoredSvg(svg: string): string {
+  const root = /<svg\b[^>]*>/.exec(svg)?.[0]
+  if (!root) throw new WorkflowError('invalid_input', 'the SVG has no <svg> root')
+  const number = (value: string | undefined) => (value && /^[\d.]+(?:px)?$/.test(value) ? parseFloat(value) : undefined)
+  const [width, height] = [number(rootAttribute(root, 'width')), number(rootAttribute(root, 'height'))]
+  if (!rootAttribute(root, 'viewBox') && !(width && height)) {
+    throw new WorkflowError('invalid_input', 'the SVG has neither a viewBox nor a pixel width and height')
+  }
+  const sized = rootAttribute(root, 'viewBox')
+    ? root
+    : root.replace('<svg', () => `<svg viewBox="0 0 ${width} ${height}"`)
+  const stripped = svg.replace(root, () => sized.replace(/\s(?:width|height)=(?:"[^"]*"|'[^']*')/g, ''))
+  try {
+    return finishSvg(stripped, 'favicon SVG')
+  } catch (err) {
+    throw new WorkflowError('invalid_input', reason(err), { cause: err })
+  }
 }

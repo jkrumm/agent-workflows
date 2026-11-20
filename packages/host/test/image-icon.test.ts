@@ -9,7 +9,12 @@ import sharp, { type Sharp } from 'sharp'
 import { createImageCapabilities } from '../../capabilities/src/image/index.ts'
 import { type FakeHandler, startFakeImageServer } from '@agent-workflows/testing/image-server'
 import { createImageIconWorkflows, type ImageIconCaller } from '../src/workflows/image-icon/index.ts'
-import { cleanVectorized, ICONS_MANIFEST, iconsHtml } from '../src/workflows/image-icon/pipeline.ts'
+import {
+  cleanVectorized,
+  ICONS_MANIFEST,
+  iconsHtml,
+  optimizeAuthoredSvg,
+} from '../src/workflows/image-icon/pipeline.ts'
 import { ImageIconInput } from '../src/workflows/image-icon/schema.ts'
 import { imageIconScorer } from '../src/workflows/image-icon/scorer.ts'
 import { icoFrame, tileMaster } from './image-icon-fixtures.ts'
@@ -57,6 +62,14 @@ const DELIVER = {
 /** What recraft-vectorize emits: a fixed width/height/style on the root and a no-op translate per path. */
 const RAW_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" style="width:100%"><path transform="translate(0,0)" d="M100 100h800v800H100z" fill="#c83c28"/></svg>'
+
+/** A rounded tile with a disc glyph, authored 512 px wide on a 1024 viewBox: rendered at 1024 it is the tileMaster shape. */
+const TILE_SVG =
+  '<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 1024 1024"><rect width="1024" height="1024" rx="225" fill="#1a2b4c"/><circle cx="512" cy="512" r="260" fill="#e8eefc"/></svg>'
+
+/** The same art with no viewBox, sized only by width and height. */
+const SIZED_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300"><path d="M30 30h240v240H30z" fill="#c83c28"/></svg>'
 
 /** An SVG that stays over 64 KB after svgo: thousands of paths, each its own colour. */
 const BIG_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">${Array.from(
@@ -333,6 +346,103 @@ describe('image-icon end to end', () => {
     expect(fake.seen).toEqual([])
   })
 
+  test('an SVG master with a rounded tile: tile is true, favicon.svg is the optimised master, no model step ran and no call went out', async () => {
+    const file = await writeSource('tile.svg', text(TILE_SVG))
+    const { body } = await run({ file })
+
+    expect(body.status).toBe('done')
+    const out = body.output
+    expect(out.tile).toBe(true)
+    expect(out.files.map((f: { name: string }) => f.name)).toEqual(FILE_ORDER)
+    expect(readFileSync(join(out.dir, 'favicon.svg'), 'utf8')).toBe(optimizeAuthoredSvg(TILE_SVG))
+    expect(readFileSync(join(out.dir, 'favicon.svg'), 'utf8')).toContain('viewBox="0 0 1024 1024"')
+    expect(out.html).toBe(iconsHtml(true))
+    expect(out.steps).toEqual([])
+    expect(out.cost).toEqual({ usd: 0, source: 'rate' })
+    expect(fake.seen).toEqual([])
+    // the master was rasterised at 1024 px, the corners of the tile are clear and the full-bleed targets are opaque
+    expect((await sharp(join(out.workDir, 'source.png')).metadata()).width).toBe(1024)
+    const raw = await sharp(join(out.dir, 'apple-touch-icon.png')).ensureAlpha().raw().toBuffer()
+    expect(raw[3]).toBe(255)
+    expect([...raw.subarray(0, 3)]).toEqual([26, 43, 76])
+
+    const record = await recorded(body.runId)
+    expect(record.steps).toEqual(['cutout', 'favicon-svg', 'prepare', 'render'])
+    expect(record.usd).toBe(0)
+    const verdict = await imageIconScorer.score(ImageIconInput.parse({ file }), out, {
+      source: 'regression',
+      signal: new AbortController().signal,
+    })
+    expect(verdict.feedback).toBeUndefined()
+    expect(verdict.pass).toBe(true)
+  })
+
+  test('an SVG flat source is the favicon.svg and drives the ico; a raster master keeps its set and no vectorize call goes out', async () => {
+    const flat = await writeSource('flat.svg', text(SIZED_SVG))
+    const { body } = await run({ file: GOLDEN_SOURCE, flat })
+
+    expect(body.status).toBe('done')
+    const out = body.output
+    expect(fake.seen).toEqual([])
+    expect(out.steps).toEqual([])
+    const written = readFileSync(join(out.dir, 'favicon.svg'), 'utf8')
+    expect(written).toBe(optimizeAuthoredSvg(SIZED_SVG))
+    expect(written).toContain('viewBox="0 0 300 300"')
+    expect(written).not.toMatch(/\swidth=|\sheight=/)
+    const frame = await sharp(icoFrame(readFileSync(join(out.dir, 'favicon.ico')), 48))
+      .ensureAlpha()
+      .raw()
+      .toBuffer()
+    expect([...frame.subarray((24 * 48 + 24) * 4, (24 * 48 + 24) * 4 + 3)]).toEqual([200, 60, 40])
+    expect(existsSync(join(out.workDir, 'flat-source.png'))).toBe(true)
+  })
+
+  test('an SVG master with a raster flat vectorizes the flat: the favicon source is the flat', async () => {
+    delivers('vectorize', text(RAW_SVG), VECTORIZE)
+    const flat = await writeSource('flat2.png', await subject(1024))
+    const { body } = await run({ file: await writeSource('tile2.svg', text(TILE_SVG)), flat })
+    expect(body.status).toBe('done')
+    expect(body.output.steps.map((s: { step: string }) => s.step)).toEqual(['vectorize'])
+    expect(fake.seen.map((r) => r.path)).toEqual([VECTORIZE])
+  })
+
+  test('an SVG master with svg: never gets no favicon.svg and no svg link', async () => {
+    const { body } = await run({ file: await writeSource('tile3.svg', text(TILE_SVG)), svg: 'never' })
+    expect(body.status).toBe('done')
+    expect(body.output.files.map((f: { name: string }) => f.name)).toEqual(
+      FILE_ORDER.filter((n) => n !== 'favicon.svg'),
+    )
+    expect(body.output.html).toBe(iconsHtml(false))
+    expect(fake.seen).toEqual([])
+  })
+
+  test('an SVG over 64 KB is rendered but left out of the set with the reason; no call is made', async () => {
+    const { body } = await run({ file: await writeSource('big.svg', text(BIG_SVG)) })
+    expect(body.status).toBe('done')
+    const out = body.output
+    expect(out.files.map((f: { name: string }) => f.name)).toEqual(FILE_ORDER.filter((n) => n !== 'favicon.svg'))
+    expect(out.svgSkippedReason).toMatch(/^favicon SVG is \d+ KB after svgo, over the 64 KB limit/)
+    expect(out.cost).toEqual({ usd: 0, source: 'rate' })
+    expect(fake.seen).toEqual([])
+  })
+
+  test('an SVG with a foreignObject, with no size, or that is not an SVG fails as invalid_input before any call', async () => {
+    const foreign =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8"/><foreignObject width="8" height="8"><div xmlns="http://www.w3.org/1999/xhtml">x</div></foreignObject></svg>'
+    const sizeless = '<svg xmlns="http://www.w3.org/2000/svg"><rect width="8" height="8"/></svg>'
+    for (const [name, content, message] of [
+      ['foreign.svg', foreign, 'favicon SVG contains active content'],
+      ['sizeless.svg', sizeless, 'neither a viewBox nor a pixel width and height'],
+      ['broken.svg', '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect', 'unreadable'],
+    ] as const) {
+      const { body } = await run({ file: await writeSource(name, text(content)) })
+      expect(body.status).toBe('failed')
+      expect(body.error.message).toContain('failed (invalid_input)')
+      expect(body.error.message).toContain(message)
+    }
+    expect(fake.seen).toEqual([])
+  })
+
   test('a master without a tile reports tile false and no card files by default', async () => {
     delivers('vectorize', text(RAW_SVG), VECTORIZE)
     const { body } = await run({ file: GOLDEN_SOURCE })
@@ -365,7 +475,7 @@ describe('image-icon end to end', () => {
     for (const [input, message] of [
       [{ file: GOLDEN_SOURCE, cardLine: 'only a line' }, 'cardLine needs a cardTitle'],
       [{ file: GOLDEN_SOURCE, flat: join(root, 'no-flat.png') }, 'no such file'],
-      [{ file: GOLDEN_SOURCE, flat: notImage }, 'image must be png, jpeg or webp'],
+      [{ file: GOLDEN_SOURCE, flat: notImage }, 'image must be png, jpeg, webp or svg'],
     ] as const) {
       const { body } = await run(input)
       expect(body.status).toBe('failed')
@@ -385,7 +495,7 @@ describe('image-icon end to end', () => {
     const big = await writeSource('big.png', await subject(1500, true))
     for (const [input, message] of [
       [{ file: join(root, 'missing.png') }, 'no such file'],
-      [{ file: notImage }, 'image must be png, jpeg or webp'],
+      [{ file: notImage }, 'image must be png, jpeg, webp or svg'],
       [{ file: big, upscale: 'always' }, 'upscaling accepts at most 1440px'],
     ] as const) {
       const { body } = await run(input)
