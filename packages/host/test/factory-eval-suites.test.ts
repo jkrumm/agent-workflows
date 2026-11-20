@@ -335,6 +335,10 @@ describe('judged drift scores', () => {
     })
     // The judge never sees the screen's own verdict or reason.
     expect(JSON.stringify(seen)).not.toContain('zebra-reason-unique')
+    // It does read the rules the screen follows for a cut Spec, a quoted owner direction and a look without an image.
+    expect(JSON.stringify(seen)).toContain('the cut alone is never a reason')
+    expect(JSON.stringify(seen)).toContain('already his')
+    expect(JSON.stringify(seen)).toContain('no image and no named screen')
   })
 
   test('spec-screen: an input that is no screen request, or no judge, leaves valid alone', async () => {
