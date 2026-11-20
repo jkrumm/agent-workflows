@@ -9,6 +9,7 @@ agw image-icon /abs/logo.png
 agw image-icon /abs/logo.png --background '#0b1020' --svg never
 agw image-icon /abs/photo.jpg --cutout always --cutout-model bria --upscale never
 agw image-icon /abs/logo.png --flat /abs/logo-flat.png --card-title 'Acme' --card-line 'Plans that ship'
+agw image-icon /abs/mark.svg
 ```
 
 For a logo, the master is the winner of a breadth round and edits (`../image/README.md` §A logo or app icon). A metallic or
@@ -19,15 +20,15 @@ The command is `image-icon`, not `image icon`: the host refuses a command that i
 
 |Input|Default|Meaning|
 |-|-|-|
-|`file`|required|Absolute path on the host: png, jpeg or webp by magic bytes, at most 20 MiB|
+|`file`|required|Absolute path on the host: png, jpeg, webp or svg by its first bytes, at most 20 MiB. An SVG is rendered at 1024 px and then runs the pipeline like a png master (a rounded tile gives `tile: true`)|
 |`background`|none|`#rrggbb` fill for the opaque targets: `apple-touch-icon`, `icon-mask`, `icon-1024`. Without it: `#ffffff` for a master without a tile, the tile's own colour bleeding into the corners for a master with one|
-|`flat`|none|Absolute path of a flat derivative (png, jpeg, webp, at most 20 MiB, 64 MP): drives `favicon.ico` and `favicon.svg` instead of the master. No upscale, cutout or model step runs on it|
+|`flat`|none|Absolute path of a flat derivative (png, jpeg, webp or svg, at most 20 MiB, 64 MP): drives `favicon.ico` and `favicon.svg` instead of the master. No upscale, cutout or model step runs on it|
 |`cardTitle` (`--card-title`)|none|1 to 80 chars. Makes `og-image.png` (1200x630) and the og/twitter head tags|
 |`cardLine` (`--card-line`)|none|1 to 160 chars under the title; without `cardTitle` the run fails with `invalid_input` before anything is billed|
 |`cutout`|`auto`|`auto` cuts the background out only when the master has no real transparency; `always`; `never`|
 |`cutoutModel` (`--cutout-model`)|`recraft`|`recraft` ($0.01) or `bria` ($0.018)|
 |`upscale`|`auto`|`auto` under 512 px long edge, 4x (8x under 128 px); `always` accepts at most 1440 px; `never`|
-|`svg`|`auto`|`auto` vectorizes the master into `favicon.svg`; `never`|
+|`svg`|`auto`|`auto` makes `favicon.svg`: a raster favicon source (the flat, else the master) is vectorized, an SVG one is only optimised; `never`|
 
 ## Output
 
@@ -56,11 +57,12 @@ capabilities read their input from the host's disk.
 
 |Step|Cost|What|
 |-|-|-|
-|`prepare`|free|Read and validate the file, decode it (EXIF applied), choose the upscale scale, refuse a run whose cutout could not take the upscaled size (see Decisions) and a `cardLine` without `cardTitle`, write `work/source.png`; with `flat`, validate and decode it the same way into `work/flat-source.png` (journaled as `flatPath`)|
+|`prepare`|free|Read and validate the file, decode it (EXIF applied), choose the upscale scale, refuse a run whose cutout could not take the upscaled size (see Decisions) and a `cardLine` without `cardTitle`, write `work/source.png`; with `flat`, validate and decode it the same way into `work/flat-source.png` (journaled as `flatPath`). An SVG is rendered at 1024 px first; when the favicon source (the flat, else the master) is an SVG, it is optimised here, before anything is billed, into `work/favicon-source.svg` (journaled as `faviconSvgPath`)|
+|`favicon-svg`|free|Only for `svg: auto` and an SVG favicon source: `work/favicon-source.svg` is written as `favicon.svg`, or left out over 64 KB (`svgSkippedReason`). No model call, no `steps` entry, cost 0|
 |`upscale`|$0.002|Only when a scale was chosen: `image.upscale` (real-esrgan) on `source.png` -> `work/upscaled.png`|
 |`cutout`|$0.01 (bria $0.018)|Decided inside the step on the current image: `always`, or `auto` and no real transparency. Then the image is normalised (PNG, at most 1536 px) into `work/cutout-input.png` and sent to `image.cutout` -> `work/cutout.png`. Otherwise it returns `ran: false` with no call|
 |`render`|free|Clean near-transparent pixels, trim and centre on a square master (`work/master.png`), detect a tile (journaled as `tile`), build the flat source the same way (`work/small-master.png`), render every raster and write it to `<dir>/`; with `cardTitle` also `og-image.png`|
-|`vectorize`|$0.01|Only for `svg: auto`: the small master (the flat source, else the master) on a 1024 canvas (`work/vectorize-input.png`) -> `image.vectorize`, then the result is stripped of the root `width`/`height`/`style` and no-op transforms and optimised with svgo. Over 64 KB it is dropped (`svgSkippedReason`), else written as `favicon.svg`|
+|`vectorize`|$0.01|Only for `svg: auto` and a raster favicon source (no SVG master, or an SVG master with a raster `flat`): the small master (the flat source, else the master) on a 1024 canvas (`work/vectorize-input.png`) -> `image.vectorize`, then the result is stripped of the root `width`/`height`/`style` and no-op transforms and optimised with svgo. Over 64 KB it is dropped (`svgSkippedReason`), else written as `favicon.svg`|
 
 After the steps, plain code orders the file list, writes `head.html` (the svg link only if `favicon.svg` exists) and
 `manifest.webmanifest`. A failure in any step fails the run; the model steps that already ran stay on the run record,
@@ -82,6 +84,7 @@ and the error names them with their total ("already billed: upscale $0.002, cuto
   output set of the gateway's run of 2026-10-29 (image-gateway @ 3efdf8a, default background). On the same sharp version
   the rasters, the ICO and the cleaned SVG are byte-identical to the gateway's and the ICNS chunks match within the
   fingerprint tolerance (`image-icon-golden.test.ts`).
+- **An SVG favicon source is optimised, not vectorized.** svgo shrinks it (`preset-default`, scripts and handlers removed; a `foreignObject` or `javascript:` link fails the run as `invalid_input`), the root loses its fixed `width`/`height` and keeps or gains a `viewBox` from them (an SVG with neither is refused). The favicon source is the flat when one is given, else the master, so an SVG master with a raster flat is vectorized from the flat.
 - **The SVG is omitted above 64 KB.** Browsers prefer the SVG icon, so a bloated one (gradient or photographic art) is
   worse than none; the PNG/ICO set stands and the head tags have no svg link.
 - **The cutout's 256 px minimum is checked in `prepare`, before anything is billed.** recraft needs a short edge of at
