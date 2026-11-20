@@ -1,7 +1,7 @@
 import { CLAUDE_RATES } from './claude.ts'
 
 // The models and fallbacks every route group shares. Model ids live only under this directory (guard.test.ts), and a text
-// model is chosen once, here, in one of two places: the four TIERS below, or a named cross-lab constant. A route spreads
+// model is chosen once, here, in one of two places: the TIERS below (FAST, EASY, HARD, DECIDE, and QUICK, which is EASY's call at effort low), or a named cross-lab constant. A route spreads
 // one (`{ wire: 'anthropic', ...FAST.call }`) and nothing else names a model, so moving every route of a tier to another
 // model, rate, effort or output ceiling is one edit here. The tier owns the ceiling: a route adds only its `wire` and
 // overrides nothing after the spread (guard.test.ts). A new rate goes next to the constant that uses it.
@@ -44,7 +44,7 @@ const callFallback = <T extends { model: string; rate: object }>(model: T) =>
 const agentFallback = <T extends { model: string; rate: object }>(model: T) =>
   ({ wire: 'opencode', ...model, maxOutputTokens: OUTPUT_CEILING }) as const
 
-// ---- Tiers (owner, 2026-10-31): the four places a text model is chosen for a role. Each is a Claude primary, except DECIDE,
+// ---- Tiers (owner, 2026-10-31): the places a text model is chosen for a role (QUICK below is EASY's call at one lower effort). Each is a Claude primary, except DECIDE,
 // with its GPT-on-IU fallback per step kind: `.call` is a single call (the `anthropic` wire, native Messages on the gateway,
 // which pays from the credit), `.agent` an OpenCode step (`opencode`). The route chooses the kind and the wire is its own
 // (a transport is code, not configuration): `{ wire: 'anthropic', ...FAST.call }`, `{ wire: 'opencode', ...HARD.agent }`.
@@ -65,7 +65,7 @@ export const FAST = {
   call: { ...HAIKU, effort: 'none', maxOutputTokens: 16_000, fallback: callFallback(LUNA) },
   agent: { ...HAIKU, effort: 'none', fallback: agentFallback(TERRA_LOW) },
 } as const
-/** Easy calls with a clear shape: summarize, extract, classify a batch, triage, plan an image, run the checks, the default agents. Haiku high, 32k output ceiling, falls back to Terra low. */
+/** Easy calls with a clear shape: summarize, extract, classify a batch, plan an image, run the checks, the default agents. Haiku high, 32k output ceiling, falls back to Terra low. */
 export const EASY = {
   call: { ...HAIKU, effort: 'high', maxOutputTokens: 32_000, fallback: callFallback(TERRA_LOW) },
   agent: { ...HAIKU, effort: 'high', fallback: agentFallback(TERRA_LOW) },

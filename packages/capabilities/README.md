@@ -144,13 +144,13 @@ All four are `POST` with a JSON body. The model comes from the route; an eval ru
 
 **Token effect / cache effect.** There is no generated text, so output is a few tokens and cost is the input at the route's rate (`costSource: 'rate'`, because the decision API drops IU's own cost). More questions in one call share one state, which is the cheap way to ask: the state is paid for once. No cache effect is reported on this wire. An arm moving `decide` to another model needs a rate in its patch: the table prices no other decision model, so the arm is refused without one.
 
-### `triage` — route `triage` (`iu-openai`, Terra, effort low)
+### `triage` — route `triage` (`anthropic`, Haiku 5.5, effort low)
 
 Ported as-is from agent-gateway's `triage` job as iris uses it, for iris's voice-memo notification. `agw triage '<destination>' --reply '<text>'`, transcript from stdin; HTTP `POST /triage`; import `registry.call('triage', …)`. Input `{ destination, transcript, reply? }` (`reply` may be `null`); transcript and reply are cut to 4000 characters (`\n[truncated]` marks the cut), as iris's adapter did. Output `{ headline, detail, spoken, model, attempts, latencyMs, usage }`: `headline` at most 60 characters, `detail` at most 240, `spoken` at most 300 (the legacy length cap standing for "two sentences"; sentences are not counted). One model call, the prompt of iris's `buildPrompt` followed by the gateway's output contract (the JSON Schema). An answer that is not JSON or breaks a limit is re-asked once with the reason (`attempts` 2); a second bad answer is `INVALID_OUTPUT` (HTTP 502).
 
 **`usage` and cost, on `triage` and `decide`.** Legacy's field names, which iris reads: `usage: { inputTokens, outputTokens, reasoningTokens, totalTokens, cacheReadTokens, costUsd }`, summed over every attempt of the call (`inputTokens` includes cache reads, `outputTokens` includes reasoning, as the provider reports them). `costUsd` is `null` when any attempt has no price, never a partial sum. The same calls are reported to the run record and Argo.
 
-**Route.** Terra at effort low on the OpenAI chat wire; no Requesty hop and no fallback (`packages/routes` README §Seats). The gateway used deepseek-v4.1-flash, a Requesty model.
+**Route.** Haiku 5.5 at effort low (`QUICK`) on the native Messages wire; a drained Claude credit is a 402 and the call falls back to Terra low on the chat wire. No Requesty hop (`packages/routes` README §Seats). The gateway used deepseek-v4.1-flash, a Requesty model. Effort low, not high: `docs/evals/2026-11-20-iris-effort-arms.md`.
 
 **Cancel.** The call's signal reaches the HTTP request: `agw run cancel <runId>` or `POST /runs/{runId}/cancel` ends an in-flight `triage` or `decide` (`packages/host/test/iris-calls.test.ts`), as does a client that disconnects without an `Idempotency-Key`.
 
