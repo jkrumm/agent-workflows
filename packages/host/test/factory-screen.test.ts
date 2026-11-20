@@ -108,7 +108,7 @@ describe('the guard', () => {
     expect(body.output).toMatchObject({ verdict: 'leave', repo: null, duplicateOf: null })
     expect(body.output.reason).toContain('not one of the projects')
     expect(body.output.recommendation).toBe(body.output.reason)
-    expect(body.output.reason.length).toBeLessThanOrEqual(300)
+    expect(body.output.reason.length).toBeLessThanOrEqual(240)
   })
 
   test('promote without a repo on a signal without one is a leave; with a listed project it stands', async () => {
@@ -143,6 +143,23 @@ describe('the guard', () => {
   test('a leave without a recommendation gets the reason as one, stray fields cleared', async () => {
     answers({ ...leave, recommendation: null, repo: 'example-api', duplicateOf: 'issue_31' })
     expect((await run()).body.output).toEqual({ ...leave, recommendation: leave.reason })
+  })
+})
+
+describe('a long reason', () => {
+  test('is clipped in code to the factory’s line, never re-asked', async () => {
+    const before = t.iu.requests.length
+    answers({ ...output, reason: `${'a long reason '.repeat(30)}\nsecond line` })
+    try {
+      const { status, body } = await run()
+      expect(status).toBe(200)
+      expect(body.status).toBe('done')
+      expect(body.output.reason).toMatch(/^[^\n]{1,240}$/)
+      expect(body.output.reason.endsWith('…')).toBe(true)
+      expect(t.iu.requests.length - before).toBe(1)
+    } finally {
+      answers(output)
+    }
   })
 })
 

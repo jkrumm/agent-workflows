@@ -162,10 +162,27 @@ describe('the guard', () => {
     })
   })
 
-  test('the reason is clipped to 300 and the answer carries nothing else', () => {
+  test('the reason is clipped to 240 and the answer carries nothing else', () => {
     const guarded = guardSpecScreen({ ...output, reason: 'x'.repeat(400), extra: 1 } as never)
     expect(Object.keys(guarded).sort()).toEqual(['reason', 'verdict'])
-    expect(guarded.reason.length).toBe(300)
+    expect(guarded.reason.length).toBe(240)
+  })
+})
+
+describe('a long reason', () => {
+  test('is clipped in code to the factory’s line, never re-asked', async () => {
+    const before = t.iu.requests.length
+    answers({ ...output, reason: `${'a long reason '.repeat(30)}\nsecond line` })
+    try {
+      const { status, body } = await run()
+      expect(status).toBe(200)
+      expect(body.status).toBe('done')
+      expect(body.output.reason).toMatch(/^[^\n]{1,240}$/)
+      expect(body.output.reason.endsWith('…')).toBe(true)
+      expect(t.iu.requests.length - before).toBe(1)
+    } finally {
+      answers(output)
+    }
   })
 })
 

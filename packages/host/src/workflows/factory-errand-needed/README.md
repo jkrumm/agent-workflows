@@ -12,7 +12,7 @@ echo '{"errand":{"id":"e_5","source":"example-app","summary":"Approve the sign-i
 |-|-|
 | Input (stdin JSON) | `{errand{id, source, summary, detail, command, host, raisedAt, ageHours}, evidence}`. `summary` (1..200), `detail` (at most 4000 or null), `command` (at most 2000 or null) and `evidence` (at most 4000) are untrusted data. `host` is `macbook`, `iphone`, `portal` or `any`. `id`, `source`, `raisedAt` and `ageHours` are plain tokens the factory supplies. The CLI reads it as the workflow's one `request` property, so the HTTP body is `{"request": {…}}` |
 | Evidence | scrubbed lines the factory builds: the same source's other requests of the last 14 days, each with its age and how it ended (open, or closed as done, not_needed, expired or superseded, by whom, with its note) |
-| Output | the run envelope's `output`: `{verdict, reason}`, nothing else. `reason` is 1..300 characters on one line |
+| Output | the run envelope's `output`: `{verdict, reason}`, nothing else. `reason` is one line of at most 240 characters |
 | Shape | one journaled step (`errand-needed`), one tool-free call to the internal `factory.errandneeded` capability, then `guardErrandNeeded` |
 | Idempotency | the key `factory-errand-needed:<errand>:<day>` is the caller's (`agw run`); the workflow implements nothing for it |
 | Pending | exit 10 like every workflow (`agw run wait <runId>`) |
@@ -29,7 +29,7 @@ echo '{"errand":{"id":"e_5","source":"example-app","summary":"Approve the sign-i
 - **When unsure, `unsure`.** A wrong `not_needed` costs the owner a request he still wanted; a wrong `needed` or `unsure` costs
   a minute.
 - **Guard.** `guardErrandNeeded` runs in the workflow after the step, so a replay gets it too: the answer is exactly
-  `{verdict, reason}` with the reason on one line and clipped to 300; a `not_needed` without a reason, or on a request whose
+  `{verdict, reason}` with the reason on one line and clipped to 240 (the model's own reason may be any length, never a re-ask); a `not_needed` without a reason, or on a request whose
   evidence is empty, becomes `unsure`.
 - **Fails soft in the factory, not here.** There is no catch: a failed or invalid call fails the run; the factory leaves the
   request open and names the failure. Cancelled, InfraError and StepFailed propagate.

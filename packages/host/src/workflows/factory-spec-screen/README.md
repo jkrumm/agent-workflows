@@ -11,7 +11,7 @@ echo '{"spec":{"id":"artifact_1","revision":1,"title":"Raise the digest title li
 | | |
 |-|-|
 | Input (stdin JSON) | `{spec{id, revision, title, source, content, format}, issue{id, repo, title, kind}, precedents[]}`. `spec.title` (1..200), `spec.content` (at most 20100), `issue.title` and every precedent's `title` and `note` (at most 2000) are untrusted data. `source` is `triage`, `filer`, `replan` or `lead`; `format` is `markdown` or `html`. Each precedent (at most 12, newest first) is `{title, repo, source, screened: passed\|settled\|null, needed, verdict: looks_good\|with_notes\|changes\|no_longer_applies, note}`. The ids, revision, source, format, repo, kind, `screened`, `needed` and `verdict` are plain tokens the factory supplies. The CLI reads it as the workflow's one `request` property, so the HTTP body is `{"request": {…}}` |
-| Output | the run envelope's `output`: `{verdict, reason}`, nothing else. `reason` is 1..300 characters on one line |
+| Output | the run envelope's `output`: `{verdict, reason}`, nothing else. `reason` is one line of at most 240 characters |
 | Shape | one journaled step (`spec-screen`), one tool-free call to the internal `factory.specscreen` capability, then `guardSpecScreen` |
 | Idempotency | the key is the caller's (`agw run`); the workflow implements nothing for it |
 | Pending | exit 10 like every workflow (`agw run wait <runId>`) |
@@ -36,7 +36,7 @@ echo '{"spec":{"id":"artifact_1","revision":1,"title":"Raise the digest title li
   `settle`; a `needed: true`, above all one the screen `settled`, that a similar one is `pass`. Similar words alone are no evidence.
 - **When unsure, `pass`.** A wrong `settle` costs the owner a Spec he wanted to see; a wrong `pass` costs him one read.
 - **Guard.** `guardSpecScreen` runs in the workflow after the step, so a replay gets it too: the answer is exactly
-  `{verdict, reason}` with the reason on one line and clipped to 300; a `settle` with an empty reason becomes `pass`.
+  `{verdict, reason}` with the reason on one line and clipped to 240 (the model's own reason may be any length, never a re-ask); a `settle` with an empty reason becomes `pass`.
 - **Fails soft in the factory, not here.** There is no catch: a failed or invalid call fails the run; the factory retries the
   screen twice, 5 minutes apart, and then lets the Spec reach the owner unscreened. Cancelled, InfraError and StepFailed propagate.
 

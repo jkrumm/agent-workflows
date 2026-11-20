@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { completeJson, type LlmDeps } from '../llm/model-call.ts'
 import { defineCapability } from '../procedure.ts'
 import { identifier } from './identifier.ts'
+import { clipReason, collapseLine, rawReason, REASON_ASK, REASON_MAX_CHARS, strictLine } from './one-line.ts'
 import {
   endOfData,
   fenceNonce,
@@ -20,7 +21,6 @@ export const ERRAND_VERDICTS = ['pass', 'turn_away'] as const
 
 const MAX_SUMMARY_CHARS = 500
 const MAX_DETAIL_CHARS = 8_000
-const MAX_REASON_CHARS = 300
 
 export const factoryErrandInput = z.object({
   errand: z.object({
@@ -37,28 +37,28 @@ export const factoryErrandInput = z.object({
 })
 export type FactoryErrandInput = z.output<typeof factoryErrandInput>
 
+const reasonText = 'pass: the deciding fact; turn_away: what the lead does instead, addressed to the lead'
+
 export const factoryErrandOutput = z.object({
   verdict: z.enum(ERRAND_VERDICTS),
-  reason: z
-    .string()
-    .trim()
-    .min(1)
-    .max(MAX_REASON_CHARS)
-    .describe('pass: the deciding fact; turn_away: what the lead does instead, addressed to the lead'),
+  reason: strictLine(REASON_MAX_CHARS).describe(reasonText),
 })
 export type FactoryErrandOutput = z.output<typeof factoryErrandOutput>
 
-const oneLine = (text: string) => text.replace(/[\r\n\u2028\u2029]+/g, ' ').trim()
+/** The answer as the model writes it: the reason is any string up to a sanity cap, brought to the contract by `clipReason`. */
+const factoryErrandAnswer = z.object({
+  verdict: z.enum(ERRAND_VERDICTS),
+  reason: rawReason.describe(reasonText),
+})
 
 /**
  * The code-side guard, applied by the workflow after the step: the answer is exactly `{ verdict, reason }`, the reason on one
- * line and at most 300 characters. A `turn_away` without a reason fails closed to `pass` (the owner decides).
+ * line and clipped to the factory's contract. A `turn_away` without a reason fails closed to `pass` (the owner decides).
  */
 export function guardErrand(answer: FactoryErrandOutput): FactoryErrandOutput {
-  const reason = oneLine(answer.reason).slice(0, MAX_REASON_CHARS).trim()
-  if (answer.verdict === 'turn_away' && reason === '')
+  if (answer.verdict === 'turn_away' && collapseLine(answer.reason) === '')
     return { verdict: 'pass', reason: 'guard: turn_away without a reason' }
-  return { verdict: answer.verdict, reason }
+  return { verdict: answer.verdict, reason: clipReason(answer.reason) }
 }
 
 const INSTRUCTIONS = `You screen Errands for a software factory. A lead agent raises an Errand when it needs the owner's hands.
@@ -90,7 +90,7 @@ When unsure, pass. The owner decides: a wrong turn-away costs the lead a round t
 
 ## Output
 
-"reason" is one short sentence (at most 300 characters). ${JSON_ANSWER}
+"reason" is one short sentence (${REASON_ASK}). ${JSON_ANSWER}
 
 {"verdict": "pass" | "turn_away", "reason": "…"}`
 
@@ -138,9 +138,9 @@ export const createFactoryErrand = (deps: LlmDeps) =>
       const { data } = await completeJson(deps, {
         routeId: 'factory.errand',
         prompt: buildFactoryErrandPrompt(request, fenceNonce(text.map((t) => neutralizeFenceMarkers(t)))),
-        schema: factoryErrandOutput,
+        schema: factoryErrandAnswer,
         ctx,
       })
-      return data
+      return { verdict: data.verdict, reason: clipReason(data.reason) }
     },
   })

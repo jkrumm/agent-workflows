@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { completeJson, type LlmDeps } from '../llm/model-call.ts'
 import { defineCapability } from '../procedure.ts'
 import { identifier } from './identifier.ts'
-import { clipLine, collapseLine, strictLine } from './one-line.ts'
+import { clipLine, collapseLine, rawReason, strictLine } from './one-line.ts'
 import {
   endOfData,
   fenceNonce,
@@ -21,7 +21,6 @@ import {
 const MAX_DONE = 100
 const MAX_OPEN = 60
 const MAX_TITLE_CHARS = 500
-const MAX_REASON_CHARS = 300
 const MAX_AFTER = 10
 
 export const DIGEST_LIMITS = {
@@ -67,7 +66,9 @@ export const factoryDigestInput = z.object({
     .max(MAX_OPEN)
     .describe('Issues that wait for a lead; `after` lists the Issues each waits for'),
   waiting: z
-    .array(z.object({ id: issueId, title, reason: z.string().min(1).max(MAX_REASON_CHARS).describe('Untrusted data') }))
+    .array(
+      z.object({ id: issueId, title, reason: rawReason.describe('Untrusted data; clipped to one line in the prompt') }),
+    )
     .max(MAX_OPEN)
     .describe('Issues that wait for something else (a Decision, an Errand, a time); `reason` says what'),
   previous: z
@@ -211,7 +212,7 @@ function buildFactoryDigestPrompt(input: FactoryDigestInput, nonce: string): str
     ),
     section(
       'waiting',
-      input.waiting.map((i) => `- ${i.id}: ${unwrap(i.title)} (waiting: ${unwrap(i.reason)})`),
+      input.waiting.map((i) => `- ${i.id}: ${unwrap(i.title)} (waiting: ${clipLine(unwrap(i.reason))})`),
     ),
     ...(input.previous ? [`previous headline (${input.previous.at}): ${unwrap(input.previous.headline)}`] : []),
   ].join('\n\n')
