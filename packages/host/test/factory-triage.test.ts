@@ -57,7 +57,7 @@ describe('factory-triage workflow', () => {
   test('amend: the fixture answer passes through, and the prompt lists the open Issues', async () => {
     const { status, body } = await run(amendInput)
     expect(status).toBe(200)
-    expect(body.output).toEqual({ ...amendOutput, checkpoint: null })
+    expect(body.output).toEqual({ ...amendOutput, settled: null, checkpoint: null })
     const sent = t.iu.requests.filter((r) =>
       String((r.body.messages as Body[])[0]?.content).includes('still wrong for coupons'),
     )
@@ -73,7 +73,7 @@ describe('factory-triage workflow', () => {
   test('settle: the fixture answer passes through', async () => {
     answers(settleOutput)
     const { body } = await run(settleInput)
-    expect(body.output).toEqual({ ...settleOutput, checkpoint: null })
+    expect(body.output).toEqual({ ...settleOutput, settled: null, checkpoint: null })
     answers(amendOutput)
   })
 

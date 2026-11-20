@@ -5,7 +5,8 @@ import { messageResponse, startFakeGateway } from '@agent-workflows/testing/gate
 import { createFactorySpecScreen } from '../src/workflows/factory-spec-screen/index.ts'
 import specModule, { CASES_PATH } from '../src/workflows/factory-spec-screen/module.ts'
 import { FactorySpecScreenReference, factorySpecScreenScorer } from '../src/workflows/factory-spec-screen/scorer.ts'
-import { FactorySpecScreenInput } from '../src/workflows/factory-spec-screen/schema.ts'
+import { FactorySpecScreenInput, FactorySpecScreenOutput } from '../src/workflows/factory-spec-screen/schema.ts'
+import fixture from './fixtures/software-factory-loops.json'
 import { type Body, startTestHost, type TestHost } from './support.ts'
 
 const precedent = {
@@ -70,6 +71,11 @@ const answers = (answer: unknown) => t.iu.on('messages', () => messageResponse(J
 describe('factory-spec-screen workflow', () => {
   test('the module is registered under the workflow id', () => {
     expect(specModule.id).toBe('factory-spec-screen')
+  })
+
+  test("the factory's fixture request and answer parse with the workflow's schemas", () => {
+    expect(FactorySpecScreenInput.safeParse({ request: fixture.specScreen.input }).success).toBe(true)
+    expect(FactorySpecScreenOutput.safeParse(fixture.specScreen.output).success).toBe(true)
   })
 
   test('the answer passes through, and the prompt fences the Spec and the precedents after the untrusted preamble', async () => {

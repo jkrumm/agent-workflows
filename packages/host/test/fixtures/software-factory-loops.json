@@ -82,11 +82,18 @@
       "candidates": [
         { "id": "issue_12", "title": "Fix the checkout total", "kind": "bug", "state": "working" },
         { "id": "issue_15", "title": "Add a dark theme", "kind": "feature", "state": "queued" }
+      ],
+      "settled": [
+        {
+          "id": "issue_9",
+          "title": "Coupons ignored at checkout",
+          "outcome": "done",
+          "reason": "fixed in the cart total"
+        }
       ]
     },
     "amendOutput": {
       "amend": "issue_12",
-      "settled": null,
       "after": [],
       "kind": null,
       "size": null,
@@ -120,7 +127,6 @@
     },
     "settleOutput": {
       "amend": null,
-      "settled": null,
       "after": ["issue_12"],
       "kind": null,
       "size": "small",
@@ -227,6 +233,29 @@
       "reason": "two verified defects among three candidates read"
     }
   },
+  "hygiene": {
+    "input": {
+      "repo": "example-app",
+      "cwd": "/tmp/factory-hygiene/example-app",
+      "ref": "3f2a9c1d",
+      "stale": [{ "path": "docs/checkout.md", "why": "last edited 2026-08-02; 61 commits to code since" }],
+      "slop": [{ "path": "README.md", "why": "edited 2 days ago; 140 lines" }],
+      "max": 3
+    },
+    "output": {
+      "findings": [
+        {
+          "kind": "stale",
+          "path": "docs/checkout.md",
+          "title": "The checkout doc still describes the coupon line in the total",
+          "evidence": "docs/checkout.md:14 says the total includes the coupon; src/checkout/summary.ts:40 shows the coupon is a separate line.",
+          "fix": "Move the coupon paragraph under the summary section and name the separate line."
+        }
+      ],
+      "read": 2,
+      "reason": "one document disagrees with the code, the README reads plain"
+    }
+  },
   "screen": {
     "input": {
       "signal": {
@@ -263,5 +292,36 @@
       "issue": { "id": "issue_31", "repo": "example-app", "title": "Add a sign-in screen", "kind": "feature" }
     },
     "output": { "verdict": "pass", "reason": "A sign-in prompt on a device needs a person's hands" }
+  },
+  "errandNeeded": {
+    "input": {
+      "errand": {
+        "id": "e_8",
+        "source": "agent",
+        "summary": "Rotate the staging API key",
+        "detail": "The key in the portal expires this week.",
+        "command": null,
+        "host": "portal",
+        "raisedAt": "2026-11-17T09:00:00.000Z",
+        "ageHours": 30
+      },
+      "evidence": "e_5 (same source, closed done 2 days ago): Rotate the production API key"
+    },
+    "output": { "verdict": "needed", "reason": "the key is still the old one and the portal step is open" }
+  },
+  "specScreen": {
+    "input": {
+      "spec": {
+        "id": "artifact_4",
+        "revision": 1,
+        "title": "A retry rule for the export job",
+        "source": "lead",
+        "content": "Retry the export three times, five minutes apart; the defaults hold if no verdict comes in 24 hours.",
+        "format": "markdown"
+      },
+      "issue": { "id": "issue_31", "repo": "example-app", "title": "Make the export job retry", "kind": "feature" },
+      "precedents": []
+    },
+    "output": { "verdict": "settle", "reason": "a retry rule inside one job, the defaults are reversible" }
   }
 }
