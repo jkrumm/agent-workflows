@@ -8,7 +8,8 @@ import {
   FactoryErrandNeededReference,
   factoryErrandNeededScorer,
 } from '../src/workflows/factory-errand-needed/scorer.ts'
-import { FactoryErrandNeededInput } from '../src/workflows/factory-errand-needed/schema.ts'
+import { FactoryErrandNeededInput, FactoryErrandNeededOutput } from '../src/workflows/factory-errand-needed/schema.ts'
+import fixture from './fixtures/software-factory-loops.json'
 import { type Body, startTestHost, type TestHost } from './support.ts'
 
 const input = {
@@ -64,6 +65,11 @@ const answers = (answer: unknown) => t.iu.on('messages', () => messageResponse(J
 describe('factory-errand-needed workflow', () => {
   test('the module is registered under the workflow id', () => {
     expect(neededModule.id).toBe('factory-errand-needed')
+  })
+
+  test("the factory's fixture request and answer parse with the workflow's schemas", () => {
+    expect(FactoryErrandNeededInput.safeParse({ request: fixture.errandNeeded.input }).success).toBe(true)
+    expect(FactoryErrandNeededOutput.safeParse(fixture.errandNeeded.output).success).toBe(true)
   })
 
   test('the answer passes through, and the prompt fences the request and the evidence after the untrusted preamble', async () => {

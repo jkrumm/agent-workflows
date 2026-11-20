@@ -33,8 +33,11 @@ function checkout() {
   const cwd = mkdtempSync(join(tmpdir(), 'agw-hygiene-'))
   roots.push(cwd)
   mkdirSync(join(cwd, 'docs'))
-  for (const file of ['README.md', 'docs/architecture.md', 'docs/deploy.md'])
+  const candidates = [...fixture.hygiene.input.stale, ...fixture.hygiene.input.slop].map((c) => c.path)
+  for (const file of new Set(['README.md', 'docs/architecture.md', 'docs/deploy.md', ...candidates])) {
+    mkdirSync(join(cwd, file, '..'), { recursive: true })
     writeFileSync(join(cwd, file), `# ${file}\n`)
+  }
   const input = FactoryHygieneInput.parse({ hygiene: { ...fixture.hygiene.input, cwd } }).hygiene
   return { cwd, input }
 }
@@ -70,8 +73,8 @@ describe('factory-hygiene workflow', () => {
     expect(session?.spec.options).toEqual({ output: 'json', allowDirectories: [cwd] })
     const prompt = session?.spec.prompt ?? ''
     expect(prompt).toContain(`Working directory: ${cwd}`)
-    expect(prompt).toContain('- docs/architecture.md: 12 commits touch src/')
-    expect(prompt).toContain('- README.md: edited 2 days ago')
+    for (const c of [...fixture.hygiene.input.stale, ...fixture.hygiene.input.slop])
+      expect(prompt).toContain(`- ${c.path}: ${c.why}`)
     expect(prompt).toMatch(/<<<CANDIDATES_[0-9a-f]{32}_BEGIN>>>/)
     expect((await sql.steps(runId)).map((s) => s.step_id)).toEqual(['scan', 'review'])
   })
@@ -241,12 +244,8 @@ describe('guardHygiene', () => {
   })
 
   test('the cap is `max`, in the agent order', () => {
-    const many = [
-      finding({ path: 'docs/architecture.md' }),
-      finding({ path: 'docs/deploy.md' }),
-      finding({ kind: 'slop', path: 'README.md' }),
-    ]
-    expect(guard(many, 2).map((f) => f.path)).toEqual(['docs/architecture.md', 'docs/deploy.md'])
+    const many = [finding({ path: 'docs/checkout.md' }), finding({ kind: 'slop', path: 'README.md' })]
+    expect(guard(many, 1).map((f) => f.path)).toEqual(['docs/checkout.md'])
   })
 
   test('`findings: []` stays, the reason and read count are untouched', () => {
