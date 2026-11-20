@@ -55,7 +55,12 @@ function enumValues(schema: Schema): unknown[] {
   return (schema.anyOf ?? schema.oneOf)?.filter(notNull).flatMap(enumValues) ?? []
 }
 
+/** A positional that is an array of strings takes every argument from its place on: `agw image-sheet a.png b.svg`. */
+const isStringList = (schema: Schema): boolean =>
+  schema.type === 'array' && (schema.items as Schema | undefined)?.type === 'string'
+
 function typeLabel(field: Field): string {
+  if (isStringList(field.schema)) return 'string list'
   const type = fieldType(field.schema)
   if (type === 'enum') return enumValues(field.schema).map(String).join('|')
   return type === 'any' || type === 'scalar' ? 'value' : type
@@ -157,12 +162,19 @@ function validFlags(command: Command): string[] {
   ].map((f) => `--${f}`)
 }
 
+/** The last positional of a command, when it is a string list. */
+const variadicField = (command: Command): Field | undefined => {
+  const last = command.fields.find((f) => f.name === command.x.positional.at(-1))
+  return last && isStringList(last.schema) ? last : undefined
+}
+
 const flagSyntax = (f: Field) => (isBoolean(f) ? `--${f.flag}|--no-${f.flag}` : `--${f.flag} <${typeLabel(f)}>`)
 
 export function usageLine(command: Command): string {
   const positional = command.x.positional.map((name) => {
     const field = command.fields.find((f) => f.name === name)
-    return field?.required && command.x.stdin !== name ? `<${name}>` : `[${name}]`
+    const label = field?.required && command.x.stdin !== name ? `<${name}>` : `[${name}]`
+    return field && field === variadicField(command) ? `${label}...` : label
   })
   const flags = flagFields(command).map((f) => (f.required ? flagSyntax(f) : `[${flagSyntax(f)}]`))
   const globalSyntax: Record<string, string> = {
@@ -204,7 +216,12 @@ export function helpText(command: Command, below: Command[] = []): string {
     return `  ${label.padEnd(22)} ${facts.join(', ')}${f.schema.description ? ` — ${f.schema.description}` : ''}`
   }
   const positional = command.fields.filter((f) => command.x.positional.includes(f.name))
-  if (positional.length) lines.push('', 'arguments:', ...positional.map((f) => describe(f, `<${f.name}>`)))
+  if (positional.length)
+    lines.push(
+      '',
+      'arguments:',
+      ...positional.map((f) => describe(f, f === variadicField(command) ? `<${f.name}>...` : `<${f.name}>`)),
+    )
   const flags = flagFields(command)
   if (flags.length)
     lines.push(
@@ -293,13 +310,16 @@ export function parseArgs(command: Command, tokens: string[]): Parsed {
   if (parsed.globals.help) return parsed
 
   const names = command.x.positional
-  if (positional.length > names.length) {
+  const list = variadicField(command)
+  const single = list ? names.length - 1 : names.length
+  if (!list && positional.length > names.length) {
     throw usage(`unexpected argument '${positional[names.length]}'`, `usage: ${usageLine(command)}`)
   }
-  positional.forEach((raw, i) => {
+  positional.slice(0, single).forEach((raw, i) => {
     const field = command.fields.find((f) => f.name === names[i])
     if (field) parsed.values[field.name] = coerce(field, raw, `<${field.name}>`)
   })
+  if (list && positional.length > single) parsed.values[list.name] = positional.slice(single)
   return parsed
 }
 
