@@ -19,7 +19,7 @@ export interface EvalCase {
 
 /** A module's own case reader: the cases file at `path` as replayable cases. */
 export interface Suite {
-  /** The id of the workflow the suite replays, when it is not the module's own (`factory-digest` serves `factory.digest`). */
+  /** The id of the workflow the suite replays, when it is not the module's own (a suite whose cases replay a workflow of another id). */
   workflow?: string
   /** Where the cases live; default `$AGW_EVAL_DIR/<workflow>/cases.jsonl`. */
   path?(env: Record<string, string | undefined>): string

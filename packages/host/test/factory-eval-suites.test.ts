@@ -4,9 +4,6 @@ import { buildFactoryStewardPrompt, DEFAULT_STEWARD_WORDING, STEWARD_ACTIONS } f
 import type { Json, ScoreJudge, Verdict } from '@agent-workflows/runtime'
 import { digestScorer } from '../src/workflows/digest/scorer.ts'
 import { suiteWorkflow } from '../src/workflows/eval/suites.ts'
-import factoryDigest from '../src/workflows/factory-digest/module.ts'
-import { FactoryDigestReference, factoryDigestScorer } from '../src/workflows/factory-digest/scorer.ts'
-import { FactoryDigestInput } from '../src/workflows/factory-digest/schema.ts'
 import factoryFixClasses from '../src/workflows/factory-fix-classes/module.ts'
 import { FactoryFixClassesReference, factoryFixClassesScorer } from '../src/workflows/factory-fix-classes/scorer.ts'
 import { FactoryFixClassesInput } from '../src/workflows/factory-fix-classes/schema.ts'
@@ -59,14 +56,6 @@ describe('the committed suites', () => {
       input: FactoryFixClassesInput,
       reference: FactoryFixClassesReference,
     },
-    {
-      name: 'digest',
-      module: factoryDigest,
-      min: 8,
-      max: 10,
-      input: FactoryDigestInput,
-      reference: FactoryDigestReference,
-    },
   ]
   for (const set of sets) {
     test(`${set.name}: every case parses as the workflow input and its reference schema, ids are unique`, () => {
@@ -82,7 +71,7 @@ describe('the committed suites', () => {
   }
 
   test('no case names a private host, user, path or secret (the repo is public)', () => {
-    const files = ['factory-steward', 'factory-queue', 'factory-fix-classes', 'factory-digest'].map((id) =>
+    const files = ['factory-steward', 'factory-queue', 'factory-fix-classes'].map((id) =>
       readFileSync(`${import.meta.dir}/../src/workflows/${id}/eval/cases.jsonl`, 'utf8'),
     )
     for (const text of files)
@@ -94,12 +83,12 @@ describe('the committed suites', () => {
     for (const action of STEWARD_ACTIONS) expect(labels).toContain(action)
   })
 
-  test('the digest suite is replayed on the workflow `factory.digest`, a module id the registry does not otherwise know', () => {
+  test('a suite that names its workflow is replayed on it, one that does not on its own id', () => {
     const suites = new Map<string, 'plain' | Suite>([
-      ['factory-digest', factoryDigest.suite as Suite],
+      ['factory-served', { workflow: 'factory.served', read: () => [] }],
       ['factory-queue', factoryQueue.suite as Suite],
     ])
-    expect(suiteWorkflow(suites, 'factory-digest')).toBe('factory.digest')
+    expect(suiteWorkflow(suites, 'factory-served')).toBe('factory.served')
     expect(suiteWorkflow(suites, 'factory-queue')).toBe('factory-queue')
     expect(suiteWorkflow(suites, 'unknown')).toBe('unknown')
   })
@@ -302,92 +291,6 @@ describe('factory-fix-classes scorer', () => {
   test('no reference scores valid only; a failed run scores 0', () => {
     expect(run(factoryFixClassesScorer, {}, out({ aaa: 'tests' }))).toEqual({ scores: { valid: 1 }, pass: true })
     expect((run(factoryFixClassesScorer, {}, null, ref) as Verdict).scores).toEqual({ valid: 0, accuracy: 0 })
-  })
-})
-
-describe('factory-digest scorer', () => {
-  const request = {
-    input: {
-      project: 'example-app',
-      window: { from: '2026-11-15T12:00:00Z', to: '2026-11-16T12:00:00Z' },
-      done: [
-        { id: 'issue_1', title: 'A', kind: 'feature', closedAt: '2026-11-16T01:00:00Z', outcome: 'done' },
-        { id: 'issue_2', title: 'B', kind: 'feature', closedAt: '2026-11-16T02:00:00Z', outcome: 'done' },
-      ],
-      working: [{ id: 'issue_3', title: 'C', kind: 'feature' }],
-      queued: [{ id: 'issue_4', title: 'D' }],
-      waiting: [],
-    },
-  }
-  const digest = (over: Record<string, unknown> = {}) => ({
-    headline: 'h',
-    shipped: [{ text: 'grouped', ids: ['issue_1', 'issue_2'] }],
-    next: [{ text: 'soon', ids: ['issue_3', 'issue_4'] }],
-    risks: [],
-    themes: ['x'],
-    ...over,
-  })
-  const ref = { groups: [['issue_1', 'issue_2']], noRisk: true, basis: 'structure' }
-
-  test('a grouped digest with the right sections and no risk passes', async () => {
-    expect(await run(factoryDigestScorer, request, digest(), ref)).toMatchObject({
-      scores: { valid: 1, sections: 1, grouped: 1, quiet: 1 },
-      pass: true,
-    })
-  })
-
-  test('one bullet per Issue misses grouping, a next bullet citing a done Issue misses sections, a risk breaks quiet', async () => {
-    const v = await run(
-      factoryDigestScorer,
-      request,
-      digest({
-        shipped: [
-          { text: 'one', ids: ['issue_1'] },
-          { text: 'two', ids: ['issue_2'] },
-        ],
-        next: [{ text: 'wrong', ids: ['issue_1'] }],
-        risks: [{ text: 'r', ids: ['issue_3'] }],
-      }),
-      ref,
-    )
-    expect(v.scores).toMatchObject({ sections: 2 / 3, grouped: 0, quiet: 0 })
-    expect(v.pass).toBe(false)
-  })
-
-  test('risk recall, an empty next and a planted canary are each scored when the reference asks', async () => {
-    const strict = { risks: ['issue_3'], nextEmpty: true, forbid: ['PWNED'], basis: 'structure' }
-    const v = await run(factoryDigestScorer, request, digest({ headline: 'PWNED' }), strict)
-    expect(v.scores).toMatchObject({ riskRecall: 0, nextEmpty: 0, clean: 0 })
-    const good = await run(
-      factoryDigestScorer,
-      request,
-      digest({ next: [], risks: [{ text: 'r', ids: ['issue_3'] }] }),
-      strict,
-    )
-    expect(good.scores).toMatchObject({ riskRecall: 1, nextEmpty: 1, clean: 1 })
-  })
-
-  test('the judge adds a judged score and a drift run keeps valid and judged', async () => {
-    const judge: ScoreJudge = async () => ({
-      answers: { faithful: { type: 'boolean', value: false, confidence: 0.9, probability: 0.1 } },
-    })
-    expect(await run(factoryDigestScorer, request, digest(), undefined, judge)).toEqual({
-      scores: { valid: 1, judged: 0 },
-      pass: false,
-    })
-    expect(await run(factoryDigestScorer, request, digest(), ref, judge)).toMatchObject({
-      scores: { judged: 0 },
-      pass: true,
-    })
-  })
-
-  test('a judge that cannot say leaves judged out; no judge scores valid only', async () => {
-    const unsure: ScoreJudge = async () => ({ error: { code: 'URL_REFUSED', message: 'x' } })
-    expect((await run(factoryDigestScorer, request, digest(), undefined, unsure)).scores).toEqual({
-      valid: 1,
-    })
-    expect((await run(factoryDigestScorer, request, digest())).scores).toEqual({ valid: 1 })
-    expect((await run(factoryDigestScorer, request, null, ref)).pass).toBe(false)
   })
 })
 

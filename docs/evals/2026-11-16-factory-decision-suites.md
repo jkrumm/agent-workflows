@@ -1,5 +1,7 @@
 # First runs of the factory-decision suites, and the references refreshed (2026-11-16)
 
+> 2026-11-20: the `factory-digest` workflow, its suite and route were removed (software-factory builds the digest in code); its row below is history.
+
 Issue 1602. Five model decisions that steer the factory had no eval: `factory-steward`, `factory-queue`,
 `factory-fix-classes`, `factory-digest` and the `factory-hygiene` agent. Each now has a committed suite and a scorer with a
 score beyond `valid` (`packages/host/src/workflows/<id>/eval/cases.jsonl`, `scorer.ts`; the steward's arm comparison is
