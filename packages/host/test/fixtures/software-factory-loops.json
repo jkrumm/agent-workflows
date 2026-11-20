@@ -287,7 +287,10 @@
       "errand": {
         "id": "e_7",
         "summary": "Approve the sign-in prompt on the test device",
-        "detail": "The lead needs the test device signed in once to run the UI checks."
+        "detail": "The lead needs the test device signed in once to run the UI checks.",
+        "command": null,
+        "host": null,
+        "need": "hands"
       },
       "issue": { "id": "issue_31", "repo": "example-app", "title": "Add a sign-in screen", "kind": "feature" }
     },

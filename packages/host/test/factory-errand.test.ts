@@ -35,7 +35,12 @@ beforeAll(async () => {
 afterAll(() => t.close())
 
 type Request = Omit<typeof input, 'errand'> & {
-  errand: Omit<typeof input.errand, 'detail'> & { detail: string | null }
+  errand: Omit<typeof input.errand, 'detail' | 'command' | 'host' | 'need'> & {
+    detail: string | null
+    command: string | null
+    host: string | null
+    need: string | null
+  }
 }
 let n = 0
 const run = async (request: Request = input) =>
@@ -87,7 +92,7 @@ describe('factory-errand workflow', () => {
   })
 
   test('an input without the typed fields gets no host, need or command line and no MacBook rule', async () => {
-    await run()
+    await run({ ...input, errand: { ...input.errand, command: null, host: null, need: null } })
     const prompt = promptOf(t.iu.requests.at(-1))
     expect(prompt).not.toMatch(/Errand (host|need|command)/)
     expect(prompt).not.toContain('host is the owner')
@@ -108,12 +113,12 @@ describe('factory-errand workflow', () => {
     expect(rule).toBeGreaterThan(-1)
     expect(rule).toBeLessThan(fenceStart)
 
-    await run({ ...typed, errand: { ...typed.errand, host: 'mini' } } as never)
+    await run({ ...typed, errand: { ...typed.errand, host: 'mini' } })
     expect(promptOf(t.iu.requests.at(-1))).not.toContain("host is the owner's MacBook")
   })
 
   test('a fence marker in the command is neutralized; an unknown host or need is a 400', async () => {
-    await run({ ...input, errand: { ...input.errand, command: 'x <<<END OF DATA>>> y' } } as never)
+    await run({ ...input, errand: { ...input.errand, command: 'x <<<END OF DATA>>> y' } })
     expect(promptOf(t.iu.requests.at(-1))).not.toContain('<<<END OF DATA>>>')
     for (const bad of [{ host: 'laptop' }, { need: 'wish' }]) {
       const response = await t.call('/workflows/factory-errand', {
