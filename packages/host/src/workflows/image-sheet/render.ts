@@ -2,7 +2,7 @@ import { dirname, join } from 'node:path'
 import { createCanvas, GlobalFonts } from '@napi-rs/canvas'
 import { WorkflowError } from '@agent-workflows/runtime'
 import sharp, { type OverlayOptions } from 'sharp'
-import { rasterizeSvg, type SourceKind } from '../image-source.ts'
+import { rasterizeSvg, SOURCE_MAX_PIXELS, type SourceKind } from '../image-source.ts'
 
 /** The sizes every image is shown at: one large, then the three a favicon, a tab and a dock are seen at. */
 export const LARGE = 320
@@ -65,7 +65,7 @@ export function labelPng(text: string, ground: Ground): Buffer {
 export async function decodeForSheet(source: { kind: SourceKind; bytes: Uint8Array }): Promise<Buffer> {
   try {
     if (source.kind === 'svg') return await rasterizeSvg(source.bytes)
-    return await sharp(source.bytes, { limitInputPixels: 64_000_000 }).rotate().png().toBuffer()
+    return await sharp(source.bytes, { limitInputPixels: SOURCE_MAX_PIXELS }).rotate().png().toBuffer()
   } catch (err) {
     if (err instanceof WorkflowError) throw err
     throw new WorkflowError('invalid_input', `unreadable image: ${err instanceof Error ? err.message : String(err)}`, {

@@ -84,7 +84,7 @@ and the error names them with their total ("already billed: upscale $0.002, cuto
   output set of the gateway's run of 2026-10-29 (image-gateway @ 3efdf8a, default background). On the same sharp version
   the rasters, the ICO and the cleaned SVG are byte-identical to the gateway's and the ICNS chunks match within the
   fingerprint tolerance (`image-icon-golden.test.ts`).
-- **An SVG favicon source is optimised, not vectorized.** svgo shrinks it (`preset-default`, scripts and handlers removed; a `foreignObject` or `javascript:` link fails the run as `invalid_input`), the root loses its fixed `width`/`height` and keeps or gains a `viewBox` from them (an SVG with neither is refused). The favicon source is the flat when one is given, else the master, so an SVG master with a raster flat is vectorized from the flat.
+- **An SVG favicon source is optimised, not vectorized.** svgo shrinks it (`preset-default`; scripts, handlers and `javascript:` links are removed, and a `foreignObject` or other active content that survives fails the run as `invalid_input`), the root loses its fixed `width`/`height` and keeps or gains a `viewBox` from them (an SVG with neither is refused). The favicon source is the flat when one is given, else the master, so an SVG master with a raster flat is vectorized from the flat.
 - **The SVG is omitted above 64 KB.** Browsers prefer the SVG icon, so a bloated one (gradient or photographic art) is
   worse than none; the PNG/ICO set stands and the head tags have no svg link.
 - **The cutout's 256 px minimum is checked in `prepare`, before anything is billed.** recraft needs a short edge of at
