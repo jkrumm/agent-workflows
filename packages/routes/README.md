@@ -64,12 +64,13 @@ provenance (which legacy seat it copies, and why) is its file's comments and its
 
 ## Tiers
 
-A text model is chosen once, in `src/table/_shared.ts`, as one of four **tiers** (owner, 2026-10-31) or a named cross-lab constant. A route spreads it and nothing else names a model. **The tiers are Claude** (owner decision 2026-11-01, measured per route since: `docs/evals/`; what is still open is in `docs/audits/2026-11-17-maturity-round-two.md` §Proposals) so the monthly credit is spent, except `DECIDE`; the rate of each Claude tier is `CLAUDE_RATES` (`claude.ts`, the one source):
+A text model is chosen once, in `src/table/_shared.ts`, as one of four **tiers** (owner, 2026-10-31; `QUICK` below is EASY's call at effort low, added 2026-11-20) or a named cross-lab constant. A route spreads it and nothing else names a model. **The tiers are Claude** (owner decision 2026-11-01, measured per route since: `docs/evals/`; what is still open is in `docs/audits/2026-11-17-maturity-round-two.md` §Proposals) so the monthly credit is spent, except `DECIDE`; the rate of each Claude tier is `CLAUDE_RATES` (`claude.ts`, the one source):
 
 | Tier | Primary today | Routes |
 |-|-|-|
 | `FAST` | Haiku 5.5, effort none | `cheap.title`, `factory.digest`, `hermes.title`, `hermes.approval`, `hermes.vision`, `digest.items`, `audio.tts.prep`, `audio.tts.summary` (the prep follows the route's wire), the image enhance planner (effort high); `.agent`: `diagram.agent` |
-| `EASY` | Haiku 5.5, effort high | `cheap.summarize`, `cheap.extract`, `overview.classify`, `triage`, `check`, `brain.agent`, `otel.agent`, `research.agent`, `podcast.metadata`, `hermes.brain`, `hermes.compress`, `factory.steward`, `factory.queue`, `factory.triage`, `factory.screen`, `factory.errand`, `factory.errandneeded`, `factory.specscreen`, `factory.fixclasses`, `factory.hygiene` |
+| `EASY` | Haiku 5.5, effort high | `cheap.summarize` (the iris gist: below high it ignores the 30-word bound), `cheap.extract`, `overview.classify`, `check`, `brain.agent`, `otel.agent`, `research.agent`, `podcast.metadata`, `hermes.brain`, `hermes.compress`, `factory.steward`, `factory.queue`, `factory.triage`, `factory.screen`, `factory.errand`, `factory.errandneeded`, `factory.specscreen`, `factory.fixclasses`, `factory.hygiene` |
+| `QUICK` | Haiku 5.5, effort low (`EASY.call` with the effort changed, so ceiling, rate and fallback are EASY's); `.call` only | `triage` (iris waits on it; `docs/evals/2026-11-20-iris-effort-arms.md`: quality held at low, 2.0 s p50 against 3.4 s; none lost answers) |
 | `HARD` | Sonnet 5.5, effort medium | `factory.ask` (the factory Judge: `docs/evals/2026-11-11-factory-ask-judge.md`), `prose.write`, `narrative`, the retro agent, the podcast writers' room (`podcast.research`, `.editorial`, `.outline`, `.write`) |
 | `DECIDE` | `decision-1` (IU decision API), input-priced, no fallback | `decide` |
 
@@ -81,7 +82,7 @@ A tier holds one entry per step kind, `.call` (a single call) and `.agent` (an O
 'research.agent': { wire: 'opencode', ...EASY.agent },
 ```
 
-Only the kinds in use exist: `DECIDE` has `.call` only, `FAST`, `EASY` and `HARD` have both. The tier owns the output ceiling (FAST 16 000, EASY and HARD 32 000) along with model, effort, rate and fallback; a route adds only its `wire` and overrides nothing (guard.test.ts). Moving every route of a tier to another model, rate, effort or ceiling is one edit to the tier. The wire is the route's own (a transport is code, an arm cannot change it), so a tier that moves to another provider family also needs its routes' `wire` changed where the family speaks another dialect (the Claude tiers did: single calls moved from `iu-openai` to `anthropic`).
+Only the kinds in use exist: `DECIDE` and `QUICK` have `.call` only, `FAST`, `EASY` and `HARD` have both. The tier owns the output ceiling (FAST 16 000, EASY and HARD 32 000) along with model, effort, rate and fallback; a route adds only its `wire` and overrides nothing (guard.test.ts). Moving every route of a tier to another model, rate, effort or ceiling is one edit to the tier. The wire is the route's own (a transport is code, an arm cannot change it), so a tier that moves to another provider family also needs its routes' `wire` changed where the family speaks another dialect (the Claude tiers did: single calls moved from `iu-openai` to `anthropic`).
 
 Evidence (agw's 2026-10-31 eval, `docs/evals/2026-10-31-review-claude-direct.md`): Haiku at effort high is the Haiku knee, Haiku at max is unusable for agent steps. Sonnet at medium was not measured; `HARD` was Terra medium until this change.
 
@@ -200,7 +201,7 @@ The capability seats (`src/table/cheap.ts`, `decide.ts`); a workflow's seats are
 | `cheap.summarize` | `overview` (CLASSIFY) | claude-haiku-5-5 (high) | anthropic |
 | `cheap.title` | `narrative` (CLASSIFY) | claude-haiku-5-5 (none) | anthropic |
 | `decide` | `DEFAULT_DECISION_MODEL` | decision-1 | iu-decision |
-| `triage` | `triage` (SINGLE_SHOT) | claude-haiku-5-5 (high) | anthropic |
+| `triage` | `triage` (SINGLE_SHOT) | claude-haiku-5-5 (low, since 2026-11-20) | anthropic |
 
 Deliberate differences from the gateway:
 

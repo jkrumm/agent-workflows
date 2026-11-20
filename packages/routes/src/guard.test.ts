@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { CLAUDE_MODELS, DEFAULT_ROUTES, resolveRoute, routeIds } from './index.ts'
-import { CRITIC, DECIDE, EASY, FAST, HARD } from './table/_shared.ts'
+import { CRITIC, DECIDE, EASY, FAST, HARD, QUICK } from './table/_shared.ts'
 
 // The home-of-model-ids rule: no source outside `packages/routes/src/table/` names a model that the table names. The
 // routes package's own test files may (they pin what the table says): exactly the files `bun test` runs, by its
@@ -284,7 +284,7 @@ test('the literal scan catches a planted model literal in a text route with file
 
 // Every route on a Claude model spreads a tier: model, effort, rate, output ceiling and fallback are exactly those of the
 // tier's step kind (a single call on the `anthropic` wire, an agent step on `opencode`). Only `wire` is the route's own.
-const CLAUDE_TIERS = { FAST, EASY, HARD }
+const CLAUDE_TIERS = { FAST, QUICK, EASY, HARD }
 type StepShape = { model: string; effort: string; rate: object; maxOutputTokens?: number; fallback: object }
 const shapeOf = (r: StepShape) => ({
   model: r.model,

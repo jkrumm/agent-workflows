@@ -8,6 +8,8 @@ const routes = {
   // wire: Luna low for a label, Terra low for a summary or an extraction. The tiers carry the rate and the fallback.
   // An extraction at effort none or low halves the wall time but loses completeness (-0.3 to -0.4 of 5, faithfulness
   // unchanged): docs/evals/2026-11-16-effort-arms.md. It stays on the EASY tier until that trade is taken on purpose.
+  // A summary at effort low or none keeps its point but ignores a word bound (iris's 30-word gist fits it in 96 % of runs at
+  // high, 46 % at medium, 0 % at low): docs/evals/2026-11-20-iris-effort-arms.md.
   'cheap.summarize': { wire: 'anthropic', ...EASY.call },
   'cheap.extract': { wire: 'anthropic', ...EASY.call },
   'cheap.title': { wire: 'anthropic', ...FAST.call },

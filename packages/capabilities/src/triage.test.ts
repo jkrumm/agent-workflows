@@ -73,9 +73,9 @@ describe('triage', () => {
     expect(usages).toHaveLength(1)
   })
 
-  test('runs on the anthropic wire (effort high) and falls back to Terra low on the chat wire', async () => {
+  test('runs on the anthropic wire (effort low, QUICK) and falls back to Terra low on the chat wire', async () => {
     const route = resolveRoute('triage', {})
-    expect(route).toMatchObject({ wire: 'anthropic', effort: 'high' })
+    expect(route).toMatchObject({ wire: 'anthropic', effort: 'low' })
     expect(fallbackRoute(route)).toMatchObject({ wire: 'iu-openai', effort: 'low' })
     iu.on('messages', () => messageResponse(JSON.stringify(GOOD), tokens))
     await call()
@@ -84,7 +84,7 @@ describe('triage', () => {
     expect(iu.requests[0]?.body).toMatchObject({
       model: route.model,
       thinking: { type: 'adaptive' },
-      output_config: { effort: 'high' },
+      output_config: { effort: 'low' },
     })
   })
 
