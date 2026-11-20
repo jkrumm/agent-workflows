@@ -79,7 +79,7 @@ const fan = defineWorkflow({
 })
 
 const host = new FakeAgentHost(async (s) => {
-  await s.sleep(20)
+  await s.attached // the session starts at the prompt; tool hooks fire only once the step has attached its waiter
   await s.tool('read', { path: 'a' }, 'content')
   await s.tool('grep', { q: 'b' }, 'hit')
   return { output: { ok: true }, usage: usageFromOpenCodeMessages(cachedTurn) }
