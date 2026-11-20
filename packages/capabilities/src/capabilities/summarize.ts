@@ -12,6 +12,7 @@ const summarizeOutput = z.object({ summary: z.string() })
 
 const SYSTEM =
   'You summarize text faithfully. Keep what matters, drop what does not, add nothing the text does not say. ' +
+  'Write the summary in the language of the text: a German text gets a German summary, an English text an English one. ' +
   'Reply with the summary only: no preamble, no title, no commentary about the task.'
 
 export const createSummarize = (deps: LlmDeps) =>
