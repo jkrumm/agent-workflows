@@ -5,8 +5,8 @@ import sharp, { type OverlayOptions } from 'sharp'
 import { rasterizeSvg, SOURCE_MAX_PIXELS, type SourceKind } from '../image-source.ts'
 
 /** The sizes every image is shown at: one large, then the three a favicon, a tab and a dock are seen at. */
-export const LARGE = 320
-export const SMALL_SIZES = [64, 32, 16] as const
+const LARGE = 320
+const SMALL_SIZES = [64, 32, 16] as const
 
 const PAD = 16
 const LABEL_HEIGHT = 40
@@ -44,10 +44,10 @@ function ensureLabelFont(): void {
 }
 
 /** The text that is drawn for cell `number`: the number, then the label when there is one. */
-export const cellText = (number: number, label?: string): string => (label ? `${number}  ${label}` : String(number))
+const cellText = (number: number, label?: string): string => (label ? `${number}  ${label}` : String(number))
 
 /** The label as a transparent PNG the width of a cell's content: the text in the ground's ink, cut with an ellipsis when it is too wide. */
-export function labelPng(text: string, ground: Ground): Buffer {
+function labelPng(text: string, ground: Ground): Buffer {
   ensureLabelFont()
   const width = LARGE
   const canvas = createCanvas(width, LABEL_HEIGHT)

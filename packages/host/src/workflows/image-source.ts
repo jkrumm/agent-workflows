@@ -3,10 +3,10 @@ import { WorkflowError } from '@agent-workflows/runtime'
 import sharp from 'sharp'
 
 /** The largest source image accepted (image-gateway `ICONS_LIMITS.maxImageBytes`). */
-export const MAX_SOURCE_BYTES = 20 * 1024 * 1024
+const MAX_SOURCE_BYTES = 20 * 1024 * 1024
 
 /** An SVG is rasterised to this long edge before any pipeline sees it; a larger source pixel count is `invalid_input`. */
-export const SVG_RASTER_EDGE = 1024
+const SVG_RASTER_EDGE = 1024
 
 /** Caller bytes decode only up to this many pixels (sharp's own default is 268 MP). */
 export const SOURCE_MAX_PIXELS = 64_000_000
@@ -36,7 +36,7 @@ export const isSvg = (bytes: Uint8Array): boolean =>
   SVG_HEAD.test(Buffer.from(bytes.subarray(0, 4096)).toString('utf8'))
 
 /** The kind of an image by its first bytes, or null. */
-export function sniffKind(bytes: Uint8Array): SourceKind | null {
+function sniffKind(bytes: Uint8Array): SourceKind | null {
   for (const [kind, matches] of Object.entries(MAGIC)) if (matches(bytes)) return kind as SourceKind
   return isSvg(bytes) ? 'svg' : null
 }

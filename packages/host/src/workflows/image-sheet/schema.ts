@@ -2,7 +2,7 @@ import { isAbsolute } from 'node:path'
 import { z } from 'zod'
 
 /** One sheet holds at most this many images: 24 cells at 320 px are already six rows of four. */
-export const MAX_IMAGES = 24
+const MAX_IMAGES = 24
 
 const absolute = z.string().min(1).refine(isAbsolute, 'every file must be an absolute path')
 

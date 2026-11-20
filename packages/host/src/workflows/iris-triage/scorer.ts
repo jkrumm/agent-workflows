@@ -4,7 +4,7 @@ import { clean, excerpt, hasMarkup, IrisReference, mentionShare, sameLanguage, s
 import { IrisTriageInput, IrisTriageOutput } from './schema.ts'
 
 /** Bump on any change to what a score means: compare refuses to mix scorer versions silently. */
-export const IRIS_TRIAGE_SCORER_VERSION = '2026-11-20.1'
+const IRIS_TRIAGE_SCORER_VERSION = '2026-11-20.1'
 
 const ZERO = { valid: 0, language: 0, spoken: 0, clean: 0, mentions: 0 }
 /** The prompt asks for "at most two short sentences". */
