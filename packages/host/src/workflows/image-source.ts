@@ -9,7 +9,7 @@ export const MAX_SOURCE_BYTES = 20 * 1024 * 1024
 export const SVG_RASTER_EDGE = 1024
 
 /** Caller bytes decode only up to this many pixels (sharp's own default is 268 MP). */
-const SOURCE_MAX_PIXELS = 64_000_000
+export const SOURCE_MAX_PIXELS = 64_000_000
 
 /** sharp renders an SVG at its own size at 72 dpi; the density that gets `SVG_RASTER_EDGE` is capped so a 1 px SVG cannot ask for a huge canvas. */
 const SVG_MAX_DENSITY = 10_000
