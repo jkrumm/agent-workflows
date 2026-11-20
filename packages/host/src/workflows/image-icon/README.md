@@ -71,12 +71,17 @@ and the error names them with their total ("already billed: upscale $0.002, cuto
 - **sharp and svgo, not `Bun.Image`.** Verified: `Bun.Image` has no raw pixel output, no crop, no pad and no flatten, which
   the trim, the square master and the opaque targets need. `sharp` and `svgo` are `packages/host` dependencies; the ICO
   and ICNS containers are hand-written (`containers.ts`), as neither encoder writes them.
+- **ICNS 16 and 32 px entries are ARGB, not PNG.** macOS draws a PNG under `icp4`/`icp5` as noise. Those two sizes are
+  written as `ic04`/`ic05` with the `ARGB` header and run-length-encoded alpha, red, green and blue planes (colour
+  premultiplied, one trailing pad byte macOS' reader would otherwise drop), the chunk order `iconutil -c icns` uses; the
+  rest stay PNG. `image-icon-containers.test.ts` runs `iconutil -c iconset` over the set and compares the pixels.
 - **`image-icon`, not `image icon`:** the prefix rule above.
 - **Intermediates stay in `work/`** instead of being cleaned up: they show what each model returned, and the artifact
   sweep removes the whole run directory.
 - **Golden fixture = a real image-gateway run.** `packages/host/test/fixtures/image-icon/` holds the source and the
   output set of the gateway's run of 2026-10-29 (image-gateway @ 3efdf8a, default background). On the same sharp version
-  the rasters, the ICO, the ICNS and the cleaned SVG are byte-identical to the gateway's (`image-icon-golden.test.ts`).
+  the rasters, the ICO and the cleaned SVG are byte-identical to the gateway's and the ICNS chunks match within the
+  fingerprint tolerance (`image-icon-golden.test.ts`).
 - **The SVG is omitted above 64 KB.** Browsers prefer the SVG icon, so a bloated one (gradient or photographic art) is
   worse than none; the PNG/ICO set stands and the head tags have no svg link.
 - **The cutout's 256 px minimum is checked in `prepare`, before anything is billed.** recraft needs a short edge of at

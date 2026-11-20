@@ -4,12 +4,12 @@
  * Provenance: image-gateway @ 3efdf8a, run of 2026-10-29 on `fixtures/image-icon/source.png`
  * (1024x1024 with real transparency, so upscale and cutout were skipped; default background
  * #ffffff). `fixtures/image-icon/golden.json` was captured from that run's output set (rasters,
- * ICO frames, ICNS chunks as 32x32 lanczos3 RGBA fingerprints, plus head.html, the manifest and the
+ * ICO frames, ICNS chunks as 32x32 lanczos3 RGBA fingerprints; the 16 and 32 px chunks were PNG under icp4/icp5 there and are ARGB under ic04/ic05 now, so those two and the chunk order are updated, plus head.html, the manifest and the
  * vectorize-cleaned favicon.svg). It is not regenerable: the gateway is being retired.
  *
  * Tolerance: fingerprints must agree within mean abs channel diff <= MEAN_TOLERANCE and max
- * <= MAX_TOLERANCE. Measured on darwin-arm64 with the gateway's sharp 0.35.5: every raster, the ICO
- * and the ICNS are BYTE-IDENTICAL to the gateway files (diff 0 / 0), and cleanVectorized reproduces
+ * <= MAX_TOLERANCE. Measured on darwin-arm64 with the gateway's sharp 0.35.5: every raster and the ICO
+ * are BYTE-IDENTICAL to the gateway files (diff 0 / 0), and cleanVectorized reproduces
  * the golden favicon.svg exactly. The tolerance is therefore tight and only leaves headroom for
  * SIMD rounding on another CPU architecture.
  */
@@ -28,7 +28,9 @@ import {
   renderRasters,
   SVG_MAX_BYTES,
 } from '../src/workflows/image-icon/pipeline.ts'
+import { argbToPng, premultiply } from './support/icns.ts'
 
+const ARGB_SIZES: Record<string, number> = { ic04: 16, ic05: 32 }
 const MEAN_TOLERANCE = 0.25
 const MAX_TOLERANCE = 2
 
@@ -73,9 +75,13 @@ async function fingerprint(png: Uint8Array): Promise<Fingerprint> {
   }
 }
 
-function diff(actual: string, expected: string): { mean: number; max: number } {
-  const a = Buffer.from(actual, 'base64')
-  const b = Buffer.from(expected, 'base64')
+function diff(actual: string, expected: string, inPremultiplied: boolean): { mean: number; max: number } {
+  const decode = (fingerprint: string) => {
+    const rgba = Buffer.from(fingerprint, 'base64')
+    return inPremultiplied ? premultiply(rgba) : rgba
+  }
+  const a = decode(actual)
+  const b = decode(expected)
   expect(a.length).toBe(b.length)
   let sum = 0
   let max = 0
@@ -87,7 +93,8 @@ function diff(actual: string, expected: string): { mean: number; max: number } {
   return { mean: sum / a.length, max }
 }
 
-function expectClose(label: string, actual: Fingerprint, expected: Fingerprint): void {
+/** `inPremultiplied`: an ICNS ARGB chunk stores colour premultiplied, so low-alpha pixels only match this way. */
+function expectClose(label: string, actual: Fingerprint, expected: Fingerprint, inPremultiplied = false): void {
   expect([label, actual.width, actual.height, actual.channels, actual.hasAlpha]).toEqual([
     label,
     expected.width,
@@ -95,7 +102,7 @@ function expectClose(label: string, actual: Fingerprint, expected: Fingerprint):
     expected.channels,
     expected.hasAlpha,
   ])
-  const { mean, max } = diff(actual.fingerprint, expected.fingerprint)
+  const { mean, max } = diff(actual.fingerprint, expected.fingerprint, inPremultiplied)
   expect(mean, `${label} mean diff`).toBeLessThanOrEqual(MEAN_TOLERANCE)
   expect(max, `${label} max diff`).toBeLessThanOrEqual(MAX_TOLERANCE)
 }
@@ -109,15 +116,15 @@ function icoFrames(ico: Buffer): { size: number; png: Buffer }[] {
   })
 }
 
-/** The PNG payloads of an ICNS, by chunk. */
-function icnsChunks(icns: Buffer): { type: string; png: Buffer }[] {
+/** The ICNS chunks as PNGs, in file order; an `ic04`/`ic05` ARGB body is turned back into one. */
+async function icnsChunks(icns: Buffer): Promise<{ type: string; png: Buffer }[]> {
   const chunks: { type: string; png: Buffer }[] = []
   for (let offset = 8; offset < icns.length;) {
     const length = icns.readUInt32BE(offset + 4)
-    chunks.push({
-      type: icns.subarray(offset, offset + 4).toString('ascii'),
-      png: icns.subarray(offset + 8, offset + length),
-    })
+    const type = icns.subarray(offset, offset + 4).toString('ascii')
+    const body = icns.subarray(offset + 8, offset + length)
+    const argbSize = ARGB_SIZES[type]
+    chunks.push({ type, png: argbSize ? await argbToPng(body, argbSize) : body })
     offset += length
   }
   return chunks
@@ -159,12 +166,12 @@ describe('image-icon golden (image-gateway @ 3efdf8a, 2026-10-29)', () => {
 
   test('AppIcon.icns has the golden chunks', async () => {
     const expected = golden.files.find((f) => f.name === 'AppIcon.icns')?.chunks ?? []
-    const chunks = icnsChunks(files.find((f) => f.name === 'AppIcon.icns')?.bytes ?? Buffer.alloc(0))
+    const chunks = await icnsChunks(files.find((f) => f.name === 'AppIcon.icns')?.bytes ?? Buffer.alloc(0))
     expect(chunks.map((c) => c.type)).toEqual(expected.map((c) => c.type))
     for (const [i, chunk] of chunks.entries()) {
       const want = expected[i]
       if (!want) throw new Error(`no golden chunk ${i}`)
-      expectClose(`AppIcon.icns ${chunk.type}`, await fingerprint(chunk.png), want)
+      expectClose(`AppIcon.icns ${chunk.type}`, await fingerprint(chunk.png), want, chunk.type in ARGB_SIZES)
     }
   })
 
