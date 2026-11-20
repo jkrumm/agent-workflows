@@ -115,7 +115,6 @@ const unavailable = (why: string): FactoryStewardOutput => ({
   reason: clipReason(why),
   decision: null,
 })
-export { unavailable as stewardUnavailable }
 
 /**
  * The code-side guard, applied by the workflow after the step so a replayed result is held to it too. `requeue` ends a

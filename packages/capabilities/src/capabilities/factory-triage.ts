@@ -132,7 +132,6 @@ const none = (reason: string): FactoryTriageOutput => ({
   checkpoint: null,
   reason: clipReason(reason),
 })
-export { none as triageNone }
 
 /**
  * The code-side guard, applied by the workflow after the step: the answer names only Issues it was shown, only the field

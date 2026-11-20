@@ -165,9 +165,11 @@ describe('factory-triage workflow', () => {
     expect(guardTriage({ ...four, after: four.after.slice(0, 3) }, wide).after).toHaveLength(3)
   })
 
-  test('a checkpoint other than spec is refused as an unusable answer', async () => {
+  test('a checkpoint other than spec is an unusable answer: the run fails', async () => {
     answers({ ...settleOutput, checkpoint: 'concept' })
-    expect((await run(settleInput)).body.output).toMatchObject(none)
+    const { body } = await run(settleInput)
+    expect(body.status).toBe('failed')
+    expect(body.output ?? null).toBeNull()
     answers(amendOutput)
   })
 
@@ -335,16 +337,14 @@ describe('the guard: settled', () => {
   })
 })
 
-describe('fail closed', () => {
-  test('a registry that throws gives the empty answer, the run is done', async () => {
+describe('a failing call', () => {
+  test('fails the run, it is not an answer', async () => {
     broken = new Error('gateway exploded sk-secret-token')
     try {
-      const { status, body } = await run(settleInput)
-      expect(status).toBe(200)
-      expect(body.status).toBe('done')
-      expect(body.output).toMatchObject(none)
-      expect(body.output.reason).toStartWith('triage unavailable: ')
-      expect(JSON.stringify(body.output)).not.toContain('sk-secret-token')
+      const { body } = await run(settleInput)
+      expect(body.status).toBe('failed')
+      expect(body.output ?? null).toBeNull()
+      expect(body.error).toMatchObject({ kind: 'step_failed' })
     } finally {
       broken = null
     }

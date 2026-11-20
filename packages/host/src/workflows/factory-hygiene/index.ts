@@ -1,4 +1,4 @@
-import { Cancelled, defineWorkflow, InfraError, StepFailed, type Ctx } from '@agent-workflows/runtime'
+import { defineWorkflow, StepFailed, type Ctx } from '@agent-workflows/runtime'
 import type { HostWorkflow } from '../../operations.ts'
 import { guardHygiene } from './guard.ts'
 import { buildHygienePrompt, hygieneNonce, SUBMIT_RESULT_RETRY } from './prompt.ts'
@@ -40,8 +40,8 @@ async function review(ctx: Ctx, input: HygieneInput): Promise<FactoryHygieneOutp
  * `factory-hygiene`: software-factory's hygiene loop sweeps each project weekly. The deterministic part stays in the factory;
  * this is the judgment that needs a model reading files: which living documents went stale against the code, and which
  * recently edited ones carry filler. One scan step (no link may leave the checkout), one agent step with read-only tools
- * over the request's `cwd`; the answer is schema-checked and held to `guardHygiene`. Fails closed to no findings instead of
- * failing the run.
+ * over the request's `cwd`; the answer is schema-checked and held to `guardHygiene`. A failing step fails the run; a link that leaves the checkout is
+ * refused with no findings before any session opens.
  */
 export function createFactoryHygiene(): HostWorkflow {
   const workflow = defineWorkflow({
@@ -51,17 +51,11 @@ export function createFactoryHygiene(): HostWorkflow {
     output: FactoryHygieneOutput,
     scorer: factoryHygieneScorer,
     async run(ctx, { hygiene }) {
-      try {
-        const escape = await ctx.step('scan', async () => ({ link: await findEscapingLink(hygiene.cwd) }))
-        if (escape.link !== null) return hygieneNone('hygiene unavailable: a link leaves the checkout')
-        const answer = await review(ctx, hygiene)
-        // Outside the step: an answer journaled before the guard existed is held to it on replay too.
-        return guardHygiene(answer, hygiene)
-      } catch (error) {
-        // A cancel, a shutdown and an infrastructure failure belong to the runtime, not to the answer.
-        if (error instanceof Cancelled || error instanceof InfraError || ctx.signal.aborted) throw error
-        return hygieneNone(`hygiene unavailable: ${error instanceof StepFailed ? error.stepKind : 'error'}`)
-      }
+      const escape = await ctx.step('scan', async () => ({ link: await findEscapingLink(hygiene.cwd) }))
+      if (escape.link !== null) return hygieneNone('hygiene unavailable: a link leaves the checkout')
+      const answer = await review(ctx, hygiene)
+      // Outside the step: an answer journaled before the guard existed is held to it on replay too.
+      return guardHygiene(answer, hygiene)
     },
   })
   return {

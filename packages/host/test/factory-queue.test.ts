@@ -261,16 +261,14 @@ describe('replay', () => {
   })
 })
 
-describe('fail closed', () => {
-  test('a registry that throws gives the empty answer, the run is done', async () => {
+describe('a failing call', () => {
+  test('fails the run, it is not the empty answer', async () => {
     broken = new Error('gateway exploded sk-secret-token')
     try {
-      const { status, body } = await run()
-      expect(status).toBe(200)
-      expect(body.status).toBe('done')
-      expect(body.output).toMatchObject(none)
-      expect(body.output.reason).toStartWith('queue unavailable: ')
-      expect(JSON.stringify(body.output)).not.toContain('sk-secret-token')
+      const { body } = await run()
+      expect(body.status).toBe('failed')
+      expect(body.output ?? null).toBeNull()
+      expect(body.error).toMatchObject({ kind: 'step_failed' })
     } finally {
       broken = null
     }

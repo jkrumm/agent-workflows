@@ -137,16 +137,14 @@ describe('the guard', () => {
   })
 })
 
-describe('fail closed', () => {
-  test('a registry that throws says none, the run is done', async () => {
+describe('a failing call', () => {
+  test('fails the run, it is not a none', async () => {
     broken = new Error('gateway exploded sk-secret-token')
     try {
-      const { status, body } = await run()
-      expect(status).toBe(200)
-      expect(body.status).toBe('done')
-      expect(body.output).toMatchObject({ action: 'none', note: '', decision: null })
-      expect(body.output.reason).toStartWith('steward unavailable: ')
-      expect(JSON.stringify(body.output)).not.toContain('sk-secret-token')
+      const { body } = await run()
+      expect(body.status).toBe('failed')
+      expect(body.output ?? null).toBeNull()
+      expect(body.error).toMatchObject({ kind: 'step_failed' })
     } finally {
       broken = null
     }

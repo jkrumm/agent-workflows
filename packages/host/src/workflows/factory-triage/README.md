@@ -25,7 +25,7 @@ echo '{"mode":"settle","repo":"app","issue":{"id":"issue_20","title":"…","text
   chain nothing. One repair: a `checkpoint: "spec"` whose `size` is not medium or large is dropped (null) and the rest of the
   answer stands, as the factory would drop it. The factory checks the same again before it acts (an open Issue it showed, no cycle).
 - **When unsure, nothing.** A duplicate costs a note, a lost request costs the work; most Issues wait for nothing.
-- **Fail closed.** Any failure of the call gives the empty answer with `reason: 'triage unavailable: <class>'`.
+- **A failure fails the run.** A call that fails gives no answer; only a guard turns an answer into the empty one.
 
 ## Route
 

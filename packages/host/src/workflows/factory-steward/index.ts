@@ -3,9 +3,8 @@ import {
   guardSteward,
   STEWARD_WORDINGS,
   type StewardWording,
-  stewardUnavailable,
 } from '@agent-workflows/capabilities'
-import { Cancelled, defineWorkflow, InfraError, StepFailed, WorkflowError } from '@agent-workflows/runtime'
+import { defineWorkflow, WorkflowError } from '@agent-workflows/runtime'
 import type { HostWorkflow } from '../../operations.ts'
 import type { HostRegistry } from '../index.ts'
 import { factoryStewardScorer } from './scorer.ts'
@@ -20,8 +19,7 @@ export type StewardCaller = Pick<HostRegistry, 'call'>
 /**
  * `factory-steward`: software-factory's supervisor asks what a stalled Issue needs when its own rules do not say. One
  * journaled step, one tool-free `factory.steward` call on its route; the answer is schema-checked and then held to
- * `guardSteward`. Fails closed: a steward that cannot answer says `none` instead of failing the run, and the factory raises
- * a Decision of its own after a few such answers.
+ * `guardSteward`. A step that fails fails the run; the guard turns an answer it refuses into `none`.
  */
 export function createFactorySteward(deps: { registry: StewardCaller }): HostWorkflow {
   const workflow = defineWorkflow({
@@ -39,17 +37,11 @@ export function createFactorySteward(deps: { registry: StewardCaller }): HostWor
           `arm param stewardWording must be one of ${STEWARD_WORDINGS.join(', ')}`,
         )
       const call = wording === DEFAULT_STEWARD_WORDING ? stall : { ...stall, wording: wording as StewardWording }
-      try {
-        const answer = await ctx.step('steward', ({ callContext }) =>
-          deps.registry.call('factory.steward', call, callContext),
-        )
-        // Outside the step: an answer journaled before the guard existed is held to it on replay too.
-        return guardSteward(answer, stall)
-      } catch (error) {
-        // A cancel, a shutdown and an infrastructure failure belong to the runtime, not to the answer.
-        if (error instanceof Cancelled || error instanceof InfraError || ctx.signal.aborted) throw error
-        return stewardUnavailable(`steward unavailable: ${error instanceof StepFailed ? error.stepKind : 'error'}`)
-      }
+      const answer = await ctx.step('steward', ({ callContext }) =>
+        deps.registry.call('factory.steward', call, callContext),
+      )
+      // Outside the step: an answer journaled before the guard existed is held to it on replay too.
+      return guardSteward(answer, stall)
     },
   })
   return {

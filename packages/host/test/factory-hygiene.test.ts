@@ -95,11 +95,12 @@ describe('factory-hygiene workflow', () => {
     expect(result.output).toEqual(output)
   })
 
-  test('an invalid answer is retried once with the directive, then the call fails closed', async () => {
+  test('an invalid answer is retried once with the directive, then the run fails', async () => {
     const { input } = checkout()
     const host = new FakeAgentHost(async () => ({ output: { findings: 'many' } }))
     const { result } = await run(host, input)
-    expect(result.output).toEqual({ findings: [], read: 0, reason: 'hygiene unavailable: invalid_output' })
+    expect(result.status).toBe('failed')
+    expect(result.output ?? null).toBeNull()
     expect(host.sessions.size).toBe(2)
     expect([...host.sessions.values()][1]?.spec.prompt).toContain('RETRY')
   })
@@ -128,15 +129,14 @@ describe('factory-hygiene workflow', () => {
     expect(retry).not.toContain('ended without')
   })
 
-  test('a crashing agent fails closed with the class, never the message', async () => {
+  test('a crashing agent fails the run', async () => {
     const { input } = checkout()
     const host = new FakeAgentHost(async () => {
       throw new Error('boom sk-secret-token')
     })
     const { result } = await run(host, input)
-    expect(result.output).toMatchObject({ findings: [], read: 0 })
-    expect((result.output as { reason: string }).reason).toStartWith('hygiene unavailable: ')
-    expect(JSON.stringify(result.output)).not.toContain('sk-secret-token')
+    expect(result.status).toBe('failed')
+    expect(result.output ?? null).toBeNull()
   })
 
   test('a link that leaves the checkout: no agent session opens', async () => {
