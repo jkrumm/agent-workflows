@@ -23,8 +23,7 @@ echo '{"repo":"app","cwd":"/path/to/checkout","ref":"3f9c2ab41d7e","stale":[{"pa
   checkout is the only directory outside its own location it may read (`packages/opencode-host/README.md` §Permissions).
 - **A link cannot lead out.** The host matches the grant against the path the agent names, not where a link points, so the
   `scan` step walks `cwd` (not `.git`, not `node_modules`) and a symlink whose target leaves it gives
-  `hygiene unavailable: a link leaves the checkout` before any session opens. A tree of more than 200,000 entries fails
-  closed the same way.
+  `hygiene unavailable: a link leaves the checkout` before any session opens. A tree of more than 200,000 entries fails the run.
 - **Data is fenced, documents are read through tools.** Candidate paths and reasons sit under one per-call random fence with
   the markers made inert, rules before and a re-assertion after. The text of the documents and the code reaches the agent
   as tool results, which cannot be fenced; the agent's instructions treat it as data too, and an instruction inside a
@@ -34,8 +33,8 @@ echo '{"repo":"app","cwd":"/path/to/checkout","ref":"3f9c2ab41d7e","stale":[{"pa
   link out of the checkout included), and a repeat of a kind and path (the first stays); the rest is cut to `max`. It drops
   and never rewrites.
 - **When unsure, nothing.** The instructions say so and `[]` is the expected answer.
-- **Fail closed.** Any failure gives `{findings: [], read: 0, reason: 'hygiene unavailable: <class>'}`. A cancel, a shutdown
-  (`InfraError`) or an aborted run still propagates to the runtime.
+- **A failure fails the run.** A step that fails after its retries (two invalid answers included), a cancel and a shutdown
+  (`InfraError`) end the run as failed or cancelled; there is no neutral answer, so the factory can tell an outage from `[]`.
 - **No ceiling.** The agent step has no wall-clock limit and no turn limit: the idle watchdog only.
 
 ## Route

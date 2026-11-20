@@ -76,7 +76,6 @@ export const factoryQueueOutput = z.object({
 export type FactoryQueueOutput = z.output<typeof factoryQueueOutput>
 
 const none = (reason: string): FactoryQueueOutput => ({ edges: [], order: [], reason: clipReason(reason) })
-export { none as queueNone }
 
 /** The Issues `issue` waits for, directly or through others, over the shown edges. */
 function waitsFor(edges: ReadonlyMap<string, ReadonlySet<string>>, issue: string): Set<string> {

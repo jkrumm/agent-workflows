@@ -32,8 +32,7 @@ echo '{"repo":"app","issues":[{"id":"issue_12","title":"…","kind":"bug","state
   owner's priority becomes `[]`. The part that is sound stands; when nothing survives the answer is the empty one
   (`edges: [], order: []`). It never reshuffles an order.
 - **When unsure, nothing.** Most queues need no edge and no order.
-- **Fail closed.** Any failure of the call gives the empty answer with `reason: 'queue unavailable: <class>'`. A cancel, a
-  shutdown (`InfraError`) or an aborted run still propagates to the runtime.
+- **A failure fails the run.** A call that fails gives no answer; only a guard turns an answer into the empty one.
 
 ## Route
 

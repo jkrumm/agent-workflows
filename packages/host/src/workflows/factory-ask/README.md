@@ -34,9 +34,8 @@ echo '{"decision":"decision_1","repo":"argo","issue":"…","question":"…","rec
 - **The Decision carries two things the question alone does not.** The prompt knows an option marked irreversible is never the answer, and reads
   precedents (an owner-settled one may be the source, `precedent: <quote>`; one the owner flagged worth asking is the owner's).
   `guardJudge` holds the first in code after the step: an irreversible option becomes `owner`.
-- **Fail closed.** Any failure of the call (capability error, schema failure after the re-ask, provider error, timeout) gives
-  `{verdict: owner, answer: '', source: '', reason: 'judge unavailable: <class>'}` instead of a failed run. A cancel, a
-  shutdown (`InfraError`) or an aborted run still propagates to the runtime.
+- **A failure fails the run.** A call that fails (capability error, schema failure after the re-ask, provider error, timeout)
+  fails the run, with no verdict; only an ask the seat cannot take whole, or an answer the guards refuse, is `owner`.
 
 ## Route
 

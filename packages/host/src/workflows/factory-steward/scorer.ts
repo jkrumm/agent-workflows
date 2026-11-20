@@ -22,7 +22,7 @@ const ZERO = { valid: 0, correct: 0 }
  * The `factory-steward` scorer. Deterministic, no model. Every score is 0 or 1, and a score exists only where it means
  * something, so `agw eval run` (which averages each score over the cases that have it) prints the figures per action:
  * - `valid`: the output parses as an answer; when it is 0 (or the run failed) `correct` is 0 and no other score exists;
- * - `correct`: the action equals the reference's. A guard or an unavailable answer is `none` and scores as one;
+ * - `correct`: the action equals the reference's. A guard answer is `none` and scores as one;
  * - `recall.<action>`: on a case whose reference is `<action>`, 1 when the answer is that action (the mean is the recall);
  * - `precision.<action>`: on a case the steward answered `<action>`, 1 when the reference is that action (the mean is
  *   the precision).

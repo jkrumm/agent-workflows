@@ -27,9 +27,8 @@ echo '{"issue":"issue_12","repo":"app","title":"…","kind":"bug","cause":"block
 - **Code guard.** `guardSteward`, applied by the workflow after the step so a replay gets it too: a `requeue` of another
   stall, a `wake` or a `raise_decision` of `lead_gone`, a Decision with duplicate labels, a recommendation that is not an option, a default that is
   not a reversible option, or a default without its wait becomes `none`.
-- **Fail closed.** Any failure of the call gives `{action: none, reason: 'steward unavailable: <class>'}` instead of a failed
-  run; the factory raises a Decision of its own after a few `none` answers. A cancel, a shutdown (`InfraError`) or an aborted
-  run still propagates to the runtime.
+- **A failure fails the run.** A call that fails gives no answer; `none` is the model's own answer or a guard's, and the factory
+  raises a Decision of its own after a few of them.
 
 ## Route
 

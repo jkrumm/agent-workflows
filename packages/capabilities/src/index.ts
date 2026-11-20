@@ -49,7 +49,6 @@ export {
   STALL_CAUSES,
   STEWARD_ACTIONS,
   STEWARD_WORDINGS,
-  stewardUnavailable,
   type FactoryStewardInput,
   type FactoryStewardOutput,
   type StewardWording,
@@ -58,7 +57,6 @@ export {
   factoryQueueInput,
   factoryQueueOutput,
   guardQueue,
-  queueNone,
   type FactoryQueueInput,
   type FactoryQueueOutput,
 } from './capabilities/factory-queue.ts'
@@ -116,7 +114,6 @@ export {
   factoryTriageInput,
   factoryTriageOutput,
   guardTriage,
-  triageNone,
   TRIAGE_KINDS,
   TRIAGE_MODES,
   TRIAGE_SIZES,

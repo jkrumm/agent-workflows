@@ -113,12 +113,11 @@ describe('factory-ask workflow', () => {
     t.iu.on('messages', () => messageResponse(JSON.stringify(answer), tokens))
   })
 
-  test('a model answer outside the options never leaves the workflow as an answer', async () => {
+  test('a model answer outside the options never leaves the workflow as an answer: the run fails', async () => {
     t.iu.on('messages', () => messageResponse(JSON.stringify({ ...answer, answer: 'make test' }), tokens))
     const { body } = await run()
-    expect(body.status).toBe('done')
-    expect(body.output).toMatchObject({ verdict: 'owner', answer: '', source: '' })
-    expect(body.output.reason).toStartWith('judge unavailable: ')
+    expect(body.status).toBe('failed')
+    expect(body.output ?? null).toBeNull()
     t.iu.on('messages', () => messageResponse(JSON.stringify(answer), tokens))
   })
 })
@@ -147,9 +146,11 @@ describe('the Decision (software-factory JudgeInput)', () => {
     t.iu.on('messages', () => messageResponse(JSON.stringify(answer), tokens))
   })
 
-  test("an answer outside the labels is the owner's", async () => {
+  test('an answer outside the labels fails the run', async () => {
     t.iu.on('messages', () => messageResponse(JSON.stringify({ ...fixture.judge.output, answer: 'bunyan' }), tokens))
-    expect((await runDecision()).body.output).toMatchObject({ verdict: 'owner', answer: '', source: '' })
+    const { body } = await runDecision()
+    expect(body.status).toBe('failed')
+    expect(body.output ?? null).toBeNull()
     t.iu.on('messages', () => messageResponse(JSON.stringify(answer), tokens))
   })
 
@@ -201,20 +202,14 @@ describe('the Decision (software-factory JudgeInput)', () => {
   })
 })
 
-describe('fail closed', () => {
-  test('a registry that throws leaves the ask with the owner, the run is done', async () => {
+describe('a failing call', () => {
+  test('fails the run, it is not an owner verdict', async () => {
     broken = new Error('gateway exploded sk-secret-token')
     try {
-      const { status, body } = await run()
-      expect(status).toBe(200)
-      expect(body.status).toBe('done')
-      expect(body.output).toEqual({
-        verdict: 'owner',
-        answer: '',
-        source: '',
-        reason: expect.stringMatching(/^judge unavailable: [^\n]{1,200}$/),
-      })
-      expect(JSON.stringify(body.output)).not.toContain('sk-secret-token')
+      const { body } = await run()
+      expect(body.status).toBe('failed')
+      expect(body.output ?? null).toBeNull()
+      expect(body.error).toMatchObject({ kind: 'step_failed' })
     } finally {
       broken = null
     }
