@@ -7,12 +7,18 @@ import { factoryAskScorer } from '../src/workflows/factory-ask/scorer.ts'
 import { type Body, startTestHost, type TestHost } from './support.ts'
 
 const ask = {
-  question: 'Which command runs the checks?',
-  options: ['make check', 'bun test'],
-  default: 'make check',
-  facts: 'A Bun monorepo.',
-  plan: 'AGENTS.md: `make check` is the gate.',
+  decision: 'decision_1',
   repo: 'agent-workflows',
+  issue: 'The gate command',
+  question: 'Which command runs the checks?',
+  recommendation: 'make check',
+  checked: 'A Bun monorepo.',
+  options: [
+    { label: 'make check', reversible: true, cost: 'none' },
+    { label: 'bun test', reversible: true, cost: 'skips lint' },
+  ],
+  noAnswer: { consequence: 'the lead takes make check', default: 'make check', waitMinutes: 60 },
+  precedents: [],
 }
 const answer = {
   verdict: 'answer',
@@ -51,7 +57,7 @@ const run = async (over: Record<string, unknown> = {}) =>
   t.json(
     await t.call('/workflows/factory-ask', {
       method: 'POST',
-      body: { ask: { ...ask, facts: `${ask.facts} ${n++}`, ...over } },
+      body: { ask: { ...ask, issue: `${ask.issue} ${n++}`, ...over } },
       headers: { prefer: 'wait=20' },
     }),
   )
@@ -85,6 +91,14 @@ describe('factory-ask workflow', () => {
     })
   })
 
+  test('the old ask shape (question, options[], default, facts, plan) is a 400, nothing runs', async () => {
+    const response = await t.call('/workflows/factory-ask', {
+      method: 'POST',
+      body: { ask: { question: 'Which?', options: ['a'], default: 'a', facts: '', plan: '', repo: 'agent-workflows' } },
+    })
+    expect(response.status).toBe(400)
+  })
+
   test('a malformed ask is a 400, nothing runs', async () => {
     const response = await t.call('/workflows/factory-ask', {
       method: 'POST',
@@ -109,7 +123,7 @@ describe('factory-ask workflow', () => {
   })
 })
 
-describe('the Decision shape (software-factory JudgeInput)', () => {
+describe('the Decision (software-factory JudgeInput)', () => {
   const decision = fixture.judge.input
   const runDecision = async (over: Record<string, unknown> = {}) =>
     t.json(
@@ -181,7 +195,7 @@ describe('the Decision shape (software-factory JudgeInput)', () => {
   })
 
   test('a Decision that is missing a field is a 400', async () => {
-    const { recommendation: _drop, ...rest } = decision
+    const { recommendation: _missing, ...rest } = decision
     const response = await t.call('/workflows/factory-ask', { method: 'POST', body: { ask: rest } })
     expect(response.status).toBe(400)
   })

@@ -60,9 +60,9 @@ const MAX_PRECEDENTS = 5
 const MAX_PRECEDENT_CHARS = 2_000
 
 /**
- * The factory's Decision, as the new core sends it (software-factory's `JudgeInput`): the lead's form with its required
- * fields, and the owner's earlier answers to similar questions. Everything but the ids is untrusted data. The workflow
- * turns it into a `factoryAskInput` (`askOfJudge`), so the seat, its prompt and its guard are the same for both shapes.
+ * The factory's Decision, as software-factory sends it (its `JudgeInput`): the lead's form with its required fields, and the
+ * owner's earlier answers to similar questions. Everything but the ids is untrusted data. The workflow turns it into a
+ * `factoryAskInput` (`askOfJudge`), the one thing the seat's prompt is built from.
  */
 export const factoryJudgeInput = z.object({
   decision: identifier(80).describe('The Decision id; an identifier the factory supplies'),
@@ -104,12 +104,6 @@ export const factoryJudgeInput = z.object({
 })
 export type FactoryJudgeInput = z.output<typeof factoryJudgeInput>
 
-/** Either shape the workflow takes: today's ask, or the new core's Decision. */
-export const factoryAskOrJudgeInput = z.union([factoryAskInput, factoryJudgeInput])
-
-export const isJudgeInput = (input: FactoryAskInput | FactoryJudgeInput): input is FactoryJudgeInput =>
-  'decision' in input && 'noAnswer' in input
-
 /** The Decision as an ask: the options are the labels, the facts carry the form's fields and the precedents. */
 export function askOfJudge(input: FactoryJudgeInput): FactoryAskInput {
   const options = input.options.map(
@@ -148,7 +142,7 @@ export function askOfJudge(input: FactoryJudgeInput): FactoryAskInput {
 }
 
 /**
- * Held to after the step, for the new shape: an option that cannot be taken back is never the Judge's, however it came to
+ * Held to after the step: an option that cannot be taken back is never the Judge's, however it came to
  * be chosen (the owner's class: irreversible data loss). The answer stays the owner's.
  */
 export function guardJudge(verdict: FactoryAskOutput, input: FactoryJudgeInput): FactoryAskOutput {

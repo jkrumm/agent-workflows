@@ -2,10 +2,10 @@ import { FACTORY_ASK_SCORER_VERSION, FactoryAskReference, scoreFactoryAsk } from
 import type { Scorer, Verdict } from '@agent-workflows/runtime'
 import { FactoryAskOutput } from './schema.ts'
 
-/** The declared default of either input shape: the Decision's `noAnswer.default`, today's ask's `default`. */
+/** The declared default of the Decision: its `noAnswer.default`. */
 const declaredDefault = (input: unknown): string | null => {
-  const ask = (input as { ask?: { default?: unknown; noAnswer?: { default?: unknown } } } | null)?.ask
-  const value = ask?.noAnswer?.default ?? ask?.default
+  const ask = (input as { ask?: { noAnswer?: { default?: unknown } } } | null)?.ask
+  const value = ask?.noAnswer?.default
   return typeof value === 'string' ? value : null
 }
 

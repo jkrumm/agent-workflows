@@ -1,4 +1,4 @@
-import { askOfJudge, factoryAskInput, guardAsk, guardJudge, isJudgeInput } from '@agent-workflows/capabilities'
+import { askOfJudge, factoryAskInput, guardAsk, guardJudge } from '@agent-workflows/capabilities'
 import { Cancelled, defineWorkflow, InfraError, StepFailed } from '@agent-workflows/runtime'
 import type { HostWorkflow } from '../../operations.ts'
 import type { HostRegistry } from '../index.ts'
@@ -6,7 +6,7 @@ import { factoryAskScorer } from './scorer.ts'
 import { FactoryAskInput, FactoryAskOutput, type FactoryAskOutputValue } from './schema.ts'
 
 const FACTORY_ASK_WORKFLOW_ID = 'factory-ask'
-const FACTORY_ASK_VERSION = '2026-11-07.1'
+const FACTORY_ASK_VERSION = '2026-11-20.1'
 
 /** The one capability the workflow calls; any registry that has `factory.ask` fits. */
 export type AskCaller = Pick<HostRegistry, 'call'>
@@ -32,8 +32,8 @@ export function createFactoryAsk(deps: { registry: AskCaller }): HostWorkflow {
     output: FactoryAskOutput,
     scorer: factoryAskScorer,
     async run(ctx, { ask: given }) {
-      // The Decision is asked as today's ask (its options are the labels); the guard for what an ask cannot say follows.
-      const ask = isJudgeInput(given) ? askOfJudge(given) : given
+      // The Decision is asked as the seat's ask (its options are the labels); the guard for what an ask cannot say follows.
+      const ask = askOfJudge(given)
       // A Decision whose assembled facts pass the seat's cap is refused whole, never cut: the owner's.
       if (!factoryAskInput.safeParse(ask).success) return unavailable('the ask is too long for the seat')
       try {
@@ -42,7 +42,7 @@ export function createFactoryAsk(deps: { registry: AskCaller }): HostWorkflow {
         )
         // Outside the step: a verdict journaled before the guard existed is held to it on replay too.
         const guarded = guardAsk(verdict, ask)
-        return isJudgeInput(given) ? guardJudge(guarded, given) : guarded
+        return guardJudge(guarded, given)
       } catch (error) {
         // A cancel, a shutdown and an infrastructure failure belong to the runtime, not to the verdict.
         if (error instanceof Cancelled || error instanceof InfraError || ctx.signal.aborted) throw error

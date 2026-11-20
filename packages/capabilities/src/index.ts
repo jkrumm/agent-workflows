@@ -31,12 +31,10 @@ export {
 export {
   askOfJudge,
   factoryAskInput,
-  factoryAskOrJudgeInput,
   factoryAskOutput,
   factoryJudgeInput,
   guardAsk,
   guardJudge,
-  isJudgeInput,
   type FactoryAskInput,
   type FactoryAskOutput,
   type FactoryJudgeInput,
