@@ -11,8 +11,8 @@ echo '{"decision":"decision_1","repo":"argo","issue":"…","question":"…","rec
 
 | | |
 |-|-|
-| Input (stdin JSON) | software-factory's Decision: `{decision, repo, issue, question, recommendation, checked, options[{label, reversible, cost}], noAnswer{consequence, default, waitMinutes}, precedents[{question, answer, settledBy, repo}], class?, facts?, spec?, checkout?, case?}`. `checkout` is the absolute path of the repo's checkout the Judge reads; `case` is the case file (`docs/factory-input.md` §The case file). A `worthAsking` on a precedent is dropped: the case file's precedents carry the outcome. The CLI reads it as the workflow's one `ask` property, so the HTTP body is `{"ask": {…}}`. Everything but `decision` and `repo` is untrusted data; `repo` is an identifier. The workflow turns it into the seat's ask (the options are the labels, the facts carry the form and the precedents); `answer` is one of the labels |
-| Output | the run envelope's `output`: `FactoryAskOutput` (`schema.ts`): `{verdict: answer\|owner, answer, reason, source}`. `owner`: `answer` and `source` are `''`. `answer`: both non-empty; `source` cites where (`file: <path:line> <quote>`, `spec: …`, `case: …`, `facts: …`, `precedent: …`, or `default`); with options, `answer` is exactly one of them |
+| Input (stdin JSON) | software-factory's Decision: `{decision, repo, issue, question, recommendation, checked, options[{label, reversible, cost}], noAnswer{consequence, default, waitMinutes}, precedents[{question, answer, settledBy, repo}], class?, facts?, spec?, checkout?, case?, sendBack?}`. `checkout` is the absolute path of the repo's checkout the Judge reads (plain path characters only); `sendBack: true` allows the verdict `back`; `case` is the case file (`docs/factory-input.md` §The case file). A `worthAsking` on a precedent is dropped: the case file's precedents carry the outcome. The CLI reads it as the workflow's one `ask` property, so the HTTP body is `{"ask": {…}}`. Everything but `decision` and `repo` is untrusted data; `repo` is an identifier. The workflow turns it into the seat's ask (the options are the labels, the facts carry the form and the precedents); `answer` is one of the labels |
+| Output | the run envelope's `output`: `FactoryAskOutput` (`schema.ts`): `{verdict: answer\|owner\|back, answer, reason, source, note?, back?}`. `owner`: `answer` and `source` are `''`. `back` (only with `sendBack: true`): `answer` is `''`, `note` (at most 600 characters) is what the lead hears, `back` is `yours` or `not_ready`; no other verdict carries `note` or `back`. `answer`: both non-empty; `source` cites where (`file: <path:line> <quote>`, `spec: …`, `case: …`, `facts: …`, `precedent: …`, or `default`); with options, `answer` is exactly one of them |
 | Shape | with a checkout, a `scan` step (no link may leave it); then one agent step (`look`, agent `agents/factory-ask`, route `factory.ask`) and one retry (`look-retry`) on an answer of the wrong shape; then `guardAsk` and `guardJudge` |
 | Pending | exit 10 like every workflow (`agw run wait <runId>`) |
 
@@ -57,6 +57,15 @@ echo '{"decision":"decision_1","repo":"argo","issue":"…","question":"…","rec
   `guardJudge` holds the first in code after the step: an irreversible option becomes `owner`.
 - **A failure fails the run.** A step that fails (agent error, schema failure after the retry, provider error)
   fails the run, with no verdict; only an ask the seat cannot take whole, or an answer the guards refuse, is `owner`.
+
+- **Back to the lead** (owner direction 2026-11-21: the Judge works together with the lead rather than deciding on its own).
+  Only when the request sets `sendBack: true`, a third verdict returns the question to the lead with one note and picks
+  no option. `yours`: the question is outside the owner's classes, or the repo settles most of it; the note cites what the
+  Judge found (file and line) and the lead decides. `not_ready`: the question is the owner's but he could not answer it in
+  ten seconds; the note names what is missing (the exhibit, what an option leads to, what changes). With `back` allowed,
+  `answer` stays for a question a quote of the owner, the plan or the repo settles outright, `owner` for one that is his
+  and ready. Without `sendBack`, the answer schema has no `back` and `guardAsk` turns one into `owner`. The factory sends a
+  Decision back once.
 
 ## Route
 

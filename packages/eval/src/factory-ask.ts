@@ -57,7 +57,8 @@ export type FactoryAskReference = z.output<typeof FactoryAskReference>
 
 /** The Judge's verdict as the case scorer reads it (the workflow's output, held to its guards). */
 export interface AskVerdict {
-  verdict: 'answer' | 'owner'
+  /** `back` (the question returned to the lead) is neither: it keeps nothing with the owner and picks no option. */
+  verdict: 'answer' | 'owner' | 'back'
   answer: string
 }
 

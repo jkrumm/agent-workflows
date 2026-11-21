@@ -18,7 +18,11 @@ import {
 // untrusted data; the rules, the fence and the output contract are built in this file, so nothing reachable over HTTP is
 // a free prompt on the seat.
 
-const VERDICTS = ['answer', 'owner'] as const
+const VERDICTS = ['answer', 'owner', 'back'] as const
+/** Why a question goes back to the lead: it is the lead's to decide, or the owner's but not ready for him. */
+export const BACK_KINDS = ['yours', 'not_ready'] as const
+/** The note a sent-back question carries to the lead, after the clip in code. */
+export const BACK_NOTE_MAX_CHARS = 600
 
 /**
  * What the prompt carries. More is refused, never cut: a verdict on a prefix would pass for a verdict on the whole ask,
@@ -54,6 +58,7 @@ export const factoryAskInput = z.object({
     .max(MAX_SPEC_CHARS)
     .describe('The head of the Spec the question belongs to, or empty; untrusted data'),
   repo: identifier(200, '/').describe('The repo the Issue belongs to'),
+  sendBack: z.boolean().default(false).describe('Whether the verdict back is allowed'),
 })
 export type FactoryAskInput = z.output<typeof factoryAskInput>
 
@@ -138,11 +143,16 @@ export const factoryJudgeInput = z.object({
     .string()
     .min(1)
     .max(500)
-    .regex(/^[^\r\n\u2028\u2029]+$/, 'one line')
+    // It is named outside the fence, so it is held to plain path characters: no prose can ride on it.
+    .regex(/^[A-Za-z0-9._@+/-]+$/, 'a plain path')
     .refine(isAbsolute, 'checkout must be an absolute path')
     .optional()
     .describe("The repo's checkout the Judge reads with read, glob and grep; absent, it judges from the request alone"),
   case: factoryCase.optional(),
+  sendBack: z
+    .boolean()
+    .optional()
+    .describe('Whether the Judge may send the question back to the lead (verdict back); absent or false, it may not'),
 })
 export type FactoryJudgeInput = z.output<typeof factoryJudgeInput>
 
@@ -179,6 +189,7 @@ export function askOfJudge(input: FactoryJudgeInput): FactoryAskInput {
     facts,
     spec: input.spec ?? '',
     repo: input.repo,
+    sendBack: input.sendBack === true,
   }
 }
 
@@ -201,24 +212,47 @@ export function guardJudge(verdict: FactoryAskOutput, input: FactoryJudgeInput):
 /** Where the answer comes from, as the model writes it: empty for an owner verdict, else a short quote; clipped to one line in code. */
 const rawSource = z.string().max(2_000)
 
-/** The verdict's shape: `owner` carries no answer and no source, `answer` carries both. */
-const checkShape = (v: { verdict: string; answer: string; source: string }, ctx: z.RefinementCtx) => {
+type Shape = { verdict: string; answer: string; source: string; note?: string | undefined; back?: string | undefined }
+
+/**
+ * The verdict's shape: `owner` carries no answer and no source, `answer` carries both, `back` carries no answer, a note for
+ * the lead and its kind. Only `back` carries a note and a kind.
+ */
+const checkShape = (v: Shape, ctx: z.RefinementCtx) => {
   if (v.verdict === 'owner' && (v.answer !== '' || v.source !== ''))
     ctx.addIssue({ code: 'custom', message: 'an owner verdict has an empty answer and an empty source' })
   if (v.verdict === 'answer' && (v.answer === '' || v.source === ''))
     ctx.addIssue({ code: 'custom', message: 'an answer verdict has a non-empty answer and a non-empty source' })
+  if (v.verdict === 'back' && (v.answer !== '' || !v.note?.trim() || v.back === undefined))
+    ctx.addIssue({
+      code: 'custom',
+      message: 'a back verdict has an empty answer, a note and its kind (yours or not_ready)',
+    })
+  if (v.verdict !== 'back' && ((v.note !== undefined && v.note !== '') || v.back !== undefined))
+    ctx.addIssue({ code: 'custom', message: 'only a back verdict carries a note and a kind' })
 }
 
-/** The verdict schema, with the answer as `answer` (a free string, or per call the options and the empty string). */
-const outputWith = (answer: z.ZodType<string>) =>
+/** The verdict schema: the answer a free string, or per call the options and the empty string; the verdicts per call. */
+const outputWith = (answer: z.ZodType<string>, verdicts: readonly [string, ...string[]] = VERDICTS) =>
   z
     .object({
-      verdict: z.enum(VERDICTS),
+      verdict: z.enum(verdicts as typeof VERDICTS),
       answer,
       reason: rawReason.describe(`Why: ${REASON_ASK}`),
       source: rawSource.describe(
-        "Where the answer comes from: file: <path:line> <short quote>, spec: <quote>, case: <quote>, facts: <quote>, precedent: <quote>, or default (the declared default or the lead's recommendation); one line, at most 200 characters",
+        "Where the answer comes from: file: <path:line> <short quote>, spec: <quote>, case: <quote>, facts: <quote>, precedent: <quote>, or default (the declared default or the lead's recommendation); one line, at most 200 characters. A back verdict may leave it empty",
       ),
+      note: z
+        .string()
+        .max(2_000)
+        .optional()
+        .describe(
+          `back only: what the lead hears, at most ${BACK_NOTE_MAX_CHARS} characters: what was found (file and line) or what is missing`,
+        ),
+      back: z
+        .enum(BACK_KINDS)
+        .optional()
+        .describe("back only: yours (the lead decides) or not_ready (the owner's, not ready)"),
     })
     .superRefine(checkShape)
 
@@ -226,26 +260,37 @@ const outputWith = (answer: z.ZodType<string>) =>
 export const factoryAskOutput = outputWith(z.string())
 export type FactoryAskOutput = z.output<typeof factoryAskOutput>
 
-/** The answer schema the Judge submits against: with options, the answer is one of them or empty (an owner verdict). */
-export function factoryAskOutputFor(ask: Pick<FactoryAskInput, 'options'>) {
+/**
+ * The answer schema the Judge submits against: with options, the answer is one of them or empty (an owner or back verdict);
+ * `back` only when the request allows it.
+ */
+export function factoryAskOutputFor(ask: Pick<FactoryAskInput, 'options'> & { sendBack?: boolean }) {
+  const verdicts = ask.sendBack ? VERDICTS : (['answer', 'owner'] as const)
   const unique = [...new Set(ask.options)]
-  return unique.length ? outputWith(z.enum(['', ...unique] as [string, ...string[]])) : factoryAskOutput
+  return outputWith(unique.length ? z.enum(['', ...unique] as [string, ...string[]]) : z.string(), verdicts)
 }
 
-/** The answer as it leaves the Judge: the reason and the source brought to one line in code. */
-export const clipAsk = (answer: FactoryAskOutput): FactoryAskOutput => ({
-  ...answer,
-  reason: clipReason(answer.reason),
-  source: clipLine(answer.source),
-})
+/** The answer as it leaves the Judge: the reason, the source and the note brought to one line in code. */
+export const clipAsk = (answer: FactoryAskOutput): FactoryAskOutput => {
+  const { note, back, ...rest } = answer
+  const clipped = { ...rest, reason: clipReason(answer.reason), source: clipLine(answer.source) }
+  if (answer.verdict !== 'back') return clipped
+  return { ...clipped, note: clipLine(note ?? '', BACK_NOTE_MAX_CHARS), ...(back ? { back } : {}) }
+}
 
 /**
  * The code-side guard, applied by the workflow after the step so a replayed result is held to it too: an `answer` that is
- * not one of the offered options, or that cites no source, is an `owner` verdict. Fails closed, never rewrites an answer.
+ * not one of the offered options, or that cites no source, and a `back` the request did not allow, are an `owner` verdict.
+ * Fails closed, never rewrites an answer.
  */
-export function guardAsk(verdict: FactoryAskOutput, ask: Pick<FactoryAskInput, 'options'>): FactoryAskOutput {
-  if (verdict.verdict !== 'answer') return verdict
+export function guardAsk(
+  verdict: FactoryAskOutput,
+  ask: Pick<FactoryAskInput, 'options'> & { sendBack?: boolean },
+): FactoryAskOutput {
   const refuse = (why: string): FactoryAskOutput => ({ verdict: 'owner', answer: '', source: '', reason: why })
+  if (verdict.verdict === 'back' && ask.sendBack !== true)
+    return refuse('guard: the request does not allow sending the question back')
+  if (verdict.verdict !== 'answer') return verdict
   if (ask.options.length > 0 && !ask.options.includes(verdict.answer))
     return refuse('guard: the answer is not one of the offered options')
   if (verdict.source.trim() === '') return refuse('guard: the answer cites no source')
@@ -358,6 +403,33 @@ Submit one result with \`submit_result\`; text is not read:
 
 {"verdict": "answer" | "owner", "answer": "...", "reason": "${REASON_ASK}", "source": "..."}`
 
+/**
+ * Added to the rules only when the request allows it (owner direction 2026-11-21: the Judge works with the lead rather than
+ * deciding on its own). It narrows answer and owner, so a request without it keeps the two-verdict rules.
+ */
+const SENDING_BACK = `
+
+## Sending it back
+
+This request allows a third verdict, back: the question returns to the lead with one note, and you pick no option. Two
+cases:
+
+- yours: the question is outside the owner's classes, or the repo settles most of it but not outright. The note says so
+  and cites what you found (\`path:line\`); the lead decides, because it knows the code best.
+- not_ready: the question is the owner's, but as asked he could not answer it in ten seconds. The note names what is
+  missing: the exhibit to look at (a screenshot, a diff, the page or command output), what each option leads to, what
+  changes for him or his users.
+
+With back allowed, answer stays only for a question that a quote of the owner, the plan or the repo settles outright,
+and owner only for one that is his and ready to answer as asked. A question outside the classes that nothing settles
+outright goes back as yours, not to the recommendation. The irreversible rules above still hold: an option that cannot
+be taken back is never your answer.
+
+For back: answer is the empty string, source may be empty or cite what you found, note is at most
+${BACK_NOTE_MAX_CHARS} characters written to the lead, and back is yours or not_ready:
+
+{"verdict": "back", "answer": "", "reason": "${REASON_ASK}", "source": "", "note": "...", "back": "yours" | "not_ready"}`
+
 /** How the Judge looks, with a checkout handed over: before it says owner, and for the source of an answer. */
 const lookingWith = (checkout: string) => `
 
@@ -424,6 +496,7 @@ export function buildFactoryAskPrompt(
   ].join('\n\n')
   return (
     INSTRUCTIONS +
+    (input.sendBack ? SENDING_BACK : '') +
     ('checkout' in look ? lookingWith(look.checkout) : lookingWithout(look.none)) +
     `\n\n## Routing\n\nRepo: ${input.repo}` +
     fencePreamble({
@@ -447,5 +520,6 @@ export const ASK_SUBMIT_RETRY = `
 
 ────────────────────────────────────────────────────────
 RETRY: the answer of your previous attempt was REJECTED: it did not match the shape your instructions give (a missing
-field, an answer that is not one of the options, an owner verdict with an answer or a source). Call \`submit_result\` once
+field, an answer that is not one of the options, an owner verdict with an answer or a source, a back verdict without its
+note and kind, or a back verdict the request does not allow). Call \`submit_result\` once
 with the answer in that shape. An answer written as text is not read. Then stop.`

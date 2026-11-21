@@ -108,6 +108,53 @@ describe('factory-ask workflow', () => {
     expect(block).toContain('NOTE-zq')
   })
 
+  test('back, yours: with sendBack the question returns to the lead with a note citing what the Judge found', async () => {
+    const yours = {
+      verdict: 'back',
+      answer: '',
+      reason: 'outside the classes; the plan settles most of it',
+      source: 'file: docs/plan.yaml:5',
+      note: 'Yours: docs/plan.yaml:5 picks pino for the worker and AGENTS.md:11 says every service logs through pino.',
+      back: 'yours',
+    }
+    const host = answering(yours)
+    const { result } = await run(host, { checkout: FIXTURE, sendBack: true })
+    expect(result.output).toEqual(yours)
+    expect(promptOf(host)).toContain('## Sending it back')
+  })
+
+  test("back, not_ready: the owner's question goes back with what is missing, and no option is picked", async () => {
+    const notReady = {
+      verdict: 'back',
+      answer: '',
+      reason: "the owner's, but not answerable in ten seconds",
+      source: '',
+      note: 'His call, but show a sample log line of each library and what the dashboards would lose with winston.',
+      back: 'not_ready',
+    }
+    const { result } = await run(answering(notReady), { sendBack: true })
+    expect(result.output).toEqual(notReady)
+  })
+
+  test('without sendBack no back is given: the schema refuses it, and the retry that still says back fails the run', async () => {
+    const back = {
+      verdict: 'back',
+      answer: '',
+      reason: 'r',
+      source: '',
+      note: 'n',
+      back: 'yours',
+    }
+    for (const over of [{}, { sendBack: false }]) {
+      const host = answering(back)
+      const { result } = await run(host, over)
+      expect(result.status).toBe('failed')
+      expect(result.output ?? null).toBeNull()
+      expect(host.sessions.size).toBe(2)
+      expect(promptOf(host)).not.toContain('Sending it back')
+    }
+  })
+
   test('an answer outside the labels is retried once with the directive, then the run fails', async () => {
     const host = answering({ ...fromPlan, answer: 'bunyan' })
     const { result } = await run(host)
