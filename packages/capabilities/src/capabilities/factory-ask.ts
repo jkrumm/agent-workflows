@@ -128,7 +128,7 @@ export const factoryJudgeInput = z.object({
     .max(MAX_ISSUE_FACTS_CHARS)
     .optional()
     .describe(
-      'The Issue as filed, scrubbed of credentials by the factory; untrusted data, sent to the model provider and journaled. A direction quoted from the owner in it answers the question',
+      'The Issue as filed, scrubbed of credentials by the factory; untrusted data, sent to the model provider and journaled. A direction quoted from the owner in it answers the question it covers, in direction, look and own_surface only',
     ),
   spec: z
     .string()
