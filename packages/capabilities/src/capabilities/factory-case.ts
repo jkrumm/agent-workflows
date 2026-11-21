@@ -3,7 +3,7 @@ import { identifier } from './identifier.ts'
 import { fencedBlock, fencePreamble, neutralizeFenceMarkers } from './prose-prompts.ts'
 
 // The case file: what the factory holds about a judgment that a title and a few clipped lines leave out. Every judge of the
-// factory (ask, steward, queue, triage, screen, errand, errand-needed) takes it as one optional input, `case`. Every text in
+// factory (ask, spec-look, steward, queue, triage, screen, errand, errand-needed) takes it as one optional input, `case`. Every text in
 // it is untrusted data (a lead, the owner, a signal or a repo wrote it), fenced in its own block under the prompt's nonce.
 // The caps are generous and the whole case has one: a case over it is refused, never cut, because a judgment on a prefix
 // would pass for a judgment on the whole file, and the factory knows better than the seat which part to leave out.
