@@ -4,9 +4,6 @@ import { buildFactoryStewardPrompt, DEFAULT_STEWARD_WORDING, STEWARD_ACTIONS } f
 import type { Json, ScoreJudge, Verdict } from '@agent-workflows/runtime'
 import { digestScorer } from '../src/workflows/digest/scorer.ts'
 import { suiteWorkflow } from '../src/workflows/eval/suites.ts'
-import factoryFixClasses from '../src/workflows/factory-fix-classes/module.ts'
-import { FactoryFixClassesReference, factoryFixClassesScorer } from '../src/workflows/factory-fix-classes/scorer.ts'
-import { FactoryFixClassesInput } from '../src/workflows/factory-fix-classes/schema.ts'
 import factoryQueue from '../src/workflows/factory-queue/module.ts'
 import { FactoryQueueReference, factoryQueueScorer } from '../src/workflows/factory-queue/scorer.ts'
 import { FactoryQueueInput } from '../src/workflows/factory-queue/schema.ts'
@@ -48,14 +45,6 @@ describe('the committed suites', () => {
       input: FactoryQueueInput,
       reference: FactoryQueueReference,
     },
-    {
-      name: 'fix-classes',
-      module: factoryFixClasses,
-      min: 8,
-      max: 10,
-      input: FactoryFixClassesInput,
-      reference: FactoryFixClassesReference,
-    },
   ]
   for (const set of sets) {
     test(`${set.name}: every case parses as the workflow input and its reference schema, ids are unique`, () => {
@@ -71,7 +60,7 @@ describe('the committed suites', () => {
   }
 
   test('no case names a private host, user, path or secret (the repo is public)', () => {
-    const files = ['factory-steward', 'factory-queue', 'factory-fix-classes'].map((id) =>
+    const files = ['factory-steward', 'factory-queue'].map((id) =>
       readFileSync(`${import.meta.dir}/../src/workflows/${id}/eval/cases.jsonl`, 'utf8'),
     )
     for (const text of files)
@@ -238,59 +227,6 @@ describe('factory-queue scorer', () => {
       quiet: 0,
     })
     expect(run(factoryQueueScorer, {}, out([]))).toEqual({ scores: { valid: 1 }, pass: true })
-  })
-})
-
-describe('factory-fix-classes scorer', () => {
-  const ref = {
-    classes: { aaa: 'tests', bbb: 'logic', ccc: 'environment' },
-    basis: { aaa: 'files', bbb: 'reading', ccc: 'reading' },
-  }
-  const out = (classes: Record<string, string>) => ({
-    answers: Object.entries(classes).map(([sha, c]) => ({ sha, class: c, reason: 'because' })),
-  })
-
-  test('a perfect answer passes with accuracy, mechanical and judged at 1', () => {
-    expect(
-      run(factoryFixClassesScorer, {}, out({ aaa: 'tests', bbb: 'logic', ccc: 'environment' }), ref),
-    ).toMatchObject({
-      scores: { valid: 1, accuracy: 1, mechanical: 1, judged: 1 },
-      pass: true,
-    })
-  })
-
-  test('a wrong judged class costs judged and accuracy, not mechanical, and is named', () => {
-    const v = run(
-      factoryFixClassesScorer,
-      {},
-      out({ aaa: 'tests', bbb: 'contract', ccc: 'environment' }),
-      ref,
-    ) as Verdict
-    expect(v.scores).toMatchObject({ accuracy: 2 / 3, mechanical: 1, judged: 0.5 })
-    expect(v.feedback).toContain('bbb: contract (want logic)')
-  })
-
-  test('answers for other shas are no answer', () => {
-    expect(
-      (run(factoryFixClassesScorer, {}, out({ aaa: 'tests', zzz: 'logic', ccc: 'other' }), ref) as Verdict).scores,
-    ).toEqual({
-      valid: 0,
-      accuracy: 0,
-    })
-  })
-
-  test('a case without a mechanical commit has no mechanical score', () => {
-    const only = { classes: { bbb: 'logic' }, basis: { bbb: 'reading' } }
-    expect((run(factoryFixClassesScorer, {}, out({ bbb: 'logic' }), only) as Verdict).scores).toEqual({
-      valid: 1,
-      accuracy: 1,
-      judged: 1,
-    })
-  })
-
-  test('no reference scores valid only; a failed run scores 0', () => {
-    expect(run(factoryFixClassesScorer, {}, out({ aaa: 'tests' }))).toEqual({ scores: { valid: 1 }, pass: true })
-    expect((run(factoryFixClassesScorer, {}, null, ref) as Verdict).scores).toEqual({ valid: 0, accuracy: 0 })
   })
 })
 

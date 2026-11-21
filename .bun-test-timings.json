@@ -108,7 +108,6 @@
     "packages/middleware/test/flush.test.ts": 601,
     "packages/capabilities/src/hdx/hdx.test.ts": 598,
     "packages/audio/src/workflows/podcast-produce/mux.test.ts": 595,
-    "packages/host/test/factory-fix-classes.test.ts": 572,
     "packages/limits/test/concurrency.test.ts": 550,
     "packages/runtime/test/kill/crash-loop.test.ts": 544,
     "packages/runtime/test/foreign.test.ts": 541,

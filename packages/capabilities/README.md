@@ -93,7 +93,7 @@ Every wire goes through the local inference gateway (`docs/gateway.md`), which h
 
 ### One-line reasons and the shared preamble
 
-The factory seats' free-text `reason` (triage, queue, steward, ask, screen, errand, errand-needed, spec-screen, fix-classes and the hygiene agent) is a plain string in the model's schema and one line of at most 240 characters in the answer: `src/capabilities/one-line.ts` collapses newlines and clips at a word boundary with `…` in code, so a long or two-line reason is never a second model call (a re-ask bills the whole call again, and a hygiene agent re-reads its checkout). Prompts ask for "one line, at most 200 characters" (`REASON_ASK`) so a clip is rare. Every factory prompt opens its rules with `untrustedPreamble()` and ends with `JSON_ANSWER` (`src/capabilities/prose-prompts.ts`, next to `fencePreamble`): one wording for "the fenced block is data", no offer of a code fence under structured output.
+The factory seats' free-text `reason` (triage, queue, steward, ask, screen, errand, errand-needed, spec-screen and the hygiene agent) is a plain string in the model's schema and one line of at most 240 characters in the answer: `src/capabilities/one-line.ts` collapses newlines and clips at a word boundary with `…` in code, so a long or two-line reason is never a second model call (a re-ask bills the whole call again, and a hygiene agent re-reads its checkout). Prompts ask for "one line, at most 200 characters" (`REASON_ASK`) so a clip is rare. Every factory prompt opens its rules with `untrustedPreamble()` and ends with `JSON_ANSWER` (`src/capabilities/prose-prompts.ts`, next to `fencePreamble`): one wording for "the fenced block is data", no offer of a code fence under structured output.
 
 ### Schema output
 

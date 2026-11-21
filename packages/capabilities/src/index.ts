@@ -93,14 +93,6 @@ export {
   type FactorySpecScreenOutput,
 } from './capabilities/factory-spec-screen.ts'
 export {
-  factoryFixClassesCall,
-  factoryFixClassesInput,
-  factoryFixClassesOutput,
-  fixClassesAnswerFor,
-  type FactoryFixClassesInput,
-  type FactoryFixClassesOutput,
-} from './capabilities/factory-fix-classes.ts'
-export {
   factoryScreenCall,
   factoryScreenInput,
   factoryScreenOutput,
