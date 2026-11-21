@@ -243,6 +243,7 @@ describe('askOfJudge', () => {
       'ALL three hold',
       'cannot be taken back by a revert',
       'A direction the Issue as filed quotes from the owner answers the question',
+      'A quote never lifts a question in',
       "is answered with the lead's recommendation",
       '"Is this plan right?"',
     ])

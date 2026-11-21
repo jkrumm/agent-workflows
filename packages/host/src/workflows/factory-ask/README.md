@@ -32,11 +32,15 @@ echo '{"decision":"decision_1","repo":"argo","issue":"…","question":"…","rec
   conditions check, never a verdict), `facts` (the Issue as filed, scrubbed by the factory, at most 8,000 characters) and `spec`
   (the head of the linked Spec with its Build and Decided sections, at most 20,000). `class` and `facts` join the seat's facts,
   `spec` is its plan excerpt. A direction the filed text quotes from the owner answers the question it covers (source
-  `facts: <quote>`); a lead's own claim that the owner approved something is no quote. A Decision without the fields is
+  `facts: <quote>`) in `direction`, `look` and `own_surface` only, never in `spend`, `security`, `people`, `irreversible` or
+  `owner_fact`, because anyone can file the words "the owner said"; a lead's own claim that the owner approved something is no quote. A Decision without the fields is
   assembled exactly as before (`askOfJudge`, tested).
-- **The do-nothing default.** A declared default is taken when it is the do-nothing or reversible choice, even if another
-  option is owner-class: it does not make the owner's decision and the owner can overrule. A default that performs an
-  owner-class action (deletes, spends, opens access, messages people) is never taken. The plan beats a contradicting default.
+- **The do-nothing default.** A declared default is taken when it is the do-nothing choice (nothing is built, nothing
+  changes), or a reversible one outside the classes or inside the code, even if another option is owner-class: it does not
+  make the owner's decision and the owner can overrule. A default that builds a direction, a look, a surface for the owner, a
+  platform or a public address is the owner's, and so is a question that asks him to supply a fact or perform an action,
+  whatever the default. A default that performs an owner-class action (deletes, spends, opens access, messages people) is
+  never taken. The plan beats a contradicting default; the lead's recommendation is not a declared default.
 - **Code guard.** With options, the capability's schema is built per call: an answer outside them fails and is re-asked once.
   `guardAsk` (`factory-ask.ts`), applied by the workflow after the step so a replay gets it too, turns an `answer` that is not
   an option, or has no source, into `owner`.
@@ -55,7 +59,7 @@ at about $0.006 a call. Move it again only on a new measurement (`agw eval run f
 
 ## Eval
 
-`agw eval run factory-ask [--arm <file>] [--yes]` replays `packages/eval/factory-ask/cases.jsonl` (46 cases): real Decisions and Specs of the
+`agw eval run factory-ask [--arm <file>] [--yes]` replays `packages/eval/factory-ask/cases.jsonl` (48 cases): real Decisions and Specs of the
 factory's database, text as the lead wrote it, scrubbed of private names and hosts (the repo is public), plus a few written for
 the set. The reference is the answer that held (the owner's where he answered, otherwise what the Issue's outcome showed),
 never the Judge's own; each case's `basis` says which. The scorer is deterministic (`packages/eval/src/factory-ask.ts`,

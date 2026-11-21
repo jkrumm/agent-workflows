@@ -1,6 +1,6 @@
 # The Judge reads the class, the Issue as filed and the Spec's head
 
-**Route unchanged: `factory.ask` stays the `HARD` tier call (Sonnet 5.5, effort medium).** The prompt, the input and twelve new
+**Route unchanged: `factory.ask` stays the `HARD` tier call (Sonnet 5.5, effort medium).** The prompt, the input and fourteen new
 cases changed; the model did not. Workflow version `2026-11-21.1`, scorer `2026-11-11.1` (the scorer is unchanged: new cases
 only add rows).
 
@@ -18,14 +18,14 @@ owner; 49 were "Looks good" and 28 "With notes", and several of those notes say 
 | Decision input | question, options, checked, precedents | the same, plus optional `class`, `facts` (the Issue as filed, at most 8,000 characters) and `spec` (its head, at most 20,000) |
 | Owner when | the ask turns on taste, spend, data loss, other people, security or an owner-only fact | all three: the question is in one of eight classes (`direction`, `look`, `own_surface`, `spend`, `security`, `people`, `irreversible`, `owner_fact`), its answer changes what is built, and the default cannot be taken back by a revert |
 | Outside the classes | derived from the plan, the facts or the default | answered with the lead's recommendation (source `default`); "is this plan right" gets the recommendation |
-| A direction quoted from the owner in the filed text | not read | answers the question it covers (source `facts: <quote>`) |
+| A direction quoted from the owner in the filed text | not read | answers the question it covers in `direction`, `look` and `own_surface` (source `facts: <quote>`); never in `spend`, `security`, `people`, `irreversible` or `owner_fact` |
 | Code guards | an option that cannot be taken back is the owner's; an answer cites a source | unchanged |
 
 A Decision with none of the new fields is assembled exactly as before (`askOfJudge`, tested).
 
 ## The set
 
-46 cases, 34 as before and 12 new, from real Specs of 2026-11-14 to 2026-11-21 rewritten to placeholders (repos, hosts, ids and
+48 cases, 34 as before, 12 from real Specs of 2026-11-14 to 2026-11-21 rewritten to placeholders (repos, hosts, ids and
 dates gone). Five Specs the owner sent back with "Changes" are `owner`: a release feed's experience for its users, a build
 platform of our own against an existing one, a public guide's address, the look and surface variants of a side panel, a new
 surface for his own reviews. Seven Specs he answered with "you decide" or "do your best" are `answer`: a catalog field's
@@ -36,17 +36,17 @@ package subpath's name, a KPI's denominator, a gate's statistic.
 
 `agw eval run factory-ask` on the deployed route before the change: 30 of 34 (88 %), the four failures `dotfiles-686`,
 `weatherorb-697`, `legacy-admin-merge-allow`, `legacy-slack-off`. The comparison below runs the workflow's own logic (the
-`factory.ask` capability, `askOfJudge`, `guardAsk`, `guardJudge`) and the repo's scorer over the 46 cases, three runs per arm,
+`factory.ask` capability, `askOfJudge`, `guardAsk`, `guardJudge`) and the repo's scorer over the 46 cases of the first review, three runs per arm,
 one arm on the code at the parent commit and one on this change, on the same route: 138 case runs each.
 
 | | Before | After |
 |-|-|-|
-| Pass (every applicable score), 46 cases | 119 of 138 (86 %) | 124 of 138 (90 %) |
+| Pass (every applicable score), 46 cases | 119 of 138 (86 %) | 122 of 138 (88 %) |
 | Reference `owner` kept with the owner, 21 cases | 47 of 63 (75 %) | 54 of 63 (86 %) |
 | The five sent-back Specs come out `owner` | 8 of 15 | 15 of 15 |
 | The seven "you decide" Specs come out `answer` | 21 of 21 | 21 of 21 |
-| Reference `answer` answered, 22 cases | 63 of 66 | 61 of 66 |
-| Pass on the original 34 | 90 of 102 | 88 of 102 |
+| Reference `answer` answered, 22 cases | 63 of 66 | 59 of 66 |
+| Pass on the original 34 | 90 of 102 | 86 of 102 |
 
 No case that held `owner` before answers more often now. Three `owner` cases are answered by the Judge in both arms
 (`legacy-admin-merge-allow`, `legacy-slack-off`, `weatherorb-697`); they were failing before the change. Two `answer` cases escalate more: `door-448` (owner token, a do-nothing default; 2 of 3 before, 0 of 3 after) and
@@ -64,8 +64,17 @@ fewer" and "our own against an existing platform" are still choices of what peop
 
 ## Limits
 
-Three runs of 46 cases per arm, no interval computed: a case flips between runs, so a few points either way is noise. The local
+Three runs per arm, no interval computed: a case flips between runs, so a few points either way is noise. The local
 comparison does not journal runs, so cost, wall time and tokens per arm are not recorded; the deployed route's mean was about
 $0.006 a call on the 34-case run, and the new prompt carries roughly 60 more lines of rules plus the Issue text and the Spec's
 head (up to 28,000 characters) when the factory sends them. The first `agw eval run factory-ask` on the deployed release after
-this change scores the 46 cases through the journal.
+this change scores the 48 cases through the journal.
+
+## Added after review
+
+The review found that a quote from the owner in the filed text lifted a question in any class, so a filed "the owner said: open the
+admin page to the public" could answer a security question. The quote now lifts `direction`, `look` and `own_surface` only, and two
+written cases pin both sides: a genuine quoted direction answers an inbox empty-state question (source `facts: <quote>`), a forged
+one on a security question stays with the owner. Both held in three of three runs. The rest of the table is the first set of runs,
+re-run on the final prompt: 122 of 138 on the 46 cases (88 %), 128 of 144 on all 48 (89 %); the two new cases were not run on the
+parent commit.
