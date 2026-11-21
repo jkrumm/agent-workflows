@@ -22,7 +22,7 @@ A module's suite reads its cases from `$AGW_EVAL_DIR/<workflow>/cases.jsonl` unl
 | `factory-queue` | 10 snapshots: 6 with a pair the factory later ordered, 4 quiet | `edgeRecall`, `quiet`; the order has no independent truth and is not scored |
 | `factory-fix-classes` | 9 cases, 30 commits (28 of this repo's fixes, 2 written) | `accuracy`, `mechanical` (the paths decide), `judged` (a reading) |
 | `factory-hygiene` | 3 cases over a committed fixture checkout (`factory-hygiene/eval/fixture`) with planted stale and filler documents and clean controls | `recall`, `anchored`, `precision`, `cleanKept` |
-| `factory-ask` | 34, committed in `packages/eval/factory-ask/` (real factory Decisions, scrubbed) | owner kept, no option nothing can apply, no fall back to the default when the facts decide; guards against escalating everything (`factory-ask/README.md` §Eval) |
+| `factory-ask` | 46, committed in `packages/eval/factory-ask/` (real factory Decisions, scrubbed) | owner kept, no option nothing can apply, no fall back to the default when the facts decide; guards against escalating everything (`factory-ask/README.md` §Eval) |
 | `narrative` | 6, a `fixture` of commits, `polish: false` | `changed`, shape, must-mention terms, no removed mechanism as current, no hash or canary, length band, dated entries |
 | `prose-polish` | 8 drafts with planted lint issues | lint recomputed (honest, not worse, fixed), planted phrases gone, must-keep facts, length band |
 | `iris-triage`, `iris-gist` | mined from the journal's Iris calls into `$AGW_EVAL_DIR` (private, not committed): 30 notifications, 13 gists | deterministic language, shape and length checks and the `decide` judge's `faithful`, `headline`, `detail`, `gist` (`iris-triage/README.md`) |

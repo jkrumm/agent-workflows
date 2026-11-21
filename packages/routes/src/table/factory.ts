@@ -5,6 +5,8 @@ const routes = {
   // Software-factory's check on a lead's `factory issue ask`: the owner's, or answerable from the plan or the declared
   // default. Sonnet medium, the HARD tier: measured on the `factory-ask` eval (docs/evals/2026-11-11-factory-ask-judge.md), it keeps
   // more of the owner's questions with the owner than Haiku (none or high); lead-raised Decisions are rare, so the cost is small.
+  // It also reads the Decision's class, the Issue as filed and the head of its Spec (a lead's Spec is a Decision now, so this is
+  // the one reader in front of the owner); the tier stays, a seat change needs the eval (46 cases, docs/evals/2026-11-21-factory-ask-context.md).
   'factory.ask': { wire: 'anthropic', ...HARD.call },
   // Software-factory's steward: what a stalled Issue needs when the factory's own rules do not say (wake, requeue, or a
   // Decision). Haiku high, as the architecture names for the factory's judging loops. Eval: `factory-steward`, 14 cases (docs/evals/2026-11-16-steward-wording.md).

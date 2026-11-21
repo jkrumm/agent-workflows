@@ -1,6 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { resolveRoute } from '@agent-workflows/routes'
-import { buildFactoryAskPrompt, factoryAskInput, factoryAskOutput, guardAsk } from './capabilities/factory-ask.ts'
+import {
+  askOfJudge,
+  buildFactoryAskPrompt,
+  factoryAskInput,
+  factoryAskOutput,
+  factoryJudgeInput,
+  guardAsk,
+  JUDGE_CLASSES,
+} from './capabilities/factory-ask.ts'
 import { createCapabilities } from './capabilities/index.ts'
 import type { Usage } from './context.ts'
 import { CapabilityCallError } from './errors.ts'
@@ -167,6 +175,79 @@ describe('factory.ask', () => {
     const r = registry()
     expect(r.capabilities.find((c) => c.id === 'factory.ask')?.internal).toBe(true)
     expect(r.served.map((c) => c.id)).not.toContain('factory.ask')
+  })
+})
+
+describe('askOfJudge', () => {
+  const judge = factoryJudgeInput.parse({
+    decision: 'decision_1',
+    repo: 'agent-workflows',
+    issue: 'The gate command',
+    question: 'Which command runs the checks?',
+    recommendation: 'make check',
+    checked: 'A Bun monorepo.',
+    options: [
+      { label: 'make check', reversible: true, cost: 'none' },
+      { label: 'bun test', reversible: true, cost: 'skips lint' },
+    ],
+    noAnswer: { consequence: 'the lead takes make check', default: 'make check', waitMinutes: 60 },
+    precedents: [],
+  })
+
+  test('without the new fields the ask is assembled as before', () => {
+    expect(askOfJudge(judge)).toEqual({
+      question: 'Which command runs the checks?',
+      options: ['make check', 'bun test'],
+      default: 'make check',
+      facts: [
+        'Issue: The gate command',
+        'The lead recommends: make check',
+        'The lead checked: A Bun monorepo.',
+        'Options:\n- make check: can be taken back; cost: none\n- bun test: can be taken back; cost: skips lint',
+        'With no answer: the lead takes make check',
+        'The default is taken after 60 minutes.',
+      ].join('\n\n'),
+      plan: '',
+      repo: 'agent-workflows',
+    })
+  })
+
+  test('the class and the Issue as filed join the facts, the Spec is the plan excerpt', () => {
+    const got = askOfJudge({ ...judge, class: 'look', facts: 'FILED', spec: 'SPEC' })
+    expect(got.facts).toContain('(a claim to check): look')
+    expect(got.facts).toContain("The Issue as filed (the factory's scrubbed copy):\nFILED")
+    expect(got.facts.indexOf('FILED')).toBeLessThan(got.facts.indexOf('The lead recommends'))
+    expect(got.plan).toBe('The Spec this question belongs to (its head, Build and Decided sections):\nSPEC')
+    expect(factoryAskInput.safeParse(got).success).toBe(true)
+  })
+
+  test('the classes are the eight the rules define, and a made-up one is refused', () => {
+    expect(JUDGE_CLASSES).toEqual([
+      'direction',
+      'look',
+      'own_surface',
+      'spend',
+      'security',
+      'people',
+      'irreversible',
+      'owner_fact',
+    ])
+    expect(factoryJudgeInput.safeParse({ ...judge, class: 'taste' }).success).toBe(false)
+  })
+
+  test('the rules name every class, the three conditions, the filed-quote rule and the recommendation default, before the data', () => {
+    const prompt = buildFactoryAskPrompt(factoryAskInput.parse(ask), 'n0nce')
+    const data = prompt.indexOf('<<<ASK_n0nce_BEGIN>>>')
+    for (const text of [
+      ...JUDGE_CLASSES.map((c) => `- ${c}:`),
+      'ALL three hold',
+      'cannot be taken back by a revert',
+      'A direction the Issue as filed quotes from the owner answers the question',
+      "is answered with the lead's recommendation",
+      '"Is this plan right?"',
+    ])
+      expect(prompt.indexOf(text), text).toBeGreaterThan(-1)
+    expect(prompt.lastIndexOf('"Is this plan right?"')).toBeLessThan(data)
   })
 })
 

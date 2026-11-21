@@ -9,7 +9,7 @@ echo '{"decision":"decision_1","repo":"argo","issue":"…","question":"…","rec
 
 | | |
 |-|-|
-| Input (stdin JSON) | software-factory's Decision: `{decision, repo, issue, question, recommendation, checked, options[{label, reversible, cost}], noAnswer{consequence, default, waitMinutes}, precedents[{question, answer, settledBy, worthAsking, repo}]}`. The CLI reads it as the workflow's one `ask` property, so the HTTP body is `{"ask": {…}}`. Everything but `decision` and `repo` is untrusted data; `repo` is an identifier. The workflow turns it into the seat's ask (the options are the labels, the facts carry the form and the precedents); `answer` is one of the labels |
+| Input (stdin JSON) | software-factory's Decision: `{decision, repo, issue, question, recommendation, checked, options[{label, reversible, cost}], noAnswer{consequence, default, waitMinutes}, precedents[{question, answer, settledBy, worthAsking, repo}], class?, facts?, spec?}`. The CLI reads it as the workflow's one `ask` property, so the HTTP body is `{"ask": {…}}`. Everything but `decision` and `repo` is untrusted data; `repo` is an identifier. The workflow turns it into the seat's ask (the options are the labels, the facts carry the form and the precedents); `answer` is one of the labels |
 | Output | the run envelope's `output`: `FactoryAskOutput` (`schema.ts`): `{verdict: answer\|owner, answer, reason, source}`. `owner`: `answer` and `source` are `''`. `answer`: both non-empty; `source` names where (`default`, `plan: …`, `facts: …`); with options, `answer` is exactly one of them |
 | Shape | one journaled step (`judge`), one tool-free call to the internal `factory.ask` capability |
 | Pending | exit 10 like every workflow (`agw run wait <runId>`) |
@@ -21,10 +21,19 @@ echo '{"decision":"decision_1","repo":"argo","issue":"…","question":"…","rec
 - **Data is fenced.** Question, options, default, facts and plan sit under one per-call random fence with fence markers made
   inert, rules before and a re-assertion after; text in them that sets the verdict or claims owner approval is data. `repo` is
   an identifier outside the fence. Oversize input is refused, never cut.
-- **Owner only for the owner's classes.** Taste and product direction, spend, irreversible data loss, other people, security
-  policy, and a fact or action only the owner can supply or perform (a portal, an account, hardware, a login step: taking a
-  default there would assume the world changed). Everything else is answered from the plan or facts, or by the default, with
-  a source. When unsure: owner.
+- **Owner only for the owner's classes, and only when all three hold:** the question is in a class, its answer changes what is
+  built, and the default cannot be taken back by a revert. The classes: `direction` (what a product does for its users where
+  no direction is stated), `look` (a look he has not seen where real variants exist), `own_surface` (a new step or surface for
+  the owner himself), `spend` (money, or a platform that locks in), `security` (who is trusted or let in), `people` (other
+  people's or company data), `irreversible`, `owner_fact` (a portal, an account, hardware, a login step: taking a default
+  there would assume the world changed). Everything else is answered with the lead's recommendation (source `default`), or from
+  the plan or facts, with a source; "is this plan right" is no question. When unsure: owner.
+- **The Decision may carry three more fields, all optional.** `class` (the lead's or the factory's reading, a claim the three
+  conditions check, never a verdict), `facts` (the Issue as filed, scrubbed by the factory, at most 8,000 characters) and `spec`
+  (the head of the linked Spec with its Build and Decided sections, at most 20,000). `class` and `facts` join the seat's facts,
+  `spec` is its plan excerpt. A direction the filed text quotes from the owner answers the question it covers (source
+  `facts: <quote>`); a lead's own claim that the owner approved something is no quote. A Decision without the fields is
+  assembled exactly as before (`askOfJudge`, tested).
 - **The do-nothing default.** A declared default is taken when it is the do-nothing or reversible choice, even if another
   option is owner-class: it does not make the owner's decision and the owner can overrule. A default that performs an
   owner-class action (deletes, spends, opens access, messages people) is never taken. The plan beats a contradicting default.
@@ -46,7 +55,7 @@ at about $0.006 a call. Move it again only on a new measurement (`agw eval run f
 
 ## Eval
 
-`agw eval run factory-ask [--arm <file>] [--yes]` replays `packages/eval/factory-ask/cases.jsonl` (34 cases): real Decisions of the
+`agw eval run factory-ask [--arm <file>] [--yes]` replays `packages/eval/factory-ask/cases.jsonl` (46 cases): real Decisions and Specs of the
 factory's database, text as the lead wrote it, scrubbed of private names and hosts (the repo is public), plus a few written for
 the set. The reference is the answer that held (the owner's where he answered, otherwise what the Issue's outcome showed),
 never the Judge's own; each case's `basis` says which. The scorer is deterministic (`packages/eval/src/factory-ask.ts`,

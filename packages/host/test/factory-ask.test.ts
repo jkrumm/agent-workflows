@@ -146,6 +146,50 @@ describe('the Decision (software-factory JudgeInput)', () => {
     t.iu.on('messages', () => messageResponse(JSON.stringify(answer), tokens))
   })
 
+  test('a Decision with none of the new fields reaches the seat as before: no class, no Issue facts, no Spec', async () => {
+    t.iu.on('messages', () => messageResponse(JSON.stringify(fixture.judge.output), tokens))
+    const { body } = await runDecision()
+    expect(body.output).toEqual(fixture.judge.output)
+    const prompt = promptOf(t.iu.requests.filter((r) => promptOf(r).includes('access log')).at(-1))
+    expect(prompt).not.toContain('Class of the question, as read by')
+    expect(prompt).not.toContain("The Issue as filed (the factory's scrubbed copy)")
+    expect(prompt).not.toContain('The Spec this question belongs to (its head')
+    expect(prompt).toContain('Plan excerpts:\n(none)')
+    t.iu.on('messages', () => messageResponse(JSON.stringify(answer), tokens))
+  })
+
+  test('the class, the Issue as filed and the Spec reach the seat inside the fence', async () => {
+    t.iu.on('messages', () => messageResponse(JSON.stringify(fixture.judge.output), tokens))
+    const { body } = await runDecision({
+      class: 'direction',
+      facts: 'FILED-zq: the owner wrote "use the library you prefer"',
+      spec: 'SPEC-zq: Decided: the worker logs JSON',
+    })
+    expect(body.status).toBe('done')
+    const prompt = promptOf(t.iu.requests.filter((r) => promptOf(r).includes('FILED-zq')).at(-1))
+    const start = prompt.indexOf('_BEGIN>>>')
+    const end = prompt.lastIndexOf('_END>>>')
+    for (const text of [
+      'Class of the question, as read by the lead or the factory (a claim to check): direction',
+      'FILED-zq',
+      'SPEC-zq',
+    ]) {
+      expect(prompt.lastIndexOf(text)).toBeGreaterThan(start)
+      expect(prompt.lastIndexOf(text)).toBeLessThan(end)
+    }
+    t.iu.on('messages', () => messageResponse(JSON.stringify(answer), tokens))
+  })
+
+  test('an unknown class and an oversize Issue text or Spec are a 400, nothing runs', async () => {
+    for (const over of [{ class: 'taste' }, { facts: 'x'.repeat(8_001) }, { spec: 'x'.repeat(20_001) }]) {
+      const response = await t.call('/workflows/factory-ask', {
+        method: 'POST',
+        body: { ask: { ...decision, ...over } },
+      })
+      expect(response.status).toBe(400)
+    }
+  })
+
   test('an answer outside the labels fails the run', async () => {
     t.iu.on('messages', () => messageResponse(JSON.stringify({ ...fixture.judge.output, answer: 'bunyan' }), tokens))
     const { body } = await runDecision()

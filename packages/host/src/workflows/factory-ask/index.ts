@@ -6,7 +6,7 @@ import { factoryAskScorer } from './scorer.ts'
 import { FactoryAskInput, FactoryAskOutput, type FactoryAskOutputValue } from './schema.ts'
 
 const FACTORY_ASK_WORKFLOW_ID = 'factory-ask'
-const FACTORY_ASK_VERSION = '2026-11-20.1'
+const FACTORY_ASK_VERSION = '2026-11-21.1'
 
 /** The one capability the workflow calls; any registry that has `factory.ask` fits. */
 export type AskCaller = Pick<HostRegistry, 'call'>
