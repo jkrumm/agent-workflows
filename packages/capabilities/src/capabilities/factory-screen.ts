@@ -154,7 +154,7 @@ const CASE_PURPOSES: CasePurposes = {
     'what this screen answered before and whether it held: a dismissed signal that was raised again was real work',
 }
 
-export /** Added to the rules on a last look only, so a first look's prompt is the one it always was. */
+/** Added to the rules on a last look only, so a first look's prompt is the one it always was. */
 const FINAL_RULE = `
 
 ## This is the last look

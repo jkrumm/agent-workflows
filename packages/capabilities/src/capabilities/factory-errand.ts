@@ -20,8 +20,8 @@ import {
 
 export const ERRAND_VERDICTS = ['pass', 'turn_away'] as const
 /** Where the owner runs the step, and what kind of need the lead named; both are the lead's own flags on `factory errand raise`. */
-export const ERRAND_HOSTS = ['mini', 'macbook'] as const
-export const ERRAND_NEEDS = ['secret', 'hands', 'place', 'approval'] as const
+const ERRAND_HOSTS = ['mini', 'macbook'] as const
+const ERRAND_NEEDS = ['secret', 'hands', 'place', 'approval'] as const
 
 const MAX_SUMMARY_CHARS = 500
 const MAX_DETAIL_CHARS = 8_000

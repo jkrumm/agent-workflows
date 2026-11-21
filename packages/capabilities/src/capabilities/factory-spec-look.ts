@@ -160,7 +160,7 @@ const CASE_PURPOSES: CasePurposes = {
 }
 
 /** Every text the prompt quotes, for the nonce: the fence token may appear in none of them. */
-export const specLookTexts = (request: FactorySpecLookInput): string[] => {
+const specLookTexts = (request: FactorySpecLookInput): string[] => {
   const { spec, issue, precedents } = request
   return [
     ...[spec.title, spec.content, issue.title, issue.facts, ...precedents.flatMap((p) => [p.title, p.note ?? ''])].map(

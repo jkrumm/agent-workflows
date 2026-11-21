@@ -6,10 +6,10 @@ import { FactorySpecLookOutput } from './schema.ts'
 const FACTORY_SPEC_LOOK_SCORER_VERSION = '2026-11-21.1'
 
 /** A case's expected verdict: whether the Spec is ready for the owner as written. */
-export const FactorySpecLookReference = z.object({
+const FactorySpecLookReference = z.object({
   verdict: z.enum(['ready', 'back']),
 })
-export type FactorySpecLookReference = z.output<typeof FactorySpecLookReference>
+type FactorySpecLookReference = z.output<typeof FactorySpecLookReference>
 
 /**
  * The `factory-spec-look` scorer. Deterministic, no model, every score 0 or 1:

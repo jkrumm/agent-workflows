@@ -20,9 +20,9 @@ import {
 
 const VERDICTS = ['answer', 'owner', 'back'] as const
 /** Why a question goes back to the lead: it is the lead's to decide, or the owner's but not ready for him. */
-export const BACK_KINDS = ['yours', 'not_ready'] as const
+const BACK_KINDS = ['yours', 'not_ready'] as const
 /** The note a sent-back question carries to the lead, after the clip in code. */
-export const BACK_NOTE_MAX_CHARS = 600
+const BACK_NOTE_MAX_CHARS = 600
 
 /**
  * What the prompt carries. More is refused, never cut: a verdict on a prefix would pass for a verdict on the whole ask,
@@ -465,7 +465,7 @@ const CASE_PURPOSES: CasePurposes = {
 }
 
 /** Every text the prompt quotes, for the nonce: the fence token may appear in none of them. */
-export const askTexts = (input: FactoryAskInput, given?: FactoryCase): string[] => [
+const askTexts = (input: FactoryAskInput, given?: FactoryCase): string[] => [
   ...[input.question, ...input.options, input.default ?? '', input.facts, input.spec].map(neutralizeFenceMarkers),
   ...caseTexts(given),
 ]
