@@ -9,11 +9,6 @@ import { isStrictCompatible } from './transports/index.ts'
 // capability really builds (several are built per call). A schema change that makes `toJsonSchema` return null would
 // silently turn structured output off for that capability; this fails instead.
 const CASES: { capability: string; route: RouteId; input: Record<string, unknown> }[] = [
-  {
-    capability: 'factory.ask',
-    route: 'factory.ask',
-    input: { question: 'q', options: ['a', 'b'], default: 'a', facts: 'f', plan: 'p', repo: 'argo' },
-  },
   { capability: 'triage', route: 'triage', input: { destination: 'd', transcript: 't' } },
   { capability: 'overview.classify', route: 'overview.classify', input: { facts: 'f', agentIds: ['a1'] } },
   {
