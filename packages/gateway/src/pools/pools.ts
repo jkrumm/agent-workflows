@@ -1,3 +1,4 @@
+import { nextMonthStart } from '../spend-limit.ts'
 import { cycleOf } from './cycle.ts'
 import type { RegistryPool } from './registry.ts'
 
@@ -75,6 +76,10 @@ export interface PoolStatus extends Pacing {
   creditUsd: number
   meterUsd: number
   drainedUntil: string | null
+  /** ISO instant the organization's monthly spend limit resets (00:00 UTC on the first), while a refusal keeps the pool out; else null. */
+  spendLimitedUntil: string | null
+  /** Why the pool is out of the pick, the first that applies; null while it is eligible. */
+  outReason: 'disabled' | 'meter-error' | 'balance-refused' | 'spend-limit' | 'credit-spent' | null
   eligible: boolean
   /** `charge` calls ignored for a negative or non-finite amount, since start. */
   unpricedCharges: number
@@ -104,6 +109,13 @@ export interface Pools {
    */
   drained(pool: string, cycleStart: string): void
   /**
+   * A spend-limit refusal (`isSpendLimitFailure`) on a non-Claude-Code request: the pool is ineligible until 00:00 UTC on
+   * the first of the next month, when the organization's limit resets. Unlike `drained` it is not capped at the credit's
+   * expiry and not tied to a cycle: the limit outlives the credit's rollover. Held in memory; a restart re-learns it at
+   * the cost of one refused request.
+   */
+  spendLimited(pool: string): void
+  /**
    * Sets the reconciled floor of the pool's meter (Wave 4). Ignored when `cycleStart` is not the pool's current cycle.
    * On a known cycle the floor only ever rises: an `usd` not above the current effective floor (floor + charges since)
    * is ignored, since the cost report lags and a dip must never lower the meter. On an unknown (rolling) cycle it
@@ -111,7 +123,7 @@ export interface Pools {
    */
   reconcile(pool: string, usd: number, cycleStart: string): void
   status(): PoolStatus[]
-  /** `served` / `charge` / `drained` / `reconcile` calls ignored for a pool id not in the registry, since start. */
+  /** `served` / `charge` / `drained` / `spendLimited` / `reconcile` calls ignored for a pool id not in the registry, since start. */
   unknownPoolCalls(): number
 }
 
@@ -169,6 +181,7 @@ interface PoolState {
   keyResolved: boolean
   meter: Meter
   drainedUntilMs: number | null
+  spendLimitedUntilMs: number | null
   unpricedCharges: number
   meterError: string | null
   lastReadAttemptMs: number
@@ -238,6 +251,7 @@ export function createPools(opts: PoolsOptions): Pools {
       keyResolved,
       meter: emptyMeter(start.getTime(), 'usd' in read ? read.usd : 0, created.getTime()),
       drainedUntilMs: null,
+      spendLimitedUntilMs: null,
       unpricedCharges: 0,
       meterError: 'error' in read ? read.error : null,
       lastReadAttemptMs: created.getTime(),
@@ -278,6 +292,7 @@ export function createPools(opts: PoolsOptions): Pools {
       }
     }
     if (state.drainedUntilMs !== null && atMs >= state.drainedUntilMs) state.drainedUntilMs = null
+    if (state.spendLimitedUntilMs !== null && atMs >= state.spendLimitedUntilMs) state.spendLimitedUntilMs = null
     return cycle
   }
 
@@ -289,7 +304,16 @@ export function createPools(opts: PoolsOptions): Pools {
     state.usable &&
     state.meterError === null &&
     state.drainedUntilMs === null &&
+    state.spendLimitedUntilMs === null &&
     meterUsd(state.meter) + state.pool.headroomUsd < state.pool.creditUsd
+
+  const outReason = (state: PoolState): PoolStatus['outReason'] => {
+    if (!state.usable) return 'disabled'
+    if (state.meterError !== null) return 'meter-error'
+    if (state.spendLimitedUntilMs !== null) return 'spend-limit'
+    if (state.drainedUntilMs !== null) return 'balance-refused'
+    return isEligible(state) ? null : 'credit-spent'
+  }
 
   /** §Credit pacing for one pool: an unusable pool has no credit to spend; a pool requests cannot use has no eval draw. */
   const pacing = (state: PoolState, cycle: { start: Date; end: Date | null }, at: Date): Pacing => {
@@ -408,6 +432,14 @@ export function createPools(opts: PoolsOptions): Pools {
       state.drainedUntilMs = cycle.end === null ? untilMs : Math.min(untilMs, cycle.end.getTime())
     },
 
+    spendLimited(pool) {
+      const state = lookup(pool)
+      if (state === undefined) return
+      const at = now()
+      sync(state, at)
+      state.spendLimitedUntilMs = nextMonthStart(at).getTime()
+    },
+
     reconcile(pool, usd, cycleStart) {
       if (!Number.isFinite(usd) || usd < 0) throw new RangeError('pools: reconcile needs a finite USD amount ≥ 0')
       const state = lookup(pool)
@@ -438,6 +470,9 @@ export function createPools(opts: PoolsOptions): Pools {
           creditUsd: state.pool.creditUsd,
           meterUsd: state.usable ? meterUsd(state.meter) : 0,
           drainedUntil: state.drainedUntilMs === null ? null : new Date(state.drainedUntilMs).toISOString(),
+          spendLimitedUntil:
+            state.spendLimitedUntilMs === null ? null : new Date(state.spendLimitedUntilMs).toISOString(),
+          outReason: outReason(state),
           eligible: isEligible(state),
           ...pacing(state, cycle, at),
           unpricedCharges: state.unpricedCharges,

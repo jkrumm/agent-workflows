@@ -81,7 +81,9 @@ pool's refs are not read. The process never reads `iu.env` or `athena-iu.env`.
 5. With no pool eligible the request goes to IU, unless the caller sent `x-agw-fallback: none`: then a 402 with the
    balance marker, and the agw route falls back onto GPT on IU.
 6. A pool's balance refusal marks it drained and picks again without it, pool by pool, until the pick is no pool: IU,
-   or the 402.
+   or the 402. A monthly spend-limit refusal (the documented 400, or the 429 with `error_code`
+   `enforced_spend_limit_reached`) does the same, with the pool out until 00:00 UTC on the first of the next month;
+   `/health` names the reason in `outReason`.
 7. **An `eval` request with no pool above its reserve** is refused, `picked = refused`, reason `eval-reserve`, no ledger row and no upstream call, `x-agw-fallback` or not. The 403 carries `x-agw-pick-reason` (`eval-reserve`, `eval-forced` or `eval-claude-code`).
 
 **The refusal is a 403**, an Anthropic-shaped `permission_error` with a fixed message that names the reason and points at

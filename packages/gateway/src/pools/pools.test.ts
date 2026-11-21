@@ -852,3 +852,40 @@ describe('credit pacing: the pick for purpose=eval', () => {
     expect(picked(pools, { evalOnly: false, forceIu: true })).toBe('iu-api:forced')
   })
 })
+
+describe('spend limit', () => {
+  test('out until 00:00 UTC on the first of the next month, past the credit rollover, with the reason', () => {
+    const { pools, clock } = setup([pool('a', { cycleDay: 27 })], { at: '2026-11-21T12:00:00Z' })
+    pools.spendLimited('a')
+    expect(pools.status()[0]).toMatchObject({
+      eligible: false,
+      outReason: 'spend-limit',
+      spendLimitedUntil: '2026-12-01T00:00:00.000Z',
+      drainedUntil: null,
+    })
+    expect(pools.pick(req())).toEqual({ kind: 'iu', reason: 'no-pool' })
+    // The credit cycle rolls over on the 27th: the meter is 0 again, the pool stays out.
+    clock.set('2026-11-27T00:00:01Z')
+    expect(pools.status()[0]).toMatchObject({ meterUsd: 0, eligible: false, outReason: 'spend-limit' })
+    expect(pools.pick(req())).toEqual({ kind: 'iu', reason: 'no-pool' })
+    clock.set('2026-11-30T23:59:59Z')
+    expect(pools.status()[0]?.eligible).toBe(false)
+    clock.set('2026-12-01T00:00:00Z')
+    expect(pools.status()[0]).toMatchObject({ eligible: true, outReason: null, spendLimitedUntil: null })
+    expect(pools.pick(req())).toMatchObject({ kind: 'pool', pool: 'a' })
+  })
+
+  test('in December the mark runs to 1 January of the next year', () => {
+    const { pools } = setup([pool('a')], { at: '2026-12-15T12:00:00Z' })
+    pools.spendLimited('a')
+    expect(pools.status()[0]?.spendLimitedUntil).toBe('2027-01-01T00:00:00.000Z')
+  })
+
+  test('a balance mark and a meter-spent pool say why they are out; an unknown pool is counted', () => {
+    const { pools } = setup([pool('a'), pool('b', { creditUsd: 2, headroomUsd: 2 }), pool('c', { enabled: false })])
+    pools.drained('a', 'any')
+    expect(pools.status().map((s) => s.outReason)).toEqual(['balance-refused', 'credit-spent', 'disabled'])
+    pools.spendLimited('nope')
+    expect(pools.unknownPoolCalls()).toBe(1)
+  })
+})

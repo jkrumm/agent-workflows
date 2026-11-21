@@ -97,6 +97,24 @@ Per request, in order:
    or the 402. One cache miss, accepted. Step 0 keeps a funded pool from being drain-marked by a Claude Code refusal, and
    the mark lasts 1 h (never past the credit's expiry) in case a refusal gets past it: a funded pool is out for an hour,
    not a month, and a really drained one costs one refused request an hour, retried on IU.
+5. **Refused for a spend limit.** A credit pool's Console organization has two independent limits: the credit, which
+   renews on the subscription's billing cycle (`cycleDay`), and the organization's monthly spend limit, which resets at
+   00:00 UTC on the first of each calendar month; usage paid with credits counts toward it. The meter knows only the first.
+   `isSpendLimitFailure` (`src/spend-limit.ts`, the gateway's own: the agw routes fall back onto GPT on
+   `isBalanceFailure`) knows the two documented refusals (platform.claude.com/docs/en/api/rate-limits, §Spend limits;
+   not probed live, an org cannot be capped on purpose): a limit the owner set, HTTP 400 `invalid_request_error` whose
+   message starts "You have reached your specified API usage limits" (or "... workspace API usage limits"); and the
+   tier's own cap, HTTP 429 `rate_limit_error` with `error.details.error_code` `enforced_spend_limit_reached`. The 429
+   is told from an ordinary rate limit by that code, never by the status: a plain 429 is forwarded and marks nothing.
+   The rule is step 4's (mark the pool out, pick again without it, then IU or the 402; an `eval` request ends on its 403),
+   with another mark: the pool stays out **until 00:00 UTC on the first of the next month**, not 1 h and not capped at
+   the credit's expiry, since the limit outlives the credit's rollover. The mark is in memory and not tied to a cycle; a
+   restart re-learns it at the cost of one refused request. Step 0 holds here too: a Claude-Code-shaped request never
+   reaches a pool, so it never marks one. `/health` says why a pool is out: `outReason` is `spend-limit`,
+   `balance-refused`, `credit-spent`, `meter-error` or `disabled`, and `spendLimitedUntil` is the reset instant.
+   **No registry field for the limit.** The limit is not readable through the Admin API on Individual Orgs, so a
+   registry `monthlySpendLimitUsd` would be a second number to keep in step with the Console; the refusal is the signal,
+   and one refused request a month per pool is cheaper than that.
 
 **The fallback order, in one place.** The first line that applies wins:
 

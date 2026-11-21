@@ -19,12 +19,15 @@ import {
   IU_KEY,
   jsonBody,
   OPENCODE_TOKEN,
+  OWNER_LIMIT_REFUSAL,
   pool,
   POOL_KEY,
+  RATE_LIMIT_REFUSAL,
   refusalResponse,
   silentLogger,
   sse,
   sseResponse,
+  TIER_CAP_REFUSAL,
   tempDir,
   type Upstream,
 } from './support.ts'
@@ -622,6 +625,86 @@ describe('picking', () => {
     const response = await gw.call(MESSAGES, jsonBody(request()))
     expect(await response.text()).toBe(body)
     expect(gw.pools.status()[0]?.drainedUntil).toBeNull()
+    expect(iu.seen).toHaveLength(0)
+  })
+
+  describe.each([
+    ['the owner-set limit (400)', 400, OWNER_LIMIT_REFUSAL],
+    ['the tier cap (429, error_code)', 429, TIER_CAP_REFUSAL],
+  ] as const)('a spend limit: %s', (_name, status, body) => {
+    const limited = () => Response.json(body, { status })
+
+    test('the next pool serves, the caller sees no error, the limited pool is not picked again', async () => {
+      anthropic.reply((req) => (req.headers.get('x-api-key') === 'sk-a' ? limited() : anthropicReply()))
+      const gw = start({ registry: [pool('a'), pool('b')], poolKey: (id) => `sk-${id}` })
+      const response = await gw.call(MESSAGES, session('s1', jsonBody(request())))
+      expect(response.status).toBe(200)
+      await response.text()
+      expect(response.headers.get('x-agw-pool')).toBe('b')
+      expect(anthropic.seen).toHaveLength(2)
+      const [a] = gw.pools.status()
+      expect(a).toMatchObject({ outReason: 'spend-limit', eligible: false, drainedUntil: null })
+      expect(Date.parse(a?.spendLimitedUntil ?? '')).toBeGreaterThan(Date.now())
+      expect(new Date(a?.spendLimitedUntil ?? '').toISOString()).toMatch(/-01T00:00:00\.000Z$/)
+      expect(gw.rows().picks.map(({ row }) => [row.picked, row.reason])).toEqual([
+        ['a', 'soonest-expiry'],
+        ['b', 'soonest-expiry'],
+      ])
+      await (await gw.call(MESSAGES, jsonBody(request()))).text()
+      expect(anthropic.seen.map((seen) => seen.headers.get('x-api-key'))).toEqual(['sk-a', 'sk-b', 'sk-b'])
+    })
+
+    test('the only pool refusing falls to IU, or the 402 with x-agw-fallback: none', async () => {
+      anthropic.reply(limited)
+      const gw = start({ registry: [pool('a')] })
+      const response = await gw.call(MESSAGES, jsonBody(request()))
+      expect(response.status).toBe(200)
+      await response.text()
+      expect(response.headers.get('x-agw-pool')).toBe('iu-api')
+      expect(gw.rows().picks.map(({ row }) => [row.picked, row.reason])).toEqual([
+        ['a', 'soonest-expiry'],
+        ['iu-api', 'drained-retry'],
+      ])
+      const init = jsonBody(request())
+      const none = await gw.call(MESSAGES, { ...init, headers: { ...init.headers, 'x-agw-fallback': 'none' } })
+      expect(none.status).toBe(402)
+    })
+
+    test('an eval request whose pool is limited is refused 403, never sent to IU', async () => {
+      anthropic.reply(limited)
+      const gw = start({ registry: [pool('a', { evalReserveUsd: 0 })] })
+      const init = jsonBody(request())
+      const response = await gw.call(MESSAGES, { ...init, headers: { ...init.headers, 'x-agw-purpose': 'eval' } })
+      expect(response.status).toBe(403)
+      expect(iu.seen).toHaveLength(0)
+    })
+
+    test('a Claude-Code-shaped request answered with it marks no pool', async () => {
+      iu.reply(limited)
+      const gw = start({ registry: [pool('a')] })
+      const init = jsonBody(request())
+      const response = await gw.call(MESSAGES, {
+        ...init,
+        headers: { ...init.headers, 'anthropic-beta': 'claude-code-20250219' },
+      })
+      expect(response.status).toBe(status)
+      expect(await response.json()).toEqual(body)
+      expect(anthropic.seen).toHaveLength(0)
+      expect(gw.pools.status()[0]).toMatchObject({ eligible: true, outReason: null, spendLimitedUntil: null })
+    })
+  })
+
+  test('a plain 429 rate limit from a pool is forwarded and marks nothing', async () => {
+    const text = JSON.stringify(RATE_LIMIT_REFUSAL)
+    anthropic.reply(
+      () => new Response(text, { status: 429, headers: { 'content-type': 'application/json', 'retry-after': '7' } }),
+    )
+    const gw = start({ registry: [pool('a')] })
+    const response = await gw.call(MESSAGES, jsonBody(request()))
+    expect(response.status).toBe(429)
+    expect(response.headers.get('retry-after')).toBe('7')
+    expect(await response.text()).toBe(text)
+    expect(gw.pools.status()[0]).toMatchObject({ eligible: true, outReason: null })
     expect(iu.seen).toHaveLength(0)
   })
 

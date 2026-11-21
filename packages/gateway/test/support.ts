@@ -257,6 +257,31 @@ export const BALANCE_REFUSAL = {
 
 export const refusalResponse = (): Response => Response.json(BALANCE_REFUSAL, { status: 400 })
 
+/** The documented refusal of a spend limit the owner set (platform.claude.com/docs/en/api/rate-limits, §Spend limits). */
+export const OWNER_LIMIT_REFUSAL = {
+  type: 'error',
+  error: {
+    type: 'invalid_request_error',
+    message: 'You have reached your specified API usage limits. You will regain access on 2026-12-01 at 00:00 UTC.',
+  },
+}
+
+/** The documented refusal of the tier's own monthly cap: a 429 told from a rate limit by `error_code`. */
+export const TIER_CAP_REFUSAL = {
+  type: 'error',
+  error: {
+    type: 'rate_limit_error',
+    details: { error_code: 'enforced_spend_limit_reached' },
+    message: 'You have reached your API usage limits: tier cap. You will regain access on 2026-12-01 at 00:00 UTC.',
+  },
+}
+
+/** An ordinary rate limit: the same status as the tier cap, no `error_code`. */
+export const RATE_LIMIT_REFUSAL = {
+  type: 'error',
+  error: { type: 'rate_limit_error', message: 'Number of request tokens has exceeded your per-minute rate limit.' },
+}
+
 const MAIN = resolve(import.meta.dir, '..', 'src', 'main.ts')
 
 /** The real entry as its own process. */

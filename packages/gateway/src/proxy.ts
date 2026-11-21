@@ -9,6 +9,7 @@ import { isRecord } from './json.ts'
 import type { Attribution, Ledger, RecordRow } from './ledger.ts'
 import { errorMessage, type Logger } from './log.ts'
 import { isClaudeCodeShaped, type Pick, type Pools, sessionId } from './pools/index.ts'
+import { isSpendLimitFailure } from './spend-limit.ts'
 import { decodeBody, type TeeResult, UsageTee } from './tee.ts'
 import type { RequestSpan, Telemetry } from './telemetry.ts'
 
@@ -45,8 +46,8 @@ const MODEL_ID = /^[A-Za-z0-9._:-]+$/
 const IU_CATALOG = /\/models(?:\/[A-Za-z0-9._:-]+)?$/
 /** The media agw prices itself, per minute, per character or per image. */
 const CALLER_PRICED_PREFIXES = ['/openai/v1/images/', '/openai/v1/audio/', '/gemini/v1beta/', '/replicate/v1/'] as const
-/** Statuses a credit org's balance refusal can carry; only these are read before they are answered. */
-const REFUSAL_STATUSES: ReadonlySet<number> = new Set([400, 402, 503])
+/** Statuses a credit org's balance or spend-limit refusal can carry; only these are read before they are answered. */
+const REFUSAL_STATUSES: ReadonlySet<number> = new Set([400, 402, 429, 503])
 /**
  * IU's LiteLLM answers every Anthropic 4xx as `503 text/plain`: `[Anthropic API StatusCode: <Name>] <the error JSON>`.
  * Only the two a thread request can meet are unwrapped (`docs/gateway.md` §Message threads).
@@ -652,8 +653,8 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
   const refusalOf = async (
     x: Exchange,
     upstream: Response,
-  ): Promise<{ balance: boolean; bytes: Uint8Array | null }> => {
-    if (!REFUSAL_STATUSES.has(upstream.status) || upstream.body === null) return { balance: false, bytes: null }
+  ): Promise<{ refusal: 'balance' | 'spend-limit' | null; bytes: Uint8Array | null }> => {
+    if (!REFUSAL_STATUSES.has(upstream.status) || upstream.body === null) return { refusal: null, bytes: null }
     x.guard.arm()
     const bytes = new Uint8Array(await upstream.arrayBuffer())
     x.guard.disarm()
@@ -661,9 +662,11 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
     try {
       text = new TextDecoder().decode(decodeBody(bytes, upstream.headers.get('content-encoding')))
     } catch {
-      return { balance: false, bytes }
+      return { refusal: null, bytes }
     }
-    return { balance: isBalanceFailure({ status: upstream.status, text }), bytes }
+    const failure = { status: upstream.status, text }
+    if (isBalanceFailure(failure)) return { refusal: 'balance', bytes }
+    return { refusal: isSpendLimitFailure(failure) ? 'spend-limit' : null, bytes }
   }
 
   /**
@@ -736,8 +739,8 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
   }
 
   /**
-   * §Picking a pool: the pick and the forward. A balance refusal drains that pool and picks again without it, until the
-   * pick is no pool: the loop ends after at most one attempt per pool, on IU or on the 402.
+   * §Picking a pool: the pick and the forward. A balance or spend-limit refusal marks that pool out and picks again
+   * without it, until the pick is no pool: the loop ends after at most one attempt per pool, on IU or on the 402.
    */
   const serveMessages = async (
     x: Exchange,
@@ -767,8 +770,9 @@ export function createProxy(options: ProxyOptions): GatewayProxy {
         if (pick.kind === 'pool') {
           const refusal = await refusalOf(x, upstream)
           held = refusal.bytes
-          if (refusal.balance) {
-            pools.drained(pick.pool, pick.cycleStart)
+          if (refusal.refusal !== null) {
+            if (refusal.refusal === 'balance') pools.drained(pick.pool, pick.cycleStart)
+            else pools.spendLimited(pick.pool)
             exclude.push(pick.pool)
             continue
           }
