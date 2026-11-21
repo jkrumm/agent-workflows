@@ -9,6 +9,6 @@ import { createFactoryAsk } from './index.ts'
  */
 export default defineWorkflowModule({
   id: 'factory-ask',
-  create: (deps) => [createFactoryAsk({ registry: deps.registry })],
+  create: () => [createFactoryAsk()],
   suite: { read: () => plainSuite.read(FACTORY_ASK_CASES_PATH) },
 })

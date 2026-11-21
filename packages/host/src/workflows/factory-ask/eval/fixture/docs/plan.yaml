@@ -1,0 +1,9 @@
+rows:
+  - key: request-logging
+    title: Add request logging to the worker
+    decided:
+      logger: pino, as in example-app and example-api; one library across the services
+      format: JSON lines on stdout
+  - key: retry-policy
+    title: Retry failed jobs
+    after: [request-logging]

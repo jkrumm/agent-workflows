@@ -8,5 +8,5 @@
     "packages/runtime/test/kill/worker.ts",
     "packages/host/test/fixtures/**/*.ts"
   ],
-  "ignorePatterns": ["docs/spikes/**", "packages/host/src/workflows/factory-hygiene/eval/fixture/**"]
+  "ignorePatterns": ["docs/spikes/**", "packages/host/src/workflows/factory-hygiene/eval/fixture/**", "packages/host/src/workflows/factory-ask/eval/fixture/**"]
 }

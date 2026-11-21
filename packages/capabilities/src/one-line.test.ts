@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { messageResponse, type FakeGateway, startFakeGateway } from '@agent-workflows/testing/gateway'
 import { clipLine, clipReason, collapseLine, REASON_MAX_CHARS, strictLine } from './capabilities/one-line.ts'
+import { clipAsk } from './capabilities/factory-ask.ts'
 import { createCapabilities } from './capabilities/index.ts'
 import { createRegistry } from './registry.ts'
 import { gatewayTransports } from './transports/index.ts'
@@ -163,27 +164,13 @@ describe('a 300-character two-line reason is accepted and clipped, with one mode
     )
     expectClipped((out as { reason: string }).reason)
   })
+})
 
-  test('factory.ask, reason and source', async () => {
-    iu.on('messages', () =>
-      messageResponse(
-        JSON.stringify({ verdict: 'answer', answer: 'make check', reason: long, source: `plan: ${long}` }),
-        tokens,
-      ),
-    )
-    const out = (await registry().call(
-      'factory.ask',
-      {
-        question: 'Which command runs the checks?',
-        options: ['make check', 'bun test'],
-        default: 'make check',
-        facts: 'f',
-        plan: 'p',
-        repo: 'example-app',
-      },
-      noop,
-    )) as { reason: string; source: string }
-    expectClipped(out.reason)
+describe("the Judge's answer, clipped in the workflow", () => {
+  const long = `${'the deciding fact '.repeat(8)}\nsecond line ${'z '.repeat(80)}`
+  test('factory-ask, reason and source (clipped in the workflow by clipAsk)', () => {
+    const out = clipAsk({ verdict: 'answer', answer: 'make check', reason: long, source: `file: ${long}` })
+    expect(out.reason).toMatch(/^[^\r\n]{1,240}$/)
     expect(out.source).toMatch(/^[^\r\n]{1,240}$/)
   })
 })

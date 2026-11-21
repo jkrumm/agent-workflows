@@ -515,8 +515,7 @@ describe('serverOnly', () => {
   })
 
   test('the emitted x-cli carries serverOnly only where it is set', async () => {
-    const registry = createRegistry(createCapabilities({ transports: fakeTransports({}), env: {} }))
-    const entries = createFactoryAsk({ registry })
+    const entries = createFactoryAsk()
     const host = await startTestHost({ prefix: 'wfso', extra: [entries] })
     try {
       const doc = (await host.host.openapi()) as {

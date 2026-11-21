@@ -1,201 +1,120 @@
 import fixture from './fixtures/software-factory-loops.json'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { messageResponse, startFakeGateway } from '@agent-workflows/testing/gateway'
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { FakeAgentHost } from '@agent-workflows/testing/agent-host'
+import { freshSchema, inspector, testRuntime } from '@agent-workflows/testing/pg'
+import { loadAgentDefinitions } from '../src/agents.ts'
 import { createFactoryAsk } from '../src/workflows/factory-ask/index.ts'
 import askModule from '../src/workflows/factory-ask/module.ts'
 import { factoryAskScorer } from '../src/workflows/factory-ask/scorer.ts'
-import { type Body, startTestHost, type TestHost } from './support.ts'
+import { startTestHost } from './support.ts'
 
-const ask = {
-  decision: 'decision_1',
-  repo: 'agent-workflows',
-  issue: 'The gate command',
-  question: 'Which command runs the checks?',
-  recommendation: 'make check',
-  checked: 'A Bun monorepo.',
-  options: [
-    { label: 'make check', reversible: true, cost: 'none' },
-    { label: 'bun test', reversible: true, cost: 'skips lint' },
-  ],
-  noAnswer: { consequence: 'the lead takes make check', default: 'make check', waitMinutes: 60 },
-  precedents: [],
-}
-const answer = {
+const db = freshSchema('factoryask')
+const sql = inspector(db.schema)
+const roots: string[] = []
+/** A checkout committed beside the module whose plan settles the logging question. */
+const FIXTURE = join(import.meta.dir, '..', 'src', 'workflows', 'factory-ask', 'eval', 'fixture')
+
+beforeAll(async () => {
+  const rt = testRuntime({ schema: db.schema, workflows: [] })
+  await rt.open()
+  await rt.close()
+})
+afterAll(async () => {
+  for (const root of roots) rmSync(root, { recursive: true, force: true })
+  await sql.close()
+  await db.drop()
+})
+
+const decision = fixture.judge.input
+const fromPlan = {
   verdict: 'answer',
-  answer: 'make check',
-  reason: 'the plan names it',
-  source: 'plan: AGENTS.md, make check is the gate',
+  answer: 'pino',
+  reason: 'the plan decided pino for the worker',
+  source: 'file: docs/plan.yaml:5 logger: pino, as in example-app and example-api',
 }
 const owner = { verdict: 'owner', answer: '', source: '', reason: 'spend' }
-const tokens = { input_tokens: 900, output_tokens: 60 }
 
-const promptOf = (request: { body: Record<string, unknown> } | undefined) =>
-  String(((request?.body.messages ?? []) as Body[])[0]?.content)
-
-let t: TestHost
-let broken: Error | null = null
-beforeAll(async () => {
-  const iu = startFakeGateway({ messages: () => messageResponse(JSON.stringify(answer), tokens) })
-  t = await startTestHost({
-    prefix: 'factoryask',
-    iu,
-    extra: [
-      createFactoryAsk({
-        registry: {
-          call: (...args: unknown[]) =>
-            broken ? Promise.reject(broken) : Reflect.apply(t.registry.call, t.registry, args),
-        } as never,
-      }),
-    ],
-  })
-})
-afterAll(() => t.close())
-
-// A distinct input per run, so no run is adopted from an earlier one.
-let n = 0
-const run = async (over: Record<string, unknown> = {}) =>
-  t.json(
-    await t.call('/workflows/factory-ask', {
-      method: 'POST',
-      body: { ask: { ...ask, issue: `${ask.issue} ${n++}`, ...over } },
-      headers: { prefer: 'wait=20' },
-    }),
-  )
+async function run(host: FakeAgentHost, over: Record<string, unknown> = {}) {
+  const entry = createFactoryAsk()
+  const rt = testRuntime({ schema: db.schema, workflows: [entry.workflow], host })
+  await rt.open()
+  try {
+    const { runId } = await rt.start(entry.workflow, { ask: { ...decision, ...over } }, { purpose: 'build' })
+    return { runId, result: await rt.wait(runId) }
+  } finally {
+    await rt.close()
+  }
+}
+const answering = (output: unknown) => new FakeAgentHost(async () => ({ output: output as never }))
+const promptOf = (host: FakeAgentHost, n = 1) => host.sessions.get(`ses_${n}`)?.spec.prompt ?? ''
 
 describe('factory-ask workflow', () => {
-  test('the module is registered under the workflow id', () => {
+  test('the module is registered under the workflow id, with the factory-ask agent on the factory.ask route', () => {
     expect(askModule.id).toBe('factory-ask')
-  })
-
-  test('one run, one call: the verdict passes through and the step scope reached the wire', async () => {
-    const { status, body } = await run()
-    expect(status).toBe(200)
-    expect(body.status).toBe('done')
-    expect(body.output).toEqual(answer)
-    const sent = t.iu.requests.filter((r) => String((r.body.messages as Body[])[0]?.content).includes('Bun monorepo'))
-    expect(sent).toHaveLength(1)
-    expect(Object.fromEntries(sent[0]?.headers ?? [])).toMatchObject({
-      'x-agw-run-id': body.runId,
-      'x-agw-workflow': 'factory-ask',
-      'x-agw-step': 'judge',
-    })
-  })
-
-  test('the CLI reads the ask JSON from stdin as the one `ask` property', async () => {
-    const doc = (await (await t.call('/openapi.json')).json()) as {
-      paths: Record<string, Record<string, { 'x-cli': { command: string[]; stdin?: string } }>>
-    }
-    expect(doc.paths['/workflows/factory-ask']?.post?.['x-cli']).toMatchObject({
-      command: ['factory-ask'],
-      stdin: 'ask',
-    })
-  })
-
-  test('the old ask shape (question, options[], default, facts, plan) is a 400, nothing runs', async () => {
-    const response = await t.call('/workflows/factory-ask', {
-      method: 'POST',
-      body: { ask: { question: 'Which?', options: ['a'], default: 'a', facts: '', plan: '', repo: 'agent-workflows' } },
-    })
-    expect(response.status).toBe(400)
-  })
-
-  test('a malformed ask is a 400, nothing runs', async () => {
-    const response = await t.call('/workflows/factory-ask', {
-      method: 'POST',
-      body: { ask: { ...ask, options: 'make check' } },
-    })
-    expect(response.status).toBe(400)
-  })
-
-  test('an owner verdict passes through', async () => {
-    t.iu.on('messages', () => messageResponse(JSON.stringify(owner), tokens))
-    expect((await run()).body.output).toEqual(owner)
-    t.iu.on('messages', () => messageResponse(JSON.stringify(answer), tokens))
-  })
-
-  test('a model answer outside the options never leaves the workflow as an answer: the run fails', async () => {
-    t.iu.on('messages', () => messageResponse(JSON.stringify({ ...answer, answer: 'make test' }), tokens))
-    const { body } = await run()
-    expect(body.status).toBe('failed')
-    expect(body.output ?? null).toBeNull()
-    t.iu.on('messages', () => messageResponse(JSON.stringify(answer), tokens))
-  })
-})
-
-describe('the Decision (software-factory JudgeInput)', () => {
-  const decision = fixture.judge.input
-  const runDecision = async (over: Record<string, unknown> = {}) =>
-    t.json(
-      await t.call('/workflows/factory-ask', {
-        method: 'POST',
-        body: { ask: { ...decision, issue: `${decision.issue} ${n++}`, ...over } },
-        headers: { prefer: 'wait=20' },
-      }),
+    expect(createFactoryAsk().agents).toEqual([{ agent: 'factory-ask', route: 'factory.ask' }])
+    const definition = loadAgentDefinitions(join(import.meta.dir, '..', '..', '..', 'agents')).find(
+      (d) => d.name === 'factory-ask',
     )
-
-  test('the fixture verdict passes through, and the prompt carries the form and the precedent', async () => {
-    t.iu.on('messages', () => messageResponse(JSON.stringify(fixture.judge.output), tokens))
-    const { status, body } = await runDecision()
-    expect(status).toBe(200)
-    expect(body.output).toEqual(fixture.judge.output)
-    const sent = t.iu.requests.filter((r) => String((r.body.messages as Body[])[0]?.content).includes('access log'))
-    const prompt = promptOf(sent.at(-1))
-    expect(prompt).toContain('can be taken back')
-    expect(prompt).toContain('Which logging library for the worker?')
-    expect(prompt).toContain('need not have been asked')
-    t.iu.on('messages', () => messageResponse(JSON.stringify(answer), tokens))
+    expect(definition?.route).toBe('factory.ask')
+    // read, glob and grep only: no shell, no extra permission rules
+    expect(definition?.permissions).toBeUndefined()
   })
 
-  test('a Decision with none of the new fields reaches the seat as before: no class, no Issue facts, no Spec', async () => {
-    t.iu.on('messages', () => messageResponse(JSON.stringify(fixture.judge.output), tokens))
-    const { body } = await runDecision()
-    expect(body.output).toEqual(fixture.judge.output)
-    const prompt = promptOf(t.iu.requests.filter((r) => promptOf(r).includes('access log')).at(-1))
-    expect(prompt).not.toContain('Class of the question, as read by')
-    expect(prompt).not.toContain("The Issue as filed (the factory's scrubbed copy)")
-    expect(prompt).not.toContain('The Spec this question belongs to (its head')
-    expect(prompt).toContain('Plan excerpts:\n(none)')
-    t.iu.on('messages', () => messageResponse(JSON.stringify(answer), tokens))
+  test('on the fixture checkout the Judge reads it and answers what the plan settles, citing the file', async () => {
+    const host = answering(fromPlan)
+    const { runId, result } = await run(host, { checkout: FIXTURE })
+    expect(result.status).toBe('done')
+    expect(result.output).toEqual(fromPlan)
+    const session = host.sessions.get('ses_1')
+    expect(session?.spec.agent).toBe('factory-ask')
+    expect(session?.spec.options).toEqual({ output: 'json', allowDirectories: [FIXTURE] })
+    const prompt = promptOf(host)
+    expect(prompt).toContain(`read, glob and grep over the repo's checkout at ${FIXTURE}`)
+    expect(prompt).toContain('Which logging library should the access log use?')
+    expect((await sql.steps(runId)).map((s) => s.step_id)).toEqual(['scan', 'look'])
   })
 
-  test('the class, the Issue as filed and the Spec reach the seat inside the fence', async () => {
-    t.iu.on('messages', () => messageResponse(JSON.stringify(fixture.judge.output), tokens))
-    const { body } = await runDecision({
-      class: 'direction',
-      facts: 'FILED-zq: the owner wrote "use the library you prefer"',
-      spec: 'SPEC-zq: Decided: the worker logs JSON',
-    })
-    expect(body.status).toBe('done')
-    const prompt = promptOf(t.iu.requests.filter((r) => promptOf(r).includes('FILED-zq')).at(-1))
-    const start = prompt.indexOf('_BEGIN>>>')
-    const end = prompt.lastIndexOf('_END>>>')
-    for (const text of [
-      'Class of the question, as read by the lead or the factory (a claim to check): direction',
-      'FILED-zq',
-      'SPEC-zq',
-    ]) {
-      expect(prompt.lastIndexOf(text)).toBeGreaterThan(start)
-      expect(prompt.lastIndexOf(text)).toBeLessThan(end)
-    }
-    t.iu.on('messages', () => messageResponse(JSON.stringify(answer), tokens))
+  test('without a checkout the Judge gets no directory and is told so', async () => {
+    const host = answering(owner)
+    const { runId, result } = await run(host)
+    expect(result.output).toEqual(owner)
+    expect(host.sessions.get('ses_1')?.spec.options).toEqual({ output: 'json' })
+    expect(promptOf(host)).toContain('No checkout was handed over (none was named)')
+    expect((await sql.steps(runId)).map((s) => s.step_id)).toEqual(['look'])
   })
 
-  test('an unknown class and an oversize Issue text or Spec are a 400, nothing runs', async () => {
-    for (const over of [{ class: 'taste' }, { facts: 'x'.repeat(8_001) }, { spec: 'x'.repeat(20_001) }]) {
-      const response = await t.call('/workflows/factory-ask', {
-        method: 'POST',
-        body: { ask: { ...decision, ...over } },
-      })
-      expect(response.status).toBe(400)
-    }
+  test('a checkout with a link that leaves it is not handed over: the Judge answers from the request', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agw-ask-'))
+    roots.push(root)
+    writeFileSync(join(root, 'AGENTS.md'), '# x\n')
+    symlinkSync(tmpdir(), join(root, 'escape'))
+    const host = answering(owner)
+    await run(host, { checkout: root })
+    expect(host.sessions.get('ses_1')?.spec.options).toEqual({ output: 'json' })
+    expect(promptOf(host)).toContain('No checkout was handed over (a link leaves the checkout')
   })
 
-  test('an answer outside the labels fails the run', async () => {
-    t.iu.on('messages', () => messageResponse(JSON.stringify({ ...fixture.judge.output, answer: 'bunyan' }), tokens))
-    const { body } = await runDecision()
-    expect(body.status).toBe('failed')
-    expect(body.output ?? null).toBeNull()
-    t.iu.on('messages', () => messageResponse(JSON.stringify(answer), tokens))
+  test('the case file reaches the Judge inside its CASE fence', async () => {
+    const host = answering(fromPlan)
+    await run(host, { case: { plan: 'PLAN-zq logger: pino', ownerNotes: [{ at: 'today', text: 'NOTE-zq' }] } })
+    const prompt = promptOf(host)
+    const begin = /\n<<<CASE_([0-9a-f]{32})_BEGIN>>>\n/.exec(prompt)
+    expect(begin).not.toBeNull()
+    const block = prompt.slice(begin?.index ?? 0, prompt.indexOf(`\n<<<CASE_${begin?.[1]}_END>>>\n`))
+    expect(block).toContain('PLAN-zq logger: pino')
+    expect(block).toContain('NOTE-zq')
+  })
+
+  test('an answer outside the labels is retried once with the directive, then the run fails', async () => {
+    const host = answering({ ...fromPlan, answer: 'bunyan' })
+    const { result } = await run(host)
+    expect(result.status).toBe('failed')
+    expect(result.output ?? null).toBeNull()
+    expect(host.sessions.size).toBe(2)
+    expect(promptOf(host, 2)).toContain('RETRY')
   })
 
   test('an option that cannot be taken back is never the answer', async () => {
@@ -203,59 +122,61 @@ describe('the Decision (software-factory JudgeInput)', () => {
       { label: 'pino', reversible: false, cost: 'rewrites the log format for good' },
       { label: 'winston', reversible: true, cost: 'one dependency' },
     ]
-    t.iu.on('messages', () => messageResponse(JSON.stringify(fixture.judge.output), tokens))
-    const { body } = await runDecision({ options })
-    expect(body.output).toMatchObject({ verdict: 'owner', answer: '', source: '' })
-    expect(body.output.reason).toContain('cannot be taken back')
-    t.iu.on('messages', () => messageResponse(JSON.stringify(answer), tokens))
+    const { result } = await run(answering(fromPlan), { options })
+    expect(result.output).toMatchObject({ verdict: 'owner', answer: '', source: '' })
+    expect((result.output as { reason: string }).reason).toContain('cannot be taken back')
   })
 
-  test('a Decision whose assembled facts pass the cap is refused, not cut: the owner’s', async () => {
-    t.iu.on('messages', () => messageResponse(JSON.stringify(fixture.judge.output), tokens))
-    const before = t.iu.requests.length
-    const { status, body } = await runDecision({
+  test('a Decision whose assembled facts pass the cap is refused, not cut: the owner’s, and no session opens', async () => {
+    const host = answering(fromPlan)
+    const { result } = await run(host, {
       checked: 'c'.repeat(19_000),
       options: [
         { label: 'pino', reversible: true, cost: 'x'.repeat(900) },
         { label: 'winston', reversible: true, cost: 'y'.repeat(900) },
       ],
     })
-    expect(status).toBe(200)
-    expect(body.output).toMatchObject({ verdict: 'owner', answer: '', source: '' })
-    expect(body.output.reason).toStartWith('judge unavailable: ')
-    // nothing went to the model: the Judge never saw a prefix
-    expect(t.iu.requests.length).toBe(before)
-    t.iu.on('messages', () => messageResponse(JSON.stringify(answer), tokens))
+    expect(result.output).toMatchObject({ verdict: 'owner', answer: '', source: '' })
+    expect((result.output as { reason: string }).reason).toStartWith('judge unavailable: ')
+    expect(host.sessions.size).toBe(0)
   })
 
-  test('two options with one label, one of them irreversible, are never the Judge’s', async () => {
-    const options = [
-      { label: 'pino', reversible: true, cost: 'one dependency' },
-      { label: 'pino', reversible: false, cost: 'rewrites the format for good' },
-    ]
-    t.iu.on('messages', () => messageResponse(JSON.stringify(fixture.judge.output), tokens))
-    const { body } = await runDecision({ options })
-    expect(body.output).toMatchObject({ verdict: 'owner', answer: '', source: '' })
-    t.iu.on('messages', () => messageResponse(JSON.stringify(answer), tokens))
-  })
-
-  test('a Decision that is missing a field is a 400', async () => {
-    const { recommendation: _missing, ...rest } = decision
-    const response = await t.call('/workflows/factory-ask', { method: 'POST', body: { ask: rest } })
-    expect(response.status).toBe(400)
+  test('a crashing agent fails the run, it is not an owner verdict', async () => {
+    const host = new FakeAgentHost(async () => {
+      throw new Error('provider exploded')
+    })
+    const { result } = await run(host)
+    expect(result.status).toBe('failed')
+    expect(result.output ?? null).toBeNull()
   })
 })
 
-describe('a failing call', () => {
-  test('fails the run, it is not an owner verdict', async () => {
-    broken = new Error('gateway exploded sk-secret-token')
+describe('the HTTP surface', () => {
+  test('the CLI reads the one `ask` property from stdin; malformed, old-shaped and oversize asks are a 400', async () => {
+    const t = await startTestHost({ prefix: 'factoryask', extra: [createFactoryAsk()] })
     try {
-      const { body } = await run()
-      expect(body.status).toBe('failed')
-      expect(body.output ?? null).toBeNull()
-      expect(body.error).toMatchObject({ kind: 'step_failed' })
+      const { recommendation: _missing, ...missing } = decision
+      for (const bad of [
+        { question: 'Which?', options: ['a'], default: 'a', facts: '', plan: '', repo: 'agent-workflows' },
+        { ...decision, options: 'pino' },
+        missing,
+        { ...decision, class: 'taste' },
+        { ...decision, facts: 'x'.repeat(8_001) },
+        { ...decision, spec: 'x'.repeat(20_001) },
+        { ...decision, checkout: 'relative/path' },
+        { ...decision, case: { plan: 'x'.repeat(100_001) } },
+      ])
+        expect((await t.call('/workflows/factory-ask', { method: 'POST', body: { ask: bad } })).status).toBe(400)
+      const doc = (await t.call('/openapi.json').then((r) => r.json())) as {
+        paths: Record<string, Record<string, { 'x-cli': { command: string[]; stdin?: string; serverOnly?: boolean } }>>
+      }
+      expect(doc.paths['/workflows/factory-ask']?.post?.['x-cli']).toMatchObject({
+        command: ['factory-ask'],
+        stdin: 'ask',
+        serverOnly: true,
+      })
     } finally {
-      broken = null
+      await t.close()
     }
   })
 })

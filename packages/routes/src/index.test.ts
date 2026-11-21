@@ -472,11 +472,6 @@ describe('fallback', () => {
       'cheap.summarize',
       'cheap.extract',
       'overview.classify',
-      'factory.steward',
-      'factory.queue',
-      'factory.triage',
-      'factory.screen',
-      'factory.errand',
       'factory.errandneeded',
       'factory.specscreen',
     ] as const) {
@@ -493,7 +488,11 @@ describe('fallback', () => {
     expect(resolveRoute('triage', {}).fallback).toMatchObject(terraLow)
     for (const id of [
       'narrative',
-      'factory.ask',
+      'factory.steward',
+      'factory.queue',
+      'factory.triage',
+      'factory.screen',
+      'factory.errand',
       'prose.write',
       'podcast.research',
       'podcast.editorial',
@@ -504,7 +503,7 @@ describe('fallback', () => {
       expect(resolveRoute(id, {}).fallback).toMatchObject(terraMedium)
     }
     expect(resolveRoute('prose.write', {}).effort).toBe('medium')
-    for (const id of ['retro.analyze'] as const) {
+    for (const id of ['retro.analyze', 'factory.ask'] as const) {
       expect(resolveRoute(id, {})).toMatchObject({ wire: 'opencode', model: 'claude-sonnet-5-5', effort: 'medium' })
       expect(resolveRoute(id, {}).fallback).toMatchObject({ ...terraMedium, wire: 'opencode', rate: terraRate })
     }

@@ -27,18 +27,33 @@ export {
   type DigestOutput,
   type DigestResult,
 } from './capabilities/digest.ts'
-// The `factory-ask` workflow shares the ask seat's input limits and its guard.
+// The `factory-ask` workflow builds the Judge's task message, its answer schema and its guards here; the agent step is the workflow's.
 export {
+  ASK_SUBMIT_RETRY,
+  askNonce,
   askOfJudge,
+  buildFactoryAskPrompt,
+  clipAsk,
   factoryAskInput,
   factoryAskOutput,
+  factoryAskOutputFor,
   factoryJudgeInput,
   guardAsk,
   guardJudge,
+  type AskLook,
   type FactoryAskInput,
   type FactoryAskOutput,
   type FactoryJudgeInput,
 } from './capabilities/factory-ask.ts'
+// Every factory judge's optional case file.
+export {
+  CASE_OUTCOMES,
+  caseChars,
+  factoryCase,
+  factoryStewardCase,
+  MAX_CASE_CHARS,
+  type FactoryCase,
+} from './capabilities/factory-case.ts'
 // The `factory-steward`, `factory-queue`, `factory-triage`, `factory-screen`, `factory-errand`, `factory-errand-needed` and `factory-spec-screen` workflows share their seats' vocabulary, input limits and guards.
 export {
   buildFactoryStewardPrompt,
