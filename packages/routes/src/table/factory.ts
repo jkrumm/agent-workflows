@@ -34,6 +34,10 @@ const routes = {
   // hears). The owner's marks on earlier Specs come as precedents; the guard turns a settle without a reason into a pass.
   // Eval: `factory-spec-screen`, 21 cases (17 scored in the runs of 2026-11-16, 34 case runs, no hand-written report; the four added on 2026-11-20 are not yet scored).
   'factory.specscreen': { wire: 'anthropic', ...EASY.call },
+  // Software-factory's look at a gate's Spec before the owner is paged: ready, or back to its lead with what to sharpen. An agent
+  // step with read, glob and grep over the repo's checkout (agents/factory-spec-look), the Judge's own seat. Once per gate Spec.
+  // Eval: `factory-spec-look`.
+  'factory.speclook': { wire: 'opencode', ...HARD.agent },
   // Software-factory's hygiene loop: an agent step with read-only tools (read, glob, grep) over a checkout; it reads several
   // files and judges text, so the default agent tier. Eval: `factory-hygiene`, 3 cases (docs/evals/2026-11-16-factory-decision-suites.md); the guard bounds what it can say.
   'factory.hygiene': { wire: 'opencode', ...EASY.agent },

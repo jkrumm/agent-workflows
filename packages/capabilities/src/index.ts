@@ -45,6 +45,19 @@ export {
   type FactoryAskOutput,
   type FactoryJudgeInput,
 } from './capabilities/factory-ask.ts'
+// The `factory-spec-look` workflow builds the Judge's look at a gate's Spec: its task message, answer schema and guard.
+export {
+  buildFactorySpecLookPrompt,
+  factorySpecLookInput,
+  factorySpecLookOutput,
+  guardSpecLook,
+  SPEC_LOOK_NOTE_MAX_CHARS,
+  SPEC_LOOK_SUBMIT_RETRY,
+  SPEC_LOOK_VERDICTS,
+  specLookNonce,
+  type FactorySpecLookInput,
+  type FactorySpecLookOutput,
+} from './capabilities/factory-spec-look.ts'
 // Every factory judge's optional case file.
 export {
   CASE_OUTCOMES,

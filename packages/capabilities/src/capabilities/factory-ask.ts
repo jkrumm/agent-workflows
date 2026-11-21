@@ -83,6 +83,17 @@ export const JUDGE_CLASSES = [
 ] as const
 
 /**
+ * The checkout a Judge reads. It is named outside the fence, so it is held to plain path characters: no prose can ride on it.
+ * The factory's Spec look takes the same field.
+ */
+export const checkoutPath = z
+  .string()
+  .min(1)
+  .max(500)
+  .regex(/^[A-Za-z0-9._@+/-]+$/, 'a plain path')
+  .refine(isAbsolute, 'checkout must be an absolute path')
+
+/**
  * The factory's Decision, as software-factory sends it (its `JudgeInput`): the lead's form with its required fields, and the
  * owner's earlier answers to similar questions. Everything but the ids is untrusted data. The workflow turns it into a
  * `factoryAskInput` (`askOfJudge`), the one thing the seat's prompt is built from.
@@ -139,13 +150,7 @@ export const factoryJudgeInput = z.object({
     .max(MAX_SPEC_CHARS)
     .optional()
     .describe('The head of the Spec the question belongs to, with its Build and Decided sections; untrusted data'),
-  checkout: z
-    .string()
-    .min(1)
-    .max(500)
-    // It is named outside the fence, so it is held to plain path characters: no prose can ride on it.
-    .regex(/^[A-Za-z0-9._@+/-]+$/, 'a plain path')
-    .refine(isAbsolute, 'checkout must be an absolute path')
+  checkout: checkoutPath
     .optional()
     .describe("The repo's checkout the Judge reads with read, glob and grep; absent, it judges from the request alone"),
   case: factoryCase.optional(),

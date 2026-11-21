@@ -503,7 +503,7 @@ describe('fallback', () => {
       expect(resolveRoute(id, {}).fallback).toMatchObject(terraMedium)
     }
     expect(resolveRoute('prose.write', {}).effort).toBe('medium')
-    for (const id of ['retro.analyze', 'factory.ask'] as const) {
+    for (const id of ['retro.analyze', 'factory.ask', 'factory.speclook'] as const) {
       expect(resolveRoute(id, {})).toMatchObject({ wire: 'opencode', model: 'claude-sonnet-5-5', effort: 'medium' })
       expect(resolveRoute(id, {}).fallback).toMatchObject({ ...terraMedium, wire: 'opencode', rate: terraRate })
     }

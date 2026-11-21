@@ -35,7 +35,7 @@ const isInvalidOutput = (error: unknown) => error instanceof StepFailed && error
  * Where the Judge reads. A checkout with a link that leaves it is not handed over (the agent's grant is matched against the
  * path it names, not where a link leads), and neither is one too large to vouch for: the Judge then answers from the request.
  */
-async function lookOf(ctx: Ctx, checkout: string | undefined): Promise<AskLook> {
+export async function lookOf(ctx: Ctx, checkout: string | undefined): Promise<AskLook> {
   if (checkout === undefined) return { none: 'none was named' }
   const scan = await ctx.step('scan', async () => {
     const link = await findEscapingLink(checkout).catch(() => 'the checkout could not be scanned')
