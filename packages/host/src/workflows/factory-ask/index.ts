@@ -41,7 +41,8 @@ async function lookOf(ctx: Ctx, checkout: string | undefined): Promise<AskLook> 
     const link = await findEscapingLink(checkout).catch(() => 'the checkout could not be scanned')
     return { link }
   })
-  return scan.link === null ? { checkout } : { none: `a link leaves the checkout or it cannot be read: ${scan.link}` }
+  // The link's name is the repo's text, so it stays in the journal and never reaches the prompt's rules.
+  return scan.link === null ? { checkout } : { none: 'a link leaves the checkout, or it could not be scanned' }
 }
 
 /** One agent step and one retry with the `submit_result` directive; two invalid answers fail the run. */

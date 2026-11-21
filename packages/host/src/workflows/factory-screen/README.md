@@ -34,7 +34,7 @@ echo '{"signal":{"id":"sig_7","source":"feedback:example-app","kind":"feedback",
 
 ## Route
 
-`factory.screen`: the `EASY` tier (Haiku high); the model lives only in the tier.
+`factory.screen`: the `HARD` tier (Sonnet medium) since 2026-11-21, when the judges began reading the case file; it was `EASY` (Haiku high). 2 calls a week at that date's volume; the model lives only in the tier.
 
 ## Eval
 

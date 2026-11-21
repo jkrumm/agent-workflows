@@ -36,7 +36,7 @@ echo '{"repo":"app","issues":[{"id":"issue_12","title":"…","kind":"bug","state
 
 ## Route
 
-`factory.queue` (`packages/routes/src/table/factory.ts`): the `EASY` tier (Haiku high); the model lives only in the tier.
+`factory.queue` (`packages/routes/src/table/factory.ts`): the `HARD` tier (Sonnet medium) since 2026-11-21, when the judges began reading the case file; it was `EASY` (Haiku high). 529 calls a week at that date's volume; the model lives only in the tier.
 
 ## Eval
 

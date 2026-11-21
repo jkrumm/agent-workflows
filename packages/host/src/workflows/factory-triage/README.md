@@ -29,7 +29,7 @@ echo '{"mode":"settle","repo":"app","issue":{"id":"issue_20","title":"…","text
 
 ## Route
 
-`factory.triage`: the `EASY` tier (Haiku high); the model lives only in the tier.
+`factory.triage`: the `HARD` tier (Sonnet medium) since 2026-11-21, when the judges began reading the case file; it was `EASY` (Haiku high). 2,006 calls a week at that date's volume; the model lives only in the tier.
 
 ## Eval
 

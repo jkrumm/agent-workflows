@@ -33,7 +33,7 @@ echo '{"errand":{"id":"e_7","summary":"Approve the sign-in prompt on the test de
 
 ## Route
 
-`factory.errand`: the `EASY` tier (Haiku high); the model lives only in the tier.
+`factory.errand`: the `HARD` tier (Sonnet medium) since 2026-11-21, when the judges began reading the case file; it was `EASY` (Haiku high). 101 calls a week at that date's volume; the model lives only in the tier.
 
 ## Eval
 

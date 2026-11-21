@@ -32,7 +32,7 @@ echo '{"issue":"issue_12","repo":"app","title":"…","kind":"bug","cause":"block
 
 ## Route
 
-`factory.steward` (`packages/routes/src/table/factory.ts`): the `EASY` tier (Haiku high); the model lives only in the tier.
+`factory.steward` (`packages/routes/src/table/factory.ts`): the `HARD` tier (Sonnet medium) since 2026-11-21, when the judges began reading the case file; it was `EASY` (Haiku high). 81 calls a week at that date's volume; the model lives only in the tier.
 
 ## Eval
 

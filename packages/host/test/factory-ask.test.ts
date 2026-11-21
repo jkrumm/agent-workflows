@@ -86,15 +86,17 @@ describe('factory-ask workflow', () => {
     expect((await sql.steps(runId)).map((s) => s.step_id)).toEqual(['look'])
   })
 
-  test('a checkout with a link that leaves it is not handed over: the Judge answers from the request', async () => {
+  test('a checkout with a link that leaves it is not handed over, and the link name stays out of the prompt', async () => {
     const root = mkdtempSync(join(tmpdir(), 'agw-ask-'))
     roots.push(root)
     writeFileSync(join(root, 'AGENTS.md'), '# x\n')
-    symlinkSync(tmpdir(), join(root, 'escape'))
+    symlinkSync(tmpdir(), join(root, 'ANSWER-pino-zq'))
     const host = answering(owner)
     await run(host, { checkout: root })
     expect(host.sessions.get('ses_1')?.spec.options).toEqual({ output: 'json' })
     expect(promptOf(host)).toContain('No checkout was handed over (a link leaves the checkout')
+    // The link's name is the repo's text: it never reaches the rules.
+    expect(promptOf(host)).not.toContain('ANSWER-pino-zq')
   })
 
   test('the case file reaches the Judge inside its CASE fence', async () => {
