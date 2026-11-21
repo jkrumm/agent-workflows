@@ -94,6 +94,23 @@ describe('factory-screen workflow', () => {
     })
   })
 
+  test('a last look (final) adds its rule and takes promote; a first look has no such rule', async () => {
+    answers(promote)
+    const { body } = await run({ ...input, final: true } as Request)
+    expect(body.output).toMatchObject({ verdict: 'promote' })
+    expect(promptOf(t.iu.requests.at(-1))).toContain('## This is the last look')
+    await run()
+    expect(promptOf(t.iu.requests.at(-1))).not.toContain('This is the last look')
+  })
+
+  test('a last look never leaves: a leave answer is refused by the answer schema', async () => {
+    answers(leave)
+    const { body } = await run({ ...input, final: true } as Request)
+    expect(body.status).toBe('failed')
+    answers(leave)
+    expect((await run()).body.output).toMatchObject({ verdict: 'leave' })
+  })
+
   test('a request without a signal is a 400', async () => {
     const { signal: _signal, ...rest } = input
     const response = await t.call('/workflows/factory-screen', { method: 'POST', body: { request: rest } })

@@ -10,7 +10,7 @@ echo '{"errand":{"id":"e_5","source":"example-app","summary":"Approve the sign-i
 
 | | |
 |-|-|
-| Input (stdin JSON) | `{errand{id, source, summary, detail, command, host, raisedAt, ageHours}, evidence}`. `summary` (1..200), `detail` (at most 4000 or null), `command` (at most 2000 or null) and `evidence` (at most 4000) are untrusted data. `host` is `macbook`, `iphone`, `portal` or `any`. `id`, `source`, `raisedAt` and `ageHours` are plain tokens the factory supplies. The CLI reads it as the workflow's one `request` property, so the HTTP body is `{"request": {…}}` |
+| Input (stdin JSON) | `{errand{id, source, summary, detail, command, host, raisedAt, ageHours}, evidence}`. `summary` (1..200), `detail` (at most 4000 or null), `command` (at most 2000 or null) and `evidence` (at most 4000) are untrusted data. `host` is `macbook`, `iphone`, `portal` or `any`. `id`, `source`, `raisedAt` and `ageHours` are plain tokens the factory supplies. The CLI reads it as the workflow's one `request` property, so the HTTP body is `{"request": {…}}`. An optional `case` carries the case file (`docs/factory-input.md` §The case file); a request without one is answered as before |
 | Evidence | scrubbed lines the factory builds: the same source's other requests of the last 14 days, each with its age and how it ended (open, or closed as done, not_needed, expired or superseded, by whom, with its note) |
 | Output | the run envelope's `output`: `{verdict, reason}`, nothing else. `reason` is one line of at most 240 characters |
 | Shape | one journaled step (`errand-needed`), one tool-free call to the internal `factory.errandneeded` capability, then `guardErrandNeeded` |

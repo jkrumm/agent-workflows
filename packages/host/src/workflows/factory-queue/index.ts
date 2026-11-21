@@ -6,7 +6,7 @@ import { factoryQueueScorer } from './scorer.ts'
 import { FactoryQueueInput, FactoryQueueOutput } from './schema.ts'
 
 const FACTORY_QUEUE_WORKFLOW_ID = 'factory-queue'
-const FACTORY_QUEUE_VERSION = '2026-11-20.1'
+const FACTORY_QUEUE_VERSION = '2026-11-21.1'
 
 /** The one capability the workflow calls; any registry that has `factory.queue` fits. */
 export type QueueCaller = Pick<HostRegistry, 'call'>

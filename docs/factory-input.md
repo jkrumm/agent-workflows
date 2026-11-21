@@ -26,6 +26,27 @@ Workflows on it: review, check, research, otel, brain, diagram, prose (+ polish,
 narrative, overview, triage, decide, eval, retrospective, learnings, smoke, and, for the factory, (`factory-classify` was removed on 2026-11-17: software-factory dropped the Classify station), `factory-ask` (whether a lead's `factory issue ask` is the owner's or answerable from the plan or its declared default; takes the factory's Decision; `packages/host/src/workflows/factory-ask/README.md`), `factory-steward` (what a stalled Issue needs: wake, requeue or a Decision; `packages/host/src/workflows/factory-steward/README.md`), `factory-queue` (`after` edges and a tie-break order for a repo's queued Issues, never against the owner's prio; `packages/host/src/workflows/factory-queue/README.md`), `factory-triage` (amend, settled-by-a-recently-closed-Issue or new for a signal, and the `after` edges of a new Issue; `packages/host/src/workflows/factory-triage/README.md`), `factory-screen` (promote, dismiss or leave for a held signal, with the Issue it duplicates or the repo it belongs to; `packages/host/src/workflows/factory-screen/README.md`), `factory-errand` (whether an Errand, a lead's "I need the owner's hands", is worth paging the owner: pass or turn_away; `packages/host/src/workflows/factory-errand/README.md`), `factory-errand-needed` (whether an open request for the owner's hands with no check command is still needed: needed, not_needed or unsure; `packages/host/src/workflows/factory-errand-needed/README.md`), `factory-spec-screen` (whether a Spec is the owner's to read, pass, or its lead's to decide, settle, with a one-line reason; `packages/host/src/workflows/factory-spec-screen/README.md`), `factory-hygiene` (stale and filler findings over a read-only checkout, from an agent with read-only tools; `packages/host/src/workflows/factory-hygiene/README.md`), and `digest` (short texts for a batch of up to 64 items: heading, session, reply, window; `packages/host/src/workflows/digest/README.md`). Callers: Claude Code
 skills, Hermes, iris, Argo (overview, usage), usage-tracker (runtimes outside the platform only).
 
+## The case file
+
+Every factory judge (`factory-ask`, `-steward`, `-queue`, `-triage`, `-screen`, `-errand`, `-errand-needed`) takes one
+optional input, `case`: what the factory holds about the judgment beyond the request itself. One schema
+(`packages/capabilities/src/capabilities/factory-case.ts`), every part optional, every text untrusted data.
+
+| Part | Holds |
+|-|-|
+| `issue` | `{text, facts}`: the Issue as filed and its facts |
+| `ownerNotes` | `[{at, text}]`: the owner's notes, oldest first |
+| `repo` | `{project, agents}`: the project.yaml summary and the head of AGENTS.md |
+| `open` | `[{id, title, summary, state, after[], before[]}]`: the repo's open Issues with their edges |
+| `plan` | the plan rows of the Issue and its neighbours, as text |
+| `precedents` | `[{at, subject, answer, outcome}]`: this judge's earlier answers in the repo, newest first; `outcome` is `stood`, `overruled`, `raised_again` or `unknown` |
+| `pane` | steward only: the last lines of the lead's terminal (stripped from every other judge's input) |
+
+The parts go into the prompt as their own CASE block under the prompt's fence nonce, after the request, with one line per
+present part saying what it is for in that judge's work. The whole case is capped at 100,000 characters of text (a case of
+60,000 is accepted); a longer one is refused with the request, never cut. A request without a case, or with an empty one,
+gets exactly the prompt it got before the case existed.
+
 ## What a factory station gets for free
 
 - **Durability.** A station that is a workflow resumes after a crash or deploy at its last journaled

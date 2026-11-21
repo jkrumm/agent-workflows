@@ -11,7 +11,7 @@ echo '{"repo":"app","issues":[{"id":"issue_12","title":"…","kind":"bug","state
 
 | | |
 |-|-|
-| Input (stdin JSON) | `{repo, issues[]}`; an Issue is `{id, title, kind, state, prio, ageMinutes, size, summary, after[]}` (1 to 40). `state: "queued"` marks the Issues to order, any other state is chain context. `prio` is the owner's (−1000..1000), `after` the edges that exist. The CLI reads it as the workflow's one `queue` property, so the HTTP body is `{"queue": {…}}`. `title` and `summary` are untrusted data |
+| Input (stdin JSON) | `{repo, issues[]}`; an Issue is `{id, title, kind, state, prio, ageMinutes, size, summary, after[]}` (1 to 40). `state: "queued"` marks the Issues to order, any other state is chain context. `prio` is the owner's (−1000..1000), `after` the edges that exist. The CLI reads it as the workflow's one `queue` property, so the HTTP body is `{"queue": {…}}`. `title` and `summary` are untrusted data. An optional `case` carries the case file (`docs/factory-input.md` §The case file); a request without one is answered as before |
 | Output | the run envelope's `output`: `{edges[{issue, after, reason}], order[], reason}` (every `reason` is one line, clipped to 240 in code). `edges`: proposed new edges (at most 10), `[]` is the common answer. `order`: every queued Issue once, first to start at the front, or `[]` when the factory's order stands |
 | Shape | one journaled step (`queue`), one tool-free call to the internal `factory.queue` capability |
 | Pending | exit 10 like every workflow (`agw run wait <runId>`) |

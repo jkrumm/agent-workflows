@@ -10,7 +10,7 @@ echo '{"errand":{"id":"e_7","summary":"Approve the sign-in prompt on the test de
 
 | | |
 |-|-|
-| Input (stdin JSON) | `{errand{id, summary, detail, command?, host?, need?}, issue{id, repo, title, kind}}`. `summary` (1..500), `detail` (at most 8000, or null) and `command` (at most 2000, optional) are untrusted data, as is `issue.title`. `host` is `mini` or `macbook`, `need` is `secret`, `hands`, `place` or `approval`; all three are optional, and an input without them behaves as before. The CLI reads it as the workflow's one `request` property, so the HTTP body is `{"request": {…}}` |
+| Input (stdin JSON) | `{errand{id, summary, detail, command?, host?, need?}, issue{id, repo, title, kind}}`. `summary` (1..500), `detail` (at most 8000, or null) and `command` (at most 2000, optional) are untrusted data, as is `issue.title`. `host` is `mini` or `macbook`, `need` is `secret`, `hands`, `place` or `approval`; all three are optional, and an input without them behaves as before. The CLI reads it as the workflow's one `request` property, so the HTTP body is `{"request": {…}}`. An optional `case` carries the case file (`docs/factory-input.md` §The case file); a request without one is answered as before |
 | Output | the run envelope's `output`: `{verdict, reason}`, nothing else. `reason` is one line of at most 240 characters; on a `turn_away` it is written to the lead and says what to do instead |
 | Shape | one journaled step (`errand`), one tool-free call to the internal `factory.errand` capability, then `guardErrand` |
 | Idempotency | the key `factory-errand:<errand>:<try>` is the caller's (`agw run`); the workflow implements nothing for it |

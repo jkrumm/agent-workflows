@@ -11,7 +11,7 @@ import { factoryStewardScorer } from './scorer.ts'
 import { FactoryStewardInput, FactoryStewardOutput } from './schema.ts'
 
 const FACTORY_STEWARD_WORKFLOW_ID = 'factory-steward'
-const FACTORY_STEWARD_VERSION = '2026-11-16.1'
+const FACTORY_STEWARD_VERSION = '2026-11-21.1'
 
 /** The one capability the workflow calls; any registry that has `factory.steward` fits. */
 export type StewardCaller = Pick<HostRegistry, 'call'>

@@ -10,7 +10,7 @@ echo '{"issue":"issue_12","repo":"app","title":"…","kind":"bug","cause":"block
 
 | | |
 |-|-|
-| Input (stdin JSON) | `{issue, repo, title, kind, cause, detail, stalledMinutes, attempt, restarts, regressions, stewardWakes, notes[], history[]}`; the CLI reads it as the workflow's one `stall` property, so the HTTP body is `{"stall": {…}}`. `cause` is `wall`, `unreported`, `blocked`, `lead_gone` or `regressed`. `title`, `detail`, `notes` and `history` are untrusted data |
+| Input (stdin JSON) | `{issue, repo, title, kind, cause, detail, stalledMinutes, attempt, restarts, regressions, stewardWakes, notes[], history[]}`; the CLI reads it as the workflow's one `stall` property, so the HTTP body is `{"stall": {…}}`. `cause` is `wall`, `unreported`, `blocked`, `lead_gone` or `regressed`. `title`, `detail`, `notes` and `history` are untrusted data. An optional `case` carries the case file (`docs/factory-input.md` §The case file); a request without one is answered as before |
 | Output | the run envelope's `output`: `{action: wake\|requeue\|raise_decision\|none, note, reason, decision}`. `decision` is the full Decision form (`question`, `recommendation`, `checked`, `options[{label, reversible, cost}]`, `noAnswer{consequence, default, waitMinutes}`) for `raise_decision` and `null` otherwise |
 | Shape | one journaled step (`steward`), one tool-free call to the internal `factory.steward` capability |
 | Pending | exit 10 like every workflow (`agw run wait <runId>`) |
