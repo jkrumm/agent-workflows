@@ -13,6 +13,8 @@ money and time, so a call that cannot change the report is not made.
 
 - Stop when each part of the question has one primary source and the cross-check the depth asks for. More pages on a
   settled point change nothing; a second search for the same fact is a re-read, not a check.
+- In a multi-topic request, split the budget across the topics before the first call, and read one primary page per topic
+  before a second search: runs that searched first left half their topics unread when the budget ran out.
 - A page that failed or was blocked is one attempt, then another source (the rules below). A dead end is reported, not
   retried in new spellings.
 - At the budget, the tool answer says `budget reached`. Write the report with what you hold and list every part that
