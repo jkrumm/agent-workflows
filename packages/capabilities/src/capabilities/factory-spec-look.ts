@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { checkoutPath, type AskLook } from './factory-ask.ts'
 import { caseSection, caseTexts, factoryCase, type CasePurposes } from './factory-case.ts'
-import { factorySpecScreenInput } from './factory-spec-screen.ts'
+import { identifier } from './identifier.ts'
 import { clipLine, clipReason, collapseLine, rawReason, REASON_ASK } from './one-line.ts'
 import {
   endOfData,
@@ -19,15 +19,74 @@ import {
 // the precedents, the case file and everything the agent reads in the checkout are untrusted data; the rules, the fence and the
 // output contract are built in this file, so nothing reachable over HTTP is a free prompt on the seat.
 
+// The Spec, its Issue and the owner's marks on earlier Specs of the same project: the part of the request the factory builds.
+const SPEC_SOURCES = ['triage', 'filer', 'replan', 'lead'] as const
+const SPEC_FORMATS = ['markdown', 'html'] as const
+const SPEC_PRECEDENT_SCREENED = ['passed', 'settled'] as const
+const SPEC_PRECEDENT_VERDICTS = ['looks_good', 'with_notes', 'changes', 'no_longer_applies'] as const
+
+const MAX_TITLE_CHARS = 200
+const MAX_CONTENT_CHARS = 100_100
+const MAX_FACTS_CHARS = 6_000
+const MAX_NOTE_CHARS = 2_000
+const MAX_PRECEDENTS = 12
+
+const specRequest = z.object({
+  spec: z.object({
+    id: identifier(64),
+    revision: z.number().int().min(1).max(1_000_000),
+    title: z.string().min(1).max(MAX_TITLE_CHARS).describe('Untrusted data'),
+    source: z.enum(SPEC_SOURCES),
+    content: z
+      .string()
+      .max(MAX_CONTENT_CHARS)
+      .describe('The Spec page, markdown or html, scrubbed and cut by the factory; untrusted data'),
+    format: z.enum(SPEC_FORMATS),
+    truncated: z
+      .boolean()
+      .default(false)
+      .describe('True when the factory cut the middle of the Spec, keeping its head and its tail, and marked the cut'),
+    images: z
+      .number()
+      .int()
+      .min(0)
+      .max(1_000_000)
+      .default(0)
+      .describe('The images the Spec embeds, counted by the factory'),
+  }),
+  issue: z.object({
+    id: identifier(64),
+    repo: identifier(200, '/:@'),
+    title: z.string().min(1).max(MAX_TITLE_CHARS).describe('Untrusted data'),
+    kind: identifier(64),
+    facts: z
+      .string()
+      .max(MAX_FACTS_CHARS)
+      .default('')
+      .describe('The Issue as filed, its text and facts, scrubbed by the factory; untrusted data'),
+  }),
+  precedents: z
+    .array(
+      z.object({
+        title: z.string().min(1).max(MAX_TITLE_CHARS).describe('Untrusted data'),
+        repo: identifier(200, '/:@'),
+        source: identifier(64),
+        screened: z.enum(SPEC_PRECEDENT_SCREENED).nullable(),
+        needed: z.boolean(),
+        verdict: z.enum(SPEC_PRECEDENT_VERDICTS),
+        note: z.string().max(MAX_NOTE_CHARS).nullable().describe("The owner's note on that Spec; untrusted data"),
+      }),
+    )
+    .max(MAX_PRECEDENTS)
+    .describe("The owner's own marks on earlier Specs of the same project, newest first"),
+})
+
 export const SPEC_LOOK_VERDICTS = ['ready', 'back'] as const
 /** The note a Spec sent back carries to its lead, after the clip in code. */
 export const SPEC_LOOK_NOTE_MAX_CHARS = 600
 
-/**
- * The request: the spec screen's (the Spec, its Issue, the owner's marks on earlier Specs) plus the checkout the Judge reads and
- * the case file. A factory that calls the screen builds this request from the same parts.
- */
-export const factorySpecLookInput = factorySpecScreenInput.extend({
+/** The request: the Spec, its Issue, the owner's marks on earlier Specs, the checkout the Judge reads and the case file. */
+export const factorySpecLookInput = specRequest.extend({
   checkout: checkoutPath
     .optional()
     .describe("The repo's checkout the Judge reads with read, glob and grep; absent, it judges from the request alone"),

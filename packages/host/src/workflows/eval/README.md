@@ -13,7 +13,7 @@ A module's suite reads its cases from `$AGW_EVAL_DIR/<workflow>/cases.jsonl` unl
 | `agw eval compare <check> --a <fp> --b <fp> [--a-args '{…}'] [--b-args '{…}'] [--a-workflow <id>] [--b-workflow <id>] [--seed N]` | Two arms paired by case id: per metric the means, the mean and median delta (B − A) with seeded bootstrap 95% CIs (`stats.ts` in the eval package), and which arm the CI favours. Scores are higher-is-better except `falseAlarms`, `noise`, `findings`, `important` and the spend metrics `costUsd`, `wallMs`, `tokens`, `toolCalls` (`LOWER_IS_BETTER`). Reads only |
 | drift (no command) | every `AGW_DRIFT_INTERVAL_S`, up to 20 sampled, unscored production runs of a workflow with a scorer are scored (`source: drift`); the sample is a hash of the run id, the write first-writer-wins, so several hosts never score a run twice. A tick counts verdicts and recorded scorer errors apart (and warns on errors) |
 
-**Suites by workflow** (each module's `eval/cases.jsonl` is committed and synthetic unless noted; the scorers are deterministic, and a judged `judged` score is added where a judge is given: `digest`, `factory-spec-screen`, `judge-decide.ts`; `docs/evals/2026-11-16-judged-drift.md`). A suite names the workflow it replays when that is not its module's id (`Suite.workflow`):
+**Suites by workflow** (each module's `eval/cases.jsonl` is committed and synthetic unless noted; the scorers are deterministic, and a judged `judged` score is added where a judge is given: `digest`, `judge-decide.ts`; `docs/evals/2026-11-16-judged-drift.md`). A suite names the workflow it replays when that is not its module's id (`Suite.workflow`):
 
 | Workflow | Cases | Scorer measures |
 |-|-|-|

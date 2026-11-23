@@ -5,7 +5,6 @@ import { createFactoryErrand } from './factory-errand.ts'
 import { createFactoryErrandNeeded } from './factory-errand-needed.ts'
 import { createFactoryQueue } from './factory-queue.ts'
 import { createFactoryScreen } from './factory-screen.ts'
-import { createFactorySpecScreen } from './factory-spec-screen.ts'
 import { createFactorySteward } from './factory-steward.ts'
 import { createFactoryTriage } from './factory-triage.ts'
 import { createNarrativeCompose } from './narrative-compose.ts'
@@ -33,7 +32,6 @@ export function createLlmCapabilities(deps: LlmDeps) {
     createFactoryScreen(deps),
     createFactoryErrand(deps),
     createFactoryErrandNeeded(deps),
-    createFactorySpecScreen(deps),
     createDigest(deps),
   ] as const
 }

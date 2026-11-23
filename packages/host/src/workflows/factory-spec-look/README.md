@@ -2,8 +2,7 @@
 
 software-factory pages the owner for a gate's Spec (a lead's one-page plan). Before it does, the Spec gets the look a Decision
 gets, once: the Judge answers `ready` (the owner can read it and give his verdict) or `back` (to its lead, with a note of what
-to sharpen). The Judge never gives a gate its verdict: there is no pass and no settle here, and `factory-spec-screen` (pass or
-settle, no case, no checkout) stays what it was. The factory sends a Spec back once; the type of the back and the page after
+to sharpen). The Judge never gives a gate its verdict: there is no pass and no settle here. The factory sends a Spec back once; the type of the back and the page after
 it are the factory's.
 
 ```
@@ -12,15 +11,13 @@ echo '{"spec":{"id":"artifact_1","revision":1,"title":"Switch the worker to pino
 
 | | |
 |-|-|
-| Input (stdin JSON) | the spec screen's request (`spec{id, revision, title, source, content, format, truncated?, images?}`, `issue{id, repo, title, kind, facts?}`, `precedents[]`: `factory-spec-screen/README.md` has every limit) plus two optional fields: `checkout`, the absolute path of the repo's checkout the Judge reads (plain path characters only), and `case`, the case file (`docs/factory-input.md` §The case file). The CLI reads it as the workflow's one `request` property, so the HTTP body is `{"request": {…}}`. The Spec, the Issue's title and facts, the precedents and every text of the case are untrusted data |
+| Input (stdin JSON) | `spec{id, revision, title (≤200 chars), source, content (≤100,100 chars), format, truncated?, images?}`, `issue{id, repo, title (≤200), kind, facts? (≤6,000)}`, `precedents[]` (≤12, each with a note of ≤2,000 chars) plus two optional fields: `checkout`, the absolute path of the repo's checkout the Judge reads (plain path characters only), and `case`, the case file (`docs/factory-input.md` §The case file). The CLI reads it as the workflow's one `request` property, so the HTTP body is `{"request": {…}}`. The Spec, the Issue's title and facts, the precedents and every text of the case are untrusted data |
 | Output | the run envelope's `output`: `{verdict: ready\|back, reason, note?}`. `reason` is one line of at most 240 characters. `note` is on `back` only: one line of at most 600 characters, what the lead sharpens |
 | Shape | with a checkout, a `scan` step (no link may leave it); then one agent step (`look`, agent `agents/factory-spec-look`, route `factory.speclook`) and one retry (`look-retry`) on an answer of the wrong shape; then `guardSpecLook` |
 | Pending | exit 10 like every workflow (`agw run wait <runId>`) |
 
 ## Decisions
 
-- **A new workflow, not a mode of the screen.** The screen's answer (`pass` or `settle`) is a call the factory acts on; the look
-  has other verdicts and other inputs, and callers outlive a release (`factory-spec-screen`'s shape does not change).
 - **An agent that looks.** The task message is built in code (`buildFactorySpecLookPrompt`,
   `packages/capabilities/src/capabilities/factory-spec-look.ts`), so nothing reachable over HTTP is a free prompt on the route. The
   agent has read, glob and grep over the checkout the request names and nothing else; no turn limit and no wall-clock limit,

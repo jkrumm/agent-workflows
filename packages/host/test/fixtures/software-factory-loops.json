@@ -311,20 +311,5 @@
       "evidence": "e_5 (same source, closed done 2 days ago): Rotate the production API key"
     },
     "output": { "verdict": "needed", "reason": "the key is still the old one and the portal step is open" }
-  },
-  "specScreen": {
-    "input": {
-      "spec": {
-        "id": "artifact_4",
-        "revision": 1,
-        "title": "A retry rule for the export job",
-        "source": "lead",
-        "content": "Retry the export three times, five minutes apart; the defaults hold if no verdict comes in 24 hours.",
-        "format": "markdown"
-      },
-      "issue": { "id": "issue_31", "repo": "example-app", "title": "Make the export job retry", "kind": "feature" },
-      "precedents": []
-    },
-    "output": { "verdict": "settle", "reason": "a retry rule inside one job, the defaults are reversible" }
   }
 }

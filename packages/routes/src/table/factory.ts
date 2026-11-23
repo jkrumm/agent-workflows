@@ -30,10 +30,6 @@ const routes = {
   // or unsure. Evidence is the same source's other requests of 14 days; the guard turns a not_needed without evidence into unsure.
   // Stays EASY: the guard makes the cheap direction the safe one. 1 call a week. Eval: `factory-errand-needed`, 14 cases.
   'factory.errandneeded': { wire: 'anthropic', ...EASY.call },
-  // Software-factory's screen on a Spec before the owner reads it: his to read (pass) or its lead's (settle, with a reason the lead
-  // hears). The owner's marks on earlier Specs come as precedents; the guard turns a settle without a reason into a pass.
-  // Eval: `factory-spec-screen`, 21 cases (17 scored in the runs of 2026-11-16, 34 case runs, no hand-written report; the four added on 2026-11-20 are not yet scored).
-  'factory.specscreen': { wire: 'anthropic', ...EASY.call },
   // Software-factory's look at a gate's Spec before the owner is paged: ready, or back to its lead with what to sharpen. An agent
   // step with read, glob and grep over the repo's checkout (agents/factory-spec-look), the Judge's own seat. Once per gate Spec.
   // Eval: `factory-spec-look`.

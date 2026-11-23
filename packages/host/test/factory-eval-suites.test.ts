@@ -7,7 +7,6 @@ import { suiteWorkflow } from '../src/workflows/eval/suites.ts'
 import factoryQueue from '../src/workflows/factory-queue/module.ts'
 import { FactoryQueueReference, factoryQueueScorer } from '../src/workflows/factory-queue/scorer.ts'
 import { FactoryQueueInput } from '../src/workflows/factory-queue/schema.ts'
-import { factorySpecScreenScorer } from '../src/workflows/factory-spec-screen/scorer.ts'
 import factorySteward from '../src/workflows/factory-steward/module.ts'
 import { FactoryStewardReference, factoryStewardScorer } from '../src/workflows/factory-steward/scorer.ts'
 import { FactoryStewardInput } from '../src/workflows/factory-steward/schema.ts'
@@ -231,66 +230,6 @@ describe('factory-queue scorer', () => {
 })
 
 describe('judged drift scores', () => {
-  const answers = (value: boolean): Json => ({
-    answers: { ownerReads: { type: 'boolean', value, confidence: 0.9, probability: value ? 0.9 : 0.1 } },
-  })
-  const specInput = {
-    request: {
-      spec: {
-        id: 'artifact_1',
-        revision: 1,
-        title: 'Raise the limit',
-        source: 'lead',
-        content: 'Raise MAX to 300.',
-        format: 'markdown',
-      },
-      issue: { id: 'issue_1', repo: 'example-app', title: 'Titles are clipped', kind: 'bug' },
-      precedents: [],
-    },
-  }
-
-  test('spec-screen: a verdict that agrees with the judge scores judged 1, a disagreement 0, in drift and regression', async () => {
-    const seen: Json[] = []
-    const judge: ScoreJudge = async (capability, input) => {
-      expect(capability).toBe('decide')
-      seen.push(input)
-      return answers(false)
-    }
-    const settle = { verdict: 'settle', reason: 'zebra-reason-unique' }
-    expect(await run(factorySpecScreenScorer, specInput, settle, undefined, judge)).toEqual({
-      scores: { valid: 1, judged: 1 },
-      pass: true,
-    })
-    expect(await run(factorySpecScreenScorer, specInput, { verdict: 'pass', reason: 'ui' }, undefined, judge)).toEqual({
-      scores: { valid: 1, judged: 0 },
-      pass: false,
-    })
-    expect(await run(factorySpecScreenScorer, specInput, settle, { verdict: 'settle' }, judge)).toMatchObject({
-      scores: { valid: 1, verdict: 1, safe: 1, judged: 1 },
-      pass: true,
-    })
-    // The judge never sees the screen's own verdict or reason.
-    expect(JSON.stringify(seen)).not.toContain('zebra-reason-unique')
-    // It does read the rules the screen follows for a cut Spec, a quoted owner direction and a look without an image.
-    expect(JSON.stringify(seen)).toContain('the cut alone is never a reason')
-    expect(JSON.stringify(seen)).toContain('already his')
-    expect(JSON.stringify(seen)).toContain('no image and no named screen')
-  })
-
-  test('spec-screen: an input that is no screen request, or no judge, leaves valid alone', async () => {
-    const judge: ScoreJudge = async () => answers(true)
-    expect(await run(factorySpecScreenScorer, { nope: 1 }, { verdict: 'pass', reason: 'r' }, undefined, judge)).toEqual(
-      {
-        scores: { valid: 1 },
-        pass: true,
-      },
-    )
-    expect(run(factorySpecScreenScorer, specInput, { verdict: 'pass', reason: 'r' })).toEqual({
-      scores: { valid: 1 },
-      pass: true,
-    })
-  })
-
   test('digest: up to one judged item per kind; a reply is judged on asks, the rest on faithfulness', async () => {
     const input = {
       items: [
