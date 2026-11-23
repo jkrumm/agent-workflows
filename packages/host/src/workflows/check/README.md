@@ -24,13 +24,13 @@ Behaviour is ported from agent-gateway's `check`, the code is written fresh. Leg
    output tail, the exit code. A red command does not stop the rest; the report holds every step that ran. A step is
    named `format | lint | typecheck | test` by what the command runs (`commandStepName`), else after its tool
    (`cargo audit` is `cargo`); a bare `make check` is `check`, as on the contract path. `typecheck` and `test` steps wait for a factory test slot and get the test idle window,
-   the others the step window (§Machine budget); `errors` are the last 50 non-empty lines, 500 characters each, and an
+   the others the step window (§Machine budget); `errors` are the last 50 non-empty lines, 500 characters each, minus bun's `(pass)`, `(skip)` and `(todo)` test lines (kept only when nothing else was printed), and an
    idle kill says `no output for Ns`. The summary is `All N steps passed`, else `K/N steps failed: <command> failed
    (exit C); …`. The caller's commands win over `make check`; no Makefile probe and no `fallow`.
 2. **Makefile contract, no LLM.** No `commands` and the Makefile (`GNUmakefile`, `makefile`, `Makefile`) has a real
    `check:` rule: step `make-check` runs `make check`, step `fallow` runs `fallow audit --quiet` when fallow is
    installed and the repo has a remote (also after a red `make check`). `errors` are the last 50 non-empty output
-   lines, 500 characters each; nothing else of the log is kept. A `check-foo` target, a recipe-less `check:`, a file
+   lines, 500 characters each, minus bun's `(pass)`, `(skip)` and `(todo)` test lines; nothing else of the log is kept. A `check-foo` target, a recipe-less `check:`, a file
    named `check` or a catch-all `%:` rule is not a contract.
 3. **Agent, discovery only.** Neither `commands` nor a `make check` target: one agent step (`agent`, agent `check`,
    route `check`) discovers the ecosystem's validators per the guide in `AGENTS.md`. The agent works in its compiled

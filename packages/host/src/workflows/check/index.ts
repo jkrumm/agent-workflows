@@ -45,12 +45,21 @@ export interface CheckDeps {
   env?: Record<string, string | undefined>
 }
 
-/** The last non-empty output lines, bounded per line: the contract wants error lines, not a second log. */
+/** A passing or skipped test's line from bun's reporter: progress, never a reason a step failed. */
+const PASSING_TEST_LINE = /^\s*\((pass|skip|todo)\) /
+
+/**
+ * The last non-empty output lines, bounded per line: the contract wants error lines, not a second log. Bun's passing
+ * test lines are dropped (a red suite prints hundreds of them above its one failure); an output of nothing else keeps
+ * them, so a failed step never loses all its evidence.
+ */
 function errorLines(output: string): string[] {
-  return output
+  const lines = output
     .split('\n')
     .map((line) => line.replace(/\s+$/, ''))
     .filter((line) => line !== '')
+  const failing = lines.filter((line) => !PASSING_TEST_LINE.test(line))
+  return (failing.length > 0 ? failing : lines)
     .slice(-MAX_ERROR_LINES)
     .map((line) => (line.length > LINE_MAX_CHARS ? `${line.slice(0, LINE_MAX_CHARS)}…` : line))
 }
@@ -300,7 +309,7 @@ export function createCheckWorkflows(shared: CheckDeps | WorkflowDeps = {}): Hos
   }
   const workflow = defineWorkflow({
     id: 'check',
-    version: '2026-11-16.1',
+    version: '2026-11-23.1',
     input: CHECK_INPUT,
     output: CHECK_OUTPUT,
     scorer: checkScorer,

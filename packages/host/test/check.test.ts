@@ -138,6 +138,38 @@ describe('Makefile path', () => {
     expect(errors.at(-1)).toBe(`last ${'x'.repeat(495)}…`)
   })
 
+  test('a failing make check keeps bun’s failure lines and drops its passing and skipped test lines', async () => {
+    const cwd = repo()
+    const passing = Array.from({ length: 80 }, (_, i) => `(pass) suite > case ${i} [0.1ms]`)
+    const output = [
+      ...passing,
+      '(skip) suite > later [0ms]',
+      '(fail) suite > broken [2ms]',
+      '1 tests failed:',
+      ' 80 pass',
+      ' 1 fail',
+    ]
+    const { exec } = fakeExec((request) =>
+      request.argv[0] === 'make' && request.argv[1] === 'check'
+        ? { exitCode: 2, output: output.join('\n') }
+        : undefined,
+    )
+    const { result } = await run({ exec, input: { cwd } })
+    const { errors } = (result.output as { steps: { errors: string[] }[] }).steps[0] as { errors: string[] }
+    expect(errors).toEqual(['(fail) suite > broken [2ms]', '1 tests failed:', ' 80 pass', ' 1 fail'])
+  })
+
+  test('an output of only passing test lines is kept whole rather than reported empty', async () => {
+    const cwd = repo()
+    const { exec } = fakeExec((request) =>
+      request.argv[0] === 'make' && request.argv[1] === 'check'
+        ? { exitCode: 2, output: '(pass) a > b [1ms]\n' }
+        : undefined,
+    )
+    const { result } = await run({ exec, input: { cwd } })
+    expect((result.output as { steps: { errors: string[] }[] }).steps[0]?.errors).toEqual(['(pass) a > b [1ms]'])
+  })
+
   test('a failure with no output still says why; an idle kill says so', async () => {
     const cwd = repo()
     const silent = fakeExec((r) => (r.argv[1] === 'check' ? { exitCode: 1 } : undefined))
