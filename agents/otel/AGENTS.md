@@ -20,7 +20,7 @@ That report is where you start, not the evidence for an answer. For every servic
 the report flags, run at least one follow-up that shows the specifics: `clickstack_table` (group by `SpanName`,
 `StatusCode` or a status attribute), `clickstack_search` or `clickstack_event_patterns` for the errors, or
 `clickstack_timeseries` for when it changed. A finding states what failed, where and how often, not only that a flag
-fired. Fetch a tool's schema with `hdx_tools` and `name` before the first time you use it; do not list every tool.
+fired. Fetch a tool's schema with `hdx_tools` and `name` before the first time you use it. Never call `hdx_tools` without `name`: the full catalog is about 11k characters, and the calls above need no catalog.
 
 | Question | Tool |
 |-|-|
@@ -66,6 +66,8 @@ Query the window the request states, and ask for few rows at a time (top-N, aggr
   other form fails.
 - Enum values (`StatusCode`, `SpanKind`, `SeverityText`) differ between ClickStack versions: group by the column once
   to see its values before you filter on one.
+- A window longer than the comparison shift fails (`the window is longer than the "yesterday" shift`): shorten the window, or pass `comparison: "previous_period"` to `clickstack_service_health`.
+- A dotted resource attribute is a map key in `clickstack_table`: `ResourceAttributes['service.version']`. A bare `ResourceAttributes.service.version` fails as an unknown identifier.
 
 ## The answer
 
