@@ -828,6 +828,7 @@ export const createFetch = (deps: ResolvedWebDeps) => {
         const browseOnce = async (target: string, ownerClearing: boolean) => {
           if (!browser) return undefined
           metCheck = false
+          challengeMet = false
           if (!ownerClearing && (target !== url || kept.found || rendered)) tried.push(where('browser', target))
           const leg = target === url ? 'browser' : 'alternate-browser'
           const began = Date.now()
@@ -950,7 +951,7 @@ export const createFetch = (deps: ResolvedWebDeps) => {
 
         // A page that stayed behind a wall is read from sources that are allowed to serve it: the site's own API, then the
         // archive. Never answered by agw itself: no leg here solves a check.
-        if (blocked && ARCHIVE_REASONS.includes(blocked) && !loginWalled) {
+        if (blocked && ARCHIVE_REASONS.includes(blocked)) {
           const question = stackExchangeQuestion(url)
           if (question) {
             const closed = stackExchangeQuota.closed(Date.now())
@@ -971,8 +972,8 @@ export const createFetch = (deps: ResolvedWebDeps) => {
               failures.push(result.message)
             }
           }
-          // `fresh` asks for the page as it is now: an archived copy is never the answer to it.
-          if (!fresh) {
+          // `fresh` asks for the page as it is now: an archived copy is never the answer to it. Nor is one of a sign-in page.
+          if (!fresh && !loginWalled) {
             tried.push('wayback')
             const began = Date.now()
             const snapshot = await findSnapshot(deps, url, ctx.signal).catch((error) => {

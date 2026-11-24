@@ -3419,6 +3419,24 @@ describe('web.fetch: the Stack Exchange API and archive legs', () => {
       expect(usage.every((u) => u.cost === 0)).toBe(true)
     })
 
+    test('a question whose browser read lands on a sign-in page is still read through the API', async () => {
+      const n = net({
+        'https://superuser.com/': status(403, WALL),
+        'https://api.stackexchange.com/2.3/questions/272265': json(await recorded()),
+      })
+      const { call } = run({
+        ...n.deps,
+        browser: async () => ({
+          finalUrl: 'https://superuser.com/users/login?returnTo=%2Fq',
+          title: 'Log in',
+          text: 'Log in to continue. '.repeat(20),
+          challenge: false,
+          loginWall: true,
+        }),
+      })
+      expect(await call('web.fetch', { url: QUESTION })).toMatchObject({ via: 'stackexchange-api' })
+    })
+
     test('the answer is cached, and a read that passes later does not need the leg', async () => {
       const n = net({
         'https://superuser.com/': status(403, WALL),
@@ -4135,6 +4153,21 @@ describe('web.fetch: a login wall and a script-built app shell are no read', () 
     // Neither Extract nor the archive is asked for a copy of the sign-in page.
     expect(n.to('https://api.tavily.com')).toHaveLength(0)
     expect(n.to('https://archive.org')).toHaveLength(0)
+  })
+
+  test('a challenge cleared by the owner and then a sign-in page is still no host wall', async () => {
+    const { call } = setup(
+      async (url, _signal, options) => {
+        if (url !== URL_) return { finalUrl: url, title: 'Pricing', text: REAL, challenge: false }
+        return options?.challengeMs === undefined
+          ? { finalUrl: url, title: 'Just a moment...', text: 'Checking your browser', challenge: true }
+          : LOGIN
+      },
+      { solveMs: 7_000, ask: async () => ({ approved: true }) },
+    )
+    await failure(call('web.fetch', { url: URL_, humanAssist: true }))
+    const out = (await call('web.fetch', { url: 'https://app.example.com/pricing' })) as { via: string }
+    expect(out.via).toBe('direct')
   })
 
   test("the wall of one page is not the host's: another path of the host is still read", async () => {
