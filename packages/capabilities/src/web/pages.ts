@@ -67,6 +67,28 @@ export function alternateUrls(raw: string): string[] {
   return found.map((u) => u.toString()).slice(0, MAX_ALTERNATES)
 }
 
+const LOGIN_PATH = /(?:^|\/)(?:log-?in|sign-?in|sign_in|signin|sso|auth|authenticate|accounts?\/login)(?:\/|$)/i
+const LOGIN_HOST = /^(?:login|signin|sso|auth|accounts)\./i
+
+/**
+ * A redirect from `requested` to a sign-in page: the final address is a login path (or a login host) and the page asked
+ * for is not. The page that was read is then the wall in front of it, whatever text it carries. A page that is itself
+ * a login page (the requested path says so) is no wall: it is what was asked for.
+ */
+export function isLoginWall(requested: string, final: string): boolean {
+  let from: URL
+  let to: URL
+  try {
+    from = new URL(requested)
+    to = new URL(final)
+  } catch {
+    return false
+  }
+  if (from.hostname === to.hostname && from.pathname === to.pathname) return false
+  if (LOGIN_PATH.test(from.pathname) || LOGIN_HOST.test(from.hostname)) return false
+  return LOGIN_PATH.test(to.pathname) || (to.hostname !== from.hostname && LOGIN_HOST.test(to.hostname))
+}
+
 /** A page this short that says one of these is an app asking for a browser, or a list that rendered empty. */
 const NOTICE_MAX_CHARS = 1500
 const NOTICE =

@@ -1,9 +1,13 @@
+import { isLoginWall } from './pages.ts'
+
 /** A page as a real browser rendered it. `challenge` is a bot wall that did not clear within the settle time. */
 export interface BrowserPage {
   finalUrl: string
   title: string
   text: string
   challenge: boolean
+  /** The page asked for redirected to a sign-in page (`isLoginWall`): what was read is the wall, not the page. */
+  loginWall?: boolean
   /** The document's `outerHTML` after the same settle, only when the read asked for it (`options.html`). */
   html?: string
 }
@@ -100,7 +104,7 @@ export function parseMaxTabs(raw: string | undefined): number {
 }
 
 const CHALLENGE_TITLE =
-  /just a moment|nur einen moment|continue to your page|prove your humanity|something has gone wrong|attention required|verify you are human|checking your browser|ddos protection|access denied|are you a robot|blocked by network security/i
+  /bestätigen sie, dass sie ein mensch|just a moment|nur einen moment|continue to your page|prove your humanity|something has gone wrong|attention required|verify you are human|checking your browser|ddos protection|access denied|are you a robot|blocked by network security/i
 
 /** A bot wall: a known challenge title, or a short page whose opening lines say so. */
 export function isChallenge(title: string, text: string): boolean {
@@ -496,6 +500,9 @@ export async function readViaCdp(
       }
       const began = Date.now()
       const settleMs = timing.settleMs ?? SETTLE_MS
+      // The owner is clearing the page: a sign-in page is then held for him like a challenge, and read again once he is through.
+      const owner = options.challengeMs !== undefined
+      const walled = (page?: BrowserPage) => page?.challenge === true || (page?.loginWall === true && owner)
       const challengeMs = Math.max(timing.challengeMs ?? CHALLENGE_MS, options.challengeMs ?? 0)
       // The hydration window starts when the challenge is gone: a page that cleared at 30 s still gets `settleMs` to render.
       let settledFrom = began
@@ -519,8 +526,9 @@ export async function readViaCdp(
           const text = (snap.text ?? '').trim().slice(0, MAX_TEXT_CHARS)
           const title = snap.title ?? ''
           const challenge = isChallenge(title, text)
-          if (last?.challenge && !challenge) settledFrom = Date.now()
-          last = { finalUrl: snap.url ?? url, title, text, challenge }
+          const loginWall = !challenge && isLoginWall(url, snap.url ?? url)
+          if (walled(last) && !challenge && !loginWall) settledFrom = Date.now()
+          last = { finalUrl: snap.url ?? url, title, text, challenge, ...(loginWall ? { loginWall } : {}) }
           if (challenge && !inChallenge) {
             inChallenge = true
             challenging.set(host, (challenging.get(host) ?? 0) + 1)
@@ -535,12 +543,16 @@ export async function readViaCdp(
         if (
           last &&
           !last.challenge &&
+          !(last.loginWall && owner) &&
           last.text.length >= HYDRATED_CHARS &&
           unchanged >= 1 &&
           (guard.inFlight.size === 0 || unchanged >= QUIET_POLLS)
         )
           return accept(last)
-        if (Date.now() >= (last?.challenge ? began + challengeMs : settledFrom + settleMs)) break
+        if (
+          Date.now() >= (last?.challenge || (last?.loginWall && owner) ? began + challengeMs : settledFrom + settleMs)
+        )
+          break
         await Bun.sleep(timing.pollMs ?? POLL_MS)
       }
       if (!last) throw new BrowserFailure('the page could not be read')

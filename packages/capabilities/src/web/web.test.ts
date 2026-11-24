@@ -20,7 +20,7 @@ import { askHumanAssist, type HumanAnswer, type HumanAssist } from './human-assi
 import { pinnedFetch } from './pinned.ts'
 import { formatTranscript, videoIdOf } from './youtube.ts'
 import { isPrivateAddress } from './ssrf.ts'
-import { alternateUrls, cleanUrl, incompleteReason } from './pages.ts'
+import { alternateUrls, cleanUrl, incompleteReason, isLoginWall } from './pages.ts'
 import { parseHtml } from './text.ts'
 
 const GATEWAY = { AGW_API_SECRET: 'agw-token', AGW_GATEWAY_URL: 'http://127.0.0.1:7794' }
@@ -4065,5 +4065,149 @@ describe('askHumanAssist (the ask-human.sh adapter)', () => {
       why: 'the request could not be started',
     })
     expect(broken.warnings[0]).toContain('spawn ENOENT')
+  })
+})
+
+describe('web.fetch: a login wall and a script-built app shell are no read', () => {
+  const REAL = 'The conversation: a user asks, the assistant answers. '.repeat(10)
+  const FOOTER = 'Legal notice and company details for the operator of this service. '.repeat(4)
+  // The server sends an empty app root, a large script bundle reference and a footer of a few hundred characters.
+  const SHELL = `<html><head><title>App</title><script>${'x'.repeat(4000)}</script></head><body><div id="root"></div><footer>${FOOTER}</footer></body></html>`
+  const URL_ = 'https://app.example.com/share/abc-123'
+  const LOGIN = {
+    finalUrl: 'https://app.example.com/login?returnTo=%2Fshare%2Fabc-123',
+    title: 'Sign in',
+    text: 'Sign in or create an account. '.repeat(10),
+    challenge: false,
+    loginWall: true,
+  }
+  const setup = (
+    read: (url: string, signal: AbortSignal, options?: BrowserReadOptions) => unknown,
+    assist?: HumanAssist,
+  ) => {
+    const n = net({
+      'https://app.example.com/share': html(SHELL),
+      'https://api.tavily.com/extract': json({ results: [] }),
+      ...NO_SNAPSHOT,
+    })
+    return run({
+      ...n.deps,
+      env: { TAVILY_API_KEY: 't' },
+      browser: read as never,
+      ...(assist ? { humanAssist: assist } : {}),
+    })
+  }
+
+  test('isLoginWall: a redirect to a sign-in page is a wall, a login page asked for is not', () => {
+    expect(isLoginWall(URL_, 'https://app.example.com/login?returnTo=%2Fshare')).toBe(true)
+    expect(isLoginWall(URL_, 'https://app.example.com/users/sign_in')).toBe(true)
+    expect(isLoginWall(URL_, 'https://accounts.example.org/signin')).toBe(true)
+    expect(isLoginWall(URL_, 'https://login.example.org/')).toBe(true)
+    expect(isLoginWall(URL_, URL_)).toBe(false)
+    expect(isLoginWall(URL_, 'https://app.example.com/share/other')).toBe(false)
+    expect(isLoginWall('https://app.example.com/login', 'https://app.example.com/login?next=/')).toBe(false)
+    expect(isLoginWall('https://app.example.com/login', 'https://app.example.com/auth/sso')).toBe(false)
+    expect(isLoginWall('not a url', URL_)).toBe(false)
+  })
+
+  test('a shell of a few hundred characters of footer is thin: the browser reads the page', async () => {
+    const reads: string[] = []
+    const { call } = setup(async (url) => {
+      reads.push(url)
+      return { finalUrl: url, title: 'Chat', text: REAL, challenge: false }
+    })
+    const out = (await call('web.fetch', { url: URL_ })) as { via: string; text: string }
+    expect(out).toMatchObject({ via: 'browser', text: REAL })
+    expect(reads).toEqual([URL_])
+  })
+
+  test('the browser landing on a sign-in page ends blocked (needs-human), and the footer shell is not returned', async () => {
+    const { call } = setup(async () => LOGIN)
+    const error = await failure(call('web.fetch', { url: URL_, fresh: true }))
+    expect(blockedReason(error.message)).toBe('needs-human')
+    expect(error.message).toContain('browser: login wall (redirected to https://app.example.com/login)')
+    expect(error.message).not.toContain('Sign in or create')
+    expect(error.message).toContain('--human-assist')
+  })
+
+  test('a read with render ends the same way', async () => {
+    const { call } = setup(async () => LOGIN)
+    const error = await failure(call('web.fetch', { url: URL_, render: true, fresh: true }))
+    expect(blockedReason(error.message)).toBe('needs-human')
+    expect(error.message).toContain('login wall')
+  })
+
+  test('with humanAssist the owner is asked once and the page is read again with his time', async () => {
+    const reads: { challengeMs?: number }[] = []
+    const asks: string[] = []
+    const { call } = setup(
+      async (url, _signal, options) => {
+        reads.push({ ...(options?.challengeMs === undefined ? {} : { challengeMs: options.challengeMs }) })
+        return options?.challengeMs === undefined
+          ? LOGIN
+          : { finalUrl: url, title: 'Chat', text: REAL, challenge: false }
+      },
+      {
+        solveMs: 7_000,
+        ask: async (request) => {
+          asks.push(request.url)
+          return { approved: true }
+        },
+      },
+    )
+    const out = (await call('web.fetch', { url: URL_, humanAssist: true, fresh: true })) as {
+      via: string
+      text: string
+    }
+    expect(out).toMatchObject({ via: 'browser', text: REAL })
+    expect(asks).toEqual([URL_])
+    expect(reads).toEqual([{}, { challengeMs: 7_000 }])
+  })
+
+  test('a plain read redirected to a sign-in page is a login-required block', async () => {
+    const n = net({
+      'https://app.example.com/share': redirect('https://app.example.com/login?returnTo=%2Fshare'),
+      'https://app.example.com/login': html(
+        `<title>Sign in</title><p>${'Sign in or create an account. '.repeat(10)}</p>`,
+      ),
+      'https://api.tavily.com/extract': json({ results: [] }),
+      ...NO_SNAPSHOT,
+    })
+    const { call } = run({ ...n.deps, env: { TAVILY_API_KEY: 't' } })
+    const error = await failure(call('web.fetch', { url: URL_, fresh: true }))
+    expect(blockedReason(error.message)).toBe('login-required')
+    expect(error.message).toContain('direct: login wall')
+  })
+})
+
+describe('readViaCdp: a sign-in redirect', () => {
+  const SIGN_IN = {
+    url: 'https://shop.example.com/login?returnTo=%2Fa',
+    title: 'Sign in',
+    text: 'Sign in to continue. '.repeat(20),
+  }
+
+  test('is reported as a login wall, not a challenge, without waiting for the challenge limit', async () => {
+    const browser = fakeBrowser([SIGN_IN])
+    try {
+      const page = await browser.read('https://shop.example.com/a', new AbortController().signal)
+      expect(page).toMatchObject({ challenge: false, loginWall: true, finalUrl: SIGN_IN.url })
+    } finally {
+      browser.stop()
+    }
+  })
+
+  test('is held for the owner like a challenge, and read again once he is through', async () => {
+    const real = { url: 'https://shop.example.com/a', title: 'Page', text: 'The page itself. '.repeat(20) }
+    const browser = fakeBrowser([SIGN_IN, SIGN_IN, real])
+    try {
+      const page = await browser.read('https://shop.example.com/a', new AbortController().signal, {
+        challengeMs: 5_000,
+      })
+      expect(page).toMatchObject({ challenge: false, finalUrl: real.url })
+      expect(page.loginWall).toBeUndefined()
+    } finally {
+      browser.stop()
+    }
   })
 })
