@@ -305,8 +305,8 @@ wait_healthy() {  # $1 sha, $2... processes
 # never re-added: a deleted hermes line is a revocation). Existing lines are never touched, no token is ever printed,
 # the mode stays 0600. The names added are kept in DOOR_TOKENS_ADDED for the log; the gateway's restart is decided on the
 # file's digest against data/gateway-door-tokens (door_tokens_changed), so it survives a deploy that died after appending.
-DOOR_CALLERS=(hermes studio agw-opencode oc modelpick)
-DOOR_CALLERS_ADDED=(studio agw-opencode oc modelpick)
+DOOR_CALLERS=(hermes studio agw-opencode oc modelpick ntfy-mac)
+DOOR_CALLERS_ADDED=(studio agw-opencode oc modelpick ntfy-mac)
 DOOR_TOKENS_ADDED=()
 
 # The callers of DOOR_CALLERS_ADDED the file has no line for (a commented line does not count).

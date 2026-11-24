@@ -1,5 +1,5 @@
 // scripts/deploy.sh's door-tokens handling, run by the real zsh: the file is created with a token per caller (hermes,
-// studio, agw-opencode, oc, modelpick), a file that exists gains a line for each of studio, agw-opencode, oc and modelpick
+// studio, agw-opencode, oc, modelpick, ntfy-mac), a file that exists gains a line for each of studio, agw-opencode, oc, modelpick and ntfy-mac
 // it lacks (its other lines untouched, mode 0600, no token printed, the names added recorded for the gateway restart),
 // and the release's own parser refuses a bad file before anything is stopped.
 import { afterEach, expect, test } from 'bun:test'
@@ -11,8 +11,8 @@ import { readDoorTokens } from '../src/door-tokens.ts'
 const ROOT = join(import.meta.dir, '../../..')
 import { describeZsh, ZSH } from '@agent-workflows/testing/zsh'
 const HERMES = 'hermes-token-0123456789abcdef-0123456789'
-const ALL = ['hermes', 'studio', 'agw-opencode', 'oc', 'modelpick']
-const ADDED = ['studio', 'agw-opencode', 'oc', 'modelpick']
+const ALL = ['hermes', 'studio', 'agw-opencode', 'oc', 'modelpick', 'ntfy-mac']
+const ADDED = ['studio', 'agw-opencode', 'oc', 'modelpick', 'ntfy-mac']
 const ADDED_OUT = 'print -r -- "ADDED:$DOOR_TOKENS_ADDED"' // zsh joins an array in quotes with spaces
 
 const dirs: string[] = []
@@ -83,9 +83,9 @@ describeZsh('ensure_door_tokens', () => {
     const t = setup(`studio=${studio}\noc=oc-token-0123456789abcdef-0123456789abc\n`)
     const result = t.run(`ensure_door_tokens; ${ADDED_OUT}`)
     expect(result.code).toBe(0)
-    expect(result.out).toContain('ADDED:agw-opencode modelpick')
+    expect(result.out).toContain('ADDED:agw-opencode modelpick ntfy-mac')
     const tokens = readDoorTokens(t.file)
-    expect([...tokens.keys()]).toEqual(['studio', 'oc', 'agw-opencode', 'modelpick'])
+    expect([...tokens.keys()]).toEqual(['studio', 'oc', 'agw-opencode', 'modelpick', 'ntfy-mac'])
     expect(tokens.get('studio')).toBe(studio)
   })
 

@@ -10,11 +10,11 @@ export { PLATFORM_CALLER }
 const MIN_TOKEN_LENGTH = 32
 
 /**
- * Callers that reach the inference gateway only (OpenCode on the host, dotfiles `oc`, modelpick): their lines
+ * Callers that reach the inference gateway only (OpenCode on the host, dotfiles `oc`, modelpick, the MacBook's NtfyMac): their lines
  * live in the one file, but a door (the audio process's, the host's image door) never accepts them (`doorCallerAuth`);
  * the gateway accepts every line (`callerAuth`). `scripts/deploy.sh` writes the same names.
  */
-export const GATEWAY_ONLY_CALLERS: ReadonlySet<string> = new Set(['agw-opencode', 'oc', 'modelpick'])
+export const GATEWAY_ONLY_CALLERS: ReadonlySet<string> = new Set(['agw-opencode', 'oc', 'modelpick', 'ntfy-mac'])
 
 /**
  * The file's tokens by caller name. Fails naming the file and the line, never a value: a malformed line, a bad or

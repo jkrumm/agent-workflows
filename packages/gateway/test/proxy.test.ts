@@ -386,6 +386,44 @@ describe('door auth', () => {
     expect(iu.seen).toHaveLength(0)
   })
 
+  test.each([
+    ['POST', '/anthropic/v1/messages'],
+    ['POST', '/anthropic/v1/messages/count_tokens'],
+    ['GET', '/anthropic/v1/models'],
+    ['GET', '/anthropic/v1/models/some-model'],
+    ['POST', '/openai/v1/chat/completions'],
+    ['POST', '/gemini/v1beta/models/m:generateContent'],
+    ['POST', '/replicate/v1/predictions'],
+    ['POST', '/decisions/v1/decide'],
+  ])(
+    '%s %s answers 401 with no token, a wrong one, or a spoofed loopback address; nothing goes upstream',
+    async (method, path) => {
+      // The gateway sits behind Caddy on the tailnet, so every request arrives from loopback: the token is the only gate.
+      const gw = start()
+      const spoof = {
+        'x-forwarded-for': '127.0.0.1',
+        'x-real-ip': '127.0.0.1',
+        forwarded: 'for=127.0.0.1',
+        host: 'localhost',
+      }
+      const attempts: Record<string, string>[] = [
+        {},
+        spoof,
+        { ...spoof, 'x-api-key': 'x'.repeat(40) },
+        { authorization: 'Bearer ' },
+      ]
+      for (const headers of attempts) {
+        const response = await fetch(`${gw.url}${path}`, {
+          method,
+          headers: { 'content-type': 'application/json', ...headers },
+          ...(method === 'POST' ? { body: '{}' } : {}),
+        })
+        expect(response.status).toBe(401)
+      }
+      expect(iu.seen).toHaveLength(0)
+    },
+  )
+
   test('a bad token is 401 and nothing goes upstream', async () => {
     const gw = start()
     const response = await gw.call(MESSAGES, { ...jsonBody(request()), token: 'x'.repeat(40) })

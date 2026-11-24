@@ -97,8 +97,8 @@ describe('doorCallerAuth', () => {
   )
   const tokens = new Map<string, string>([['hermes', TOKEN], ...gatewayOnly])
 
-  test('the gateway-only callers are agw-opencode, oc and modelpick', () => {
-    expect([...GATEWAY_ONLY_CALLERS].sort()).toEqual(['agw-opencode', 'modelpick', 'oc'])
+  test('the gateway-only callers are agw-opencode, oc, modelpick and ntfy-mac', () => {
+    expect([...GATEWAY_ONLY_CALLERS].sort()).toEqual(['agw-opencode', 'modelpick', 'ntfy-mac', 'oc'])
   })
 
   test('a door refuses every gateway-only token; the gateway (callerAuth) accepts every line', () => {
