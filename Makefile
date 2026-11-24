@@ -1,8 +1,10 @@
 .DEFAULT_GOAL := help
-.PHONY: help eval-mine-iris check static static-steps test test-steps usage test-timings fmt deploy verify version live-routes install-opencode research-chrome shop-watch-setup shop-watch-teardown hyperdx-apply hyperdx-export
+.PHONY: help eval-mine-iris check check-fast static static-steps test test-fast test-fast-steps test-steps usage test-timings fmt deploy verify version live-routes install-opencode research-chrome shop-watch-setup shop-watch-teardown hyperdx-apply hyperdx-export
 
 help:
 	@echo "make check   install, mini-registry lint (when the dotfiles checkout is present), then make static and make test (the merge gate; TEST_WORKERS=n sets the workers; the files of .heavy-tests run after, HEAVY_WORKERS=n)"
+	@echo "make check-fast  the lead tier: install, registry lint, make static, make test-fast, make usage; CI runs make check (the full gate) on the pull request head"
+	@echo "make test-fast  the tests the branch touches (bun test --changed against the merge base with origin/master; the whole suite when a change is outside the import graph): one test slot on the mini"
 	@echo "make static  oxfmt check, oxlint type-aware, tsc: one test slot, which the factory may place on its step host"
 	@echo "make test    bun test --parallel against Postgres (the mini's, or a private cluster on the step host): one test slot, which the factory may place on its step host"
 	@echo "make usage   the suites that need the usage-tracker checkout's migrations (USAGE_TESTS); they run where this target runs, never on the step host"
@@ -52,7 +54,8 @@ BUN_TEST_BASE ?= --timings=.bun-test-timings.json
 # cascade (a connection limit, a broken import), which used to run the whole suite to the end with 40-100 red tests.
 TEST_BAIL ?= 10
 BUN_TEST_FLAGS ?= --parallel=$(TEST_WORKERS) --bail=$(TEST_BAIL) $(BUN_TEST_BASE)
-TEST_CMD = bun test $(BUN_TEST_FLAGS) $(foreach f,$(HEAVY_TESTS) $(USAGE_TESTS),--path-ignore-patterns=$(f)) || { rc=$$?; echo "==> the heavy pass is skipped: the first pass failed"; exit $$rc; }; bun test --parallel=$(HEAVY_WORKERS) --bail=$(TEST_BAIL) $(BUN_TEST_BASE) $(HEAVY_TESTS)
+CHANGED :=
+TEST_CMD = bun test $(BUN_TEST_FLAGS) $(CHANGED) $(foreach f,$(HEAVY_TESTS) $(USAGE_TESTS),--path-ignore-patterns=$(f)) || { rc=$$?; echo "==> the heavy pass is skipped: the first pass failed"; exit $$rc; }; bun test --parallel=$(HEAVY_WORKERS) --bail=$(TEST_BAIL) $(BUN_TEST_BASE) $(CHANGED) $(HEAVY_TESTS)
 
 # The factory's step host (project.yaml `steps`, docs/architecture.md "Steps off the mini" in software-factory) may run `static` and
 # `test` off the mini when the mini's test line would make them wait. Install and the registry lint stay here: the host
@@ -89,6 +92,32 @@ static-steps:
 # see the caller's make variables; BUN_TEST_BASE is not (`make test-timings` writes a file on this machine, so it stays here).
 test:
 	@$(call slot,test) sh scripts/test-env.sh make --no-print-directory test-steps TEST_WORKERS=$(TEST_WORKERS) HEAVY_WORKERS=$(HEAVY_WORKERS)
+
+# The lead tier (project.yaml `checks`): what a lead runs before each push. CI runs `make check` on the pull request head and the
+# merge waits for it, so what ships is covered by the full gate; this tier catches what the branch broke without the whole suite
+# (the suite ran on every change of every Issue, which was most of this repo's slot minutes). Static runs whole (seconds).
+check-fast:
+	@echo "==> install (bun install --frozen-lockfile)"
+	@bun install --frozen-lockfile
+	@echo "==> registry (mini-registry lint: this repo's mini-services.yaml against every other registry; skipped without the dotfiles checkout, as on CI)"
+	@[ ! -f "$$HOME/SourceRoot/dotfiles/scripts/mini-registry.ts" ] || bun "$$HOME/SourceRoot/dotfiles/scripts/mini-registry.ts" lint
+	@$(MAKE) --no-print-directory static
+	@$(MAKE) --no-print-directory test-fast
+	@$(MAKE) --no-print-directory usage
+	@echo "==> check-fast passed (the full gate is CI's: make check)"
+
+# The step stays on the mini (not named in project.yaml `steps`): the selection reads this checkout's git history, which the step host
+# does not carry. packages/testing/src/fast-tier.ts picks `none`, `changed <merge base>` or `full <reason>`.
+test-fast:
+	@$(call slot,test-fast) sh scripts/test-env.sh make --no-print-directory test-fast-steps TEST_WORKERS=$(TEST_WORKERS) HEAVY_WORKERS=$(HEAVY_WORKERS)
+
+test-fast-steps:
+	@sel="$$(bun packages/testing/src/fast-tier.ts)" || exit 1; echo "==> test-fast: $$sel"; \
+		case "$$sel" in \
+			none) ;; \
+			full*) $(MAKE) --no-print-directory test-steps ;; \
+			*) $(MAKE) --no-print-directory test-steps CHANGED="--changed=$$(echo "$$sel" | cut -d" " -f2)" ;; \
+		esac
 
 # Home, and no slot: two light files on one worker (a slot would queue it behind a guessed 3.5 GiB first), and the suites need the usage-tracker checkout.
 usage:

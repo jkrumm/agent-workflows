@@ -7,7 +7,10 @@ deploy:
     - { name: mini, host: mini, verify: make verify }
   hold: 0m
 ship:
-  - { via: push }
+  - { via: pr } # CI runs the full gate (make check) on the pull request head before the merge; leads run check-fast
+# A lead runs `make check-fast` (static, and the tests the branch touches); CI runs `make check` on the pull request head and the merge waits for
+# it, so the full suite runs once per Issue instead of once per change (packages/testing/src/fast-tier.ts decides what the fast tier runs).
+checks: { fast: make check-fast, full: make check, ci: true }
 # The static checks and the test suite may run on the factory's step host when the mini's test line would make them wait (Makefile
 # `static` and `test`, `$(call slot,<step>)`; `factory slot run` places them). Neither needs a secret or a mini service on the host:
 # `test` starts a private Postgres cluster from the image's server binaries (scripts/test-env.sh) where the mini uses its maintained
