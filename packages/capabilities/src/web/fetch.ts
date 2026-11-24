@@ -10,7 +10,7 @@ import { type Pin, type ResolvedWebDeps, requireKey, webUsage, within } from './
 import { extractPdfPages, PdfTimeout } from './pdf.ts'
 import { TAVILY_USD_PER_CREDIT } from './search.ts'
 import { assertPublicUrl, HostUnresolved, publicOnlyPolicy } from './ssrf.ts'
-import { alternateUrls, cleanUrl, incompleteReason } from './pages.ts'
+import { alternateUrls, cleanUrl, incompleteReason, isLoginWall } from './pages.ts'
 import { readStackExchange, StackExchangeQuota, stackExchangeQuestion } from './stackexchange.ts'
 import { cut, parseHtml } from './text.ts'
 import { archiveNotice, findSnapshot, snapshotMiss } from './wayback.ts'
@@ -113,8 +113,12 @@ const MAX_BODY_BYTES = 2_000_000
 const MAX_PDF_BYTES = 10_000_000
 /** Pages whose text is extracted; the rest are left out and the read says it was cut. */
 const MAX_PDF_PAGES = 200
-/** An HTML page with less text than this, a script tag, and text under a tenth of its markup is taken for a JS app shell, and the browser, other spellings of the URL and Tavily Extract get a turn. A short page is just short. */
-const THIN_CHARS = 200
+/**
+ * An HTML page with less text than this, a script tag, and text under a tenth of its markup is taken for a JS app shell, and the
+ * browser, other spellings of the URL and Tavily Extract get a turn. A short page is just short. 500: a client-rendered app's
+ * shell still carries a legal footer or a cookie notice of a few hundred characters (a claude.ai share link read 267).
+ */
+const THIN_CHARS = 500
 /** Tavily Extract, basic: every 5 successful URLs cost 1 credit (docs.tavily.com/documentation/api-credits, checked 2026-10-28). */
 const TAVILY_EXTRACT_CREDITS_PER_URL = 1 / 5
 
@@ -467,6 +471,9 @@ async function direct(deps: ResolvedWebDeps, startUrl: string, signal: AbortSign
         throw new DirectFailure('redirect to an invalid URL')
       }
       await res.body?.cancel().catch(() => undefined)
+      // The sign-in page is not the page: the chain goes on (a browser may hold a session), and never reads the wall as the answer.
+      if (isLoginWall(startUrl, next))
+        throw new DirectFailure('login wall (redirected to a sign-in page)', false, undefined, 'login-required')
       current = next
       continue
     }
@@ -837,6 +844,16 @@ export const createFetch = (deps: ResolvedWebDeps) => {
               failures.push(
                 `${where('browser', target)}: challenge not cleared${ownerClearing ? ' after the owner approved' : ''}`,
               )
+            } else if (page.loginWall) {
+              // Redirected to a sign-in page: what was read is the wall. A person may clear it (a session, a check on the
+              // way), so it ends like a challenge: blocked (needs-human), and asked of the owner with `humanAssist`.
+              outcome = 'blocked'
+              blocked = 'needs-human'
+              metCheck = true
+              const wall = new URL(page.finalUrl)
+              failures.push(
+                `${where('browser', target)}: login wall (redirected to ${wall.origin}${wall.pathname}${ownerClearing ? ', still there after the owner approved' : ''})`,
+              )
             } else if (page.text === '') {
               outcome = 'incomplete'
               failures.push(`${where('browser', target)}: no text on the page`)
@@ -1014,8 +1031,10 @@ export const createFetch = (deps: ResolvedWebDeps) => {
           failures.push(error.message)
         }
 
-        // A kept thin read is still a read: better than an error for a short page.
-        if (kept.found && kept.found.read.text.length > 0) return { ...kept.found, tried, legs }
+        // A kept thin read is still a read: better than an error for a short page. Not after the browser met a wall: the
+        // shell is then what the wall left of the page, and a read that ends 0 with it hides that nothing was read.
+        if (kept.found && kept.found.read.text.length > 0 && blocked !== 'needs-human')
+          return { ...kept.found, tried, legs }
         // Every leg failed at a wall: the next read of the host is answered from here for the wall interval. A
         // browser that could not read at all (and met no challenge) proves nothing about the wall, so it is not kept.
         if (host && blocked && WALL_REASONS.includes(blocked) && (blocked === 'needs-human' || !browserFailed))
