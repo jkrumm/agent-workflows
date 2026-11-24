@@ -828,7 +828,8 @@ export const createFetch = (deps: ResolvedWebDeps) => {
         const browseOnce = async (target: string, ownerClearing: boolean) => {
           if (!browser) return undefined
           metCheck = false
-          challengeMet = false
+          // The challenge of the page as asked stays through an alternate spelling's pass.
+          if (target === url) challengeMet = false
           if (!ownerClearing && (target !== url || kept.found || rendered)) tried.push(where('browser', target))
           const leg = target === url ? 'browser' : 'alternate-browser'
           const began = Date.now()
