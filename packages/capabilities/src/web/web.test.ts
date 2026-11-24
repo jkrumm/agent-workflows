@@ -4087,15 +4087,19 @@ describe('web.fetch: a login wall and a script-built app shell are no read', () 
   ) => {
     const n = net({
       'https://app.example.com/share': html(SHELL),
+      'https://app.example.com/pricing': html(`<title>Pricing</title><p>${REAL}</p>`),
       'https://api.tavily.com/extract': json({ results: [] }),
       ...NO_SNAPSHOT,
     })
-    return run({
-      ...n.deps,
-      env: { TAVILY_API_KEY: 't' },
-      browser: read as never,
-      ...(assist ? { humanAssist: assist } : {}),
-    })
+    return {
+      n,
+      ...run({
+        ...n.deps,
+        env: { TAVILY_API_KEY: 't' },
+        browser: read as never,
+        ...(assist ? { humanAssist: assist } : {}),
+      }),
+    }
   }
 
   test('isLoginWall: a redirect to a sign-in page is a wall, a login page asked for is not', () => {
@@ -4122,12 +4126,24 @@ describe('web.fetch: a login wall and a script-built app shell are no read', () 
   })
 
   test('the browser landing on a sign-in page ends blocked (needs-human), and the footer shell is not returned', async () => {
-    const { call } = setup(async () => LOGIN)
+    const { call, n } = setup(async () => LOGIN)
     const error = await failure(call('web.fetch', { url: URL_, fresh: true }))
     expect(blockedReason(error.message)).toBe('needs-human')
     expect(error.message).toContain('browser: login wall (redirected to https://app.example.com/login)')
     expect(error.message).not.toContain('Sign in or create')
     expect(error.message).toContain('--human-assist')
+    // Neither Extract nor the archive is asked for a copy of the sign-in page.
+    expect(n.to('https://api.tavily.com')).toHaveLength(0)
+    expect(n.to('https://archive.org')).toHaveLength(0)
+  })
+
+  test("the wall of one page is not the host's: another path of the host is still read", async () => {
+    const { call } = setup(async (url) =>
+      url === URL_ ? LOGIN : { finalUrl: url, title: 'Pricing', text: REAL, challenge: false },
+    )
+    await failure(call('web.fetch', { url: URL_ }))
+    const out = (await call('web.fetch', { url: 'https://app.example.com/pricing' })) as { via: string }
+    expect(out.via).toBe('direct')
   })
 
   test('a read with render ends the same way', async () => {
