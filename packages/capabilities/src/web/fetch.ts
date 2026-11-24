@@ -809,6 +809,7 @@ export const createFetch = (deps: ResolvedWebDeps) => {
             if (target === url && error.status !== undefined && error.status >= 400 && error.status < 500)
               pageStatus = error.status
             // The browser leg's verdict that a person has to pass the wall stands over the plain read's reading of it.
+            if (target === url && error.blocked === 'login-required' && error.status === undefined) loginWalled = true
             if (target === url && blocked !== 'needs-human') blocked = error.blocked
             failures.push(`${where('direct', target)}: ${error.message}`)
           }
@@ -816,6 +817,10 @@ export const createFetch = (deps: ResolvedWebDeps) => {
         }
         /** The last browser read of the chain ended on a check no wait clears: only a person can pass it. */
         let metCheck = false
+        /** A sign-in page stands in front of the page (a browser landing, a plain redirect): no archive or Extract copy of it is an answer. */
+        let loginWalled = false
+        /** The browser ended on a challenge no wait clears: the wall is the host's, and its memory keeps it. */
+        let challengeMet = false
         /**
          * One browser read of `target`: a complete page is the answer, a shell is kept, a failure is one more line.
          * `ownerClearing`: the owner approved, and the tab stays open for him to clear the check.
@@ -841,6 +846,7 @@ export const createFetch = (deps: ResolvedWebDeps) => {
               // own title is not repeated: it is untrusted text.
               blocked = 'needs-human'
               metCheck = true
+              challengeMet = true
               failures.push(
                 `${where('browser', target)}: challenge not cleared${ownerClearing ? ' after the owner approved' : ''}`,
               )
@@ -850,6 +856,7 @@ export const createFetch = (deps: ResolvedWebDeps) => {
               outcome = 'blocked'
               blocked = 'needs-human'
               metCheck = true
+              loginWalled = true
               const wall = new URL(page.finalUrl)
               failures.push(
                 `${where('browser', target)}: login wall (redirected to ${wall.origin}${wall.pathname}${ownerClearing ? ', still there after the owner approved' : ''})`,
@@ -943,7 +950,7 @@ export const createFetch = (deps: ResolvedWebDeps) => {
 
         // A page that stayed behind a wall is read from sources that are allowed to serve it: the site's own API, then the
         // archive. Never answered by agw itself: no leg here solves a check.
-        if (blocked && ARCHIVE_REASONS.includes(blocked)) {
+        if (blocked && ARCHIVE_REASONS.includes(blocked) && !loginWalled) {
           const question = stackExchangeQuestion(url)
           if (question) {
             const closed = stackExchangeQuota.closed(Date.now())
@@ -1007,29 +1014,31 @@ export const createFetch = (deps: ResolvedWebDeps) => {
         }
 
         const extractBegan = Date.now()
-        try {
-          tried.push('tavily-extract')
-          const read = await extract(
-            deps,
-            url,
-            ctx.signal,
-            ctx.addUsage,
-            directTimedOut ? deps.extractAfterTimeoutMs : undefined,
-          )
-          const withTitle = { ...read, ...(kept.found?.read.title ? { title: kept.found.read.title } : {}) }
-          const why = incompleteReason(read.finalUrl, read.text)
-          if (!why) {
-            timeline('tavily-extract', extractBegan, 'ok')
-            return done(withTitle, 'tavily-extract')
+        // Extract fetches the same page from its own servers: behind a sign-in page it returns the sign-in page, which no rule here tells from content.
+        if (!loginWalled)
+          try {
+            tried.push('tavily-extract')
+            const read = await extract(
+              deps,
+              url,
+              ctx.signal,
+              ctx.addUsage,
+              directTimedOut ? deps.extractAfterTimeoutMs : undefined,
+            )
+            const withTitle = { ...read, ...(kept.found?.read.title ? { title: kept.found.read.title } : {}) }
+            const why = incompleteReason(read.finalUrl, read.text)
+            if (!why) {
+              timeline('tavily-extract', extractBegan, 'ok')
+              return done(withTitle, 'tavily-extract')
+            }
+            timeline('tavily-extract', extractBegan, 'incomplete')
+            keep(withTitle, 'tavily-extract', why)
+            failures.push(`tavily-extract: ${why}`)
+          } catch (error) {
+            if (!(error instanceof DirectFailure)) throw error
+            timeline('tavily-extract', extractBegan, directOutcome(error))
+            failures.push(error.message)
           }
-          timeline('tavily-extract', extractBegan, 'incomplete')
-          keep(withTitle, 'tavily-extract', why)
-          failures.push(`tavily-extract: ${why}`)
-        } catch (error) {
-          if (!(error instanceof DirectFailure)) throw error
-          timeline('tavily-extract', extractBegan, directOutcome(error))
-          failures.push(error.message)
-        }
 
         // A kept thin read is still a read: better than an error for a short page. Not after the browser met a wall: the
         // shell is then what the wall left of the page, and a read that ends 0 with it hides that nothing was read.
@@ -1037,7 +1046,13 @@ export const createFetch = (deps: ResolvedWebDeps) => {
           return { ...kept.found, tried, legs }
         // Every leg failed at a wall: the next read of the host is answered from here for the wall interval. A
         // browser that could not read at all (and met no challenge) proves nothing about the wall, so it is not kept.
-        if (host && blocked && WALL_REASONS.includes(blocked) && (blocked === 'needs-human' || !browserFailed))
+        // A sign-in page is the wall of one page, not of the host: only a challenge (or a refusal of automated reads) is remembered.
+        if (
+          host &&
+          blocked &&
+          WALL_REASONS.includes(blocked) &&
+          (blocked === 'needs-human' ? challengeMet : !browserFailed)
+        )
           walls.remember(host, blocked)
         throw fail(
           'UPSTREAM_ERROR',
