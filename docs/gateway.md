@@ -25,7 +25,7 @@ Research run `01a1980b-d977-7796-a377-14349c813714` (2026-11-01).
 
 ## Shape
 
-A third agw process, `packages/gateway`, its own LaunchAgent on `127.0.0.1:7794` (7793 is the software-factory server's). **It is a lean process, not a
+A third agw process, `packages/gateway`, its own LaunchAgent on `127.0.0.1:7794` (7793 is the software-factory server's). It is also reachable on the tailnet through the dotfiles Caddy door `agw-gateway` (a reverse proxy to the loopback port, so the source address of every request is loopback and nothing here may trust it): the door token is the only gate, every route but `GET /health` answers 401 without one. **It is a lean process, not a
 `bootProcess` one** (owner, 2026-11-01): every LLM call from the mini goes through it, so it must not depend on the
 journal Postgres, the workflow runtime or OpenCode, and its import closure stays small so most releases leave its build
 unchanged. It runs as one bundled file. **A local SQLite ledger in its state dir is the outbox:** each served request
@@ -273,7 +273,7 @@ a new create"; continue only after `message_stop`; start a new thread after a `r
 ## Callers and attribution
 
 Callers authenticate with a door token (`data/door-tokens`, one line per caller: `hermes`, `agw-opencode` (the OpenCode
-server), `oc`, `modelpick`, …; the API secret is `agw`)
+server), `oc`, `modelpick`, `ntfy-mac`, …; the API secret is `agw`)
 as `authorization: Bearer <t>`, `x-api-key`, `x-goog-api-key`, `api-key` or a `key` query parameter (whichever the
 caller's SDK sends). None of them goes upstream. The caller name comes from the credential, never a header; a door token never opens the API. Optional headers: `x-agw-run-id`, `x-agw-workflow`, `x-agw-step`, `x-agw-purpose`,
 `x-agw-project`, `x-agw-workspace`, `x-agw-origin`, `x-agw-route-fallback`, `x-agw-usage`, `x-agw-upstream`, `traceparent`.
@@ -360,6 +360,7 @@ cycle, projected unspent credit, picks and fallbacks, and cache-hit rate per cal
 | agw OpenCode providers | **done:** the gateway with the `agw-opencode` door token (`AGW_GATEWAY_TOOL_TOKEN`, read by `scripts/launch.sh`) | — |
 | Hermes | IU via `OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL` | the gateway; vision moves to `anthropic_messages`, approvals off `-eu` |
 | dotfiles `oc`, modelpick | IU | the gateway; their door tokens (`oc`, `modelpick`) are in `data/door-tokens` since the deploy that made agw keyless |
+| `ntfy-mac` (the NtfyMac app on the MacBook) | **done:** production; Haiku summaries of missed notifications, over the tailnet door with the `ntfy-mac` door token in `x-api-key` (model alias `haiku`); the token is `op://mini/agent-workflows/ntfy-mac-door-token` | — |
 | email-gateway (VPS), Karakeep (homelab) | IU | later, over Tailscale, once the gateway has run clean for two weeks |
 | Claude Code, Athena Teamchat | subscription, Athena relay | never |
 

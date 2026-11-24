@@ -1,6 +1,6 @@
 # @agent-workflows/gateway
 
-The local inference gateway on `127.0.0.1:7794`. It forwards native LLM requests byte for byte, pays for Claude calls
+The inference gateway on `127.0.0.1:7794` (also on the tailnet through the dotfiles Caddy door `agw-gateway`, door-token-gated). It forwards native LLM requests byte for byte, pays for Claude calls
 from the subscriptions' API credit before IU, and records every request. Design and rationale: `docs/gateway.md`.
 
 - **Lean by design.** No journal Postgres, workflow runtime or OpenCode. It runs as one bundled file:
