@@ -36,7 +36,7 @@ serve agent steps inside workflows and research, and the gateway holds them: agw
    finding. The router picks the tier from `REVIEW.md`'s globs; `--min deep` for the runtime, middleware, CLI contract
    and anything security-adjacent.
 4. `/code-review high` on core packages and on every cross-package interface.
-5. `make check` after every rebase.
+5. `make check-fast` after each change (CI's `make check` is the full gate on the pull request head); `make check` after every rebase.
 6. After a deploy on the mini, `@verifier` proves the wiring live: run record in Postgres, spans in ClickStack,
    usage rows in the `usage` schema, the CLI end to end.
 
@@ -65,6 +65,7 @@ Bun workspaces (`packages/*`). `docs/spikes/**` is excluded from every tool. The
 | Command | Does |
 |-|-|
 | `make check` | Frozen install, mini-registry lint, `make static` (oxfmt, oxlint, tsc), `make test` (the merge train's gate), `make usage`. Needs Postgres: `AGW_TEST_PG_URL`, else the mini's through `secrets-run`. |
+| `make check-fast` | The lead tier (`project.yaml` `checks`): install, registry lint, `make static`, `make test-fast` (`bun test --changed` against the merge base: the tests the branch's TypeScript reaches; none for docs-only; the whole suite for any other change), `make usage`. CI runs `make check` on the pull request head and the merge waits for it. |
 | `make deploy` | Releases `origin/master` to `~/.agent-workflows/releases/<sha>` and restarts the LaunchAgents from it. A release that never turns healthy rolls back. |
 | `make verify` | Exits 0 only when the deployed sha is `origin/master`, `/health` is ok, and the smoke run, the direct LLM call and the gateway calls each land a `done` run with priced usage. |
 | `make live-routes` | One real call per route. Costs cents. |
