@@ -329,8 +329,11 @@ async function prepareResolved(
     }
   }
 
+  // The last head already landed on the asked base (a strict ancestor of it): the new base is the diff's start, never that head.
+  const landed = last !== null && last.head !== base && (await isAncestor(git, gitDir, last.head, base))
   const followsLast =
     last !== null &&
+    !landed &&
     (last.base === base || (await isAncestor(git, gitDir, last.head, head))) &&
     (await tryGit(git, gitDir, ['cat-file', '-e', `${last.head}^{commit}`])) !== null
   // A round that left files unreviewed is read again from its own diff base: the missing files come back with the rest.

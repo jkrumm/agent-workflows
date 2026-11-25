@@ -306,6 +306,23 @@ describe('prepare', () => {
     expect(plain.note).toBeUndefined()
   })
 
+  test('a round whose head has landed on the base is no fix round: the diff starts at the base, not the landed head', async () => {
+    const s = service()
+    const root = repo({ 'src/a.ts': lines(2), 'src/m.ts': lines(2) })
+    const base0 = git(root, 'rev-parse', 'HEAD')
+    const h1 = commit(root, { 'src/a.ts': lines(3) }, 'round one')
+    const r1 = await ready(s.prepare({ cwd: root, scope: `${base0}..HEAD` }))
+    expect(r1).toMatchObject({ round: 1, base: base0, head: h1 })
+    await s.submit({ jobId: r1.jobId, attempt: 1, reply: fakeReviewer(r1.jobDir) })
+    // the round's head lands; master moves past it with an unrelated commit, then the change adds one commit
+    const newBase = commit(root, { 'src/m.ts': lines(3) }, 'unrelated, master moved past the landed head')
+    const tip = commit(root, { 'src/c.ts': lines(2) }, 'the new commit')
+    const r2 = await ready(s.prepare({ cwd: root, scope: `${newBase}..HEAD`, thread: r1.thread }))
+    expect(r2).toMatchObject({ round: 2, base: newBase, head: tip, diffBase: newBase })
+    expect(r2.files).toEqual(['src/c.ts'])
+    expect(readFileSync(join(r2.jobDir, 'diff.patch'), 'utf8')).not.toContain('src/m.ts')
+  })
+
   test('scopes: a bad ref and pr with scope are refused', async () => {
     const root = repo({ 'src/a.ts': lines(2) })
     await rejects(service().prepare({ cwd: root, scope: 'nope' }), /not a commit/)
