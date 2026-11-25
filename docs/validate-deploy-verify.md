@@ -2,7 +2,7 @@
 
 The summary is in the root `AGENTS.md`. This is the full command table, moved verbatim from it.
 
-Bun workspaces (`packages/*`), pinned toolchain per `docs/spikes/s3-stack/REPORT.md`. `docs/spikes/**` is
+Bun workspaces (`packages/*`), pinned toolchain per `package.json` devDependencies (the S3 spike, `docs/spikes/s3-stack/REPORT.md`, chose the stack; its lint and format row is superseded). `docs/spikes/**` is
 excluded from every tool.
 
 | Command | Runs |
