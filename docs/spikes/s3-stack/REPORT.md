@@ -2,6 +2,8 @@
 
 **Verdict: oRPC `1.16.1` + zod `4.6.7` on Bun `1.4`; `bun test`; Biome `2.6.3` (format + lint) with `oxlint 1.89.0 --type-aware` as a second lint step; TypeScript `7.0.2` (`tsc`).**
 
+> **Superseded (2026-11-25): the format and lint gate is not Biome.** The repo runs `oxfmt` (format) and `oxlint --type-aware` (lint, with `oxlint-tsgolint`), pinned in `package.json` devDependencies and run by `make static` (`static-steps` in the Makefile). `@biomejs/biome` is not in the repo. The lint and format row of the table below, and the Biome clause of the verdict, describe the 2026-10-27 decision only. Current pins: `package.json`.
+
 Scaffold installs exactly these. Pin them exactly (no carets): Bun's global 3-day `minimumReleaseAge` already
 forced two choices below the registry `latest`.
 
