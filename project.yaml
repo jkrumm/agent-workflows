@@ -13,8 +13,7 @@ ship:
 checks: { fast: make check-fast, full: make check, ci: true }
 # The static checks and the test suite may run on the factory's step host when the mini's test line would make them wait (Makefile
 # `static` and `test`, `$(call slot,<step>)`; `factory slot run` places them). Neither needs a secret or a mini service on the host:
-# `test` starts a private Postgres cluster from the image's server binaries (scripts/test-env.sh) where the mini uses its maintained
-# one through secrets-run. `test` names its own image because the suite also runs zsh scripts and the real ffmpeg
+# `test` starts a private Postgres cluster from the image's server binaries (scripts/test-env.sh), as it does on the mini. `test` names its own image because the suite also runs zsh scripts and the real ffmpeg
 # (tools/step-image/Dockerfile; CI installs both, and a step has CI set, so a missing one fails). The install and the mini-registry lint stay in
 # `make check` on the mini, and so does `usage` (the two suites that apply the usage-tracker checkout's migrations: a sibling repository
 # only the mini has), which takes no slot.

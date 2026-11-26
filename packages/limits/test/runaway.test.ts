@@ -30,7 +30,7 @@ const runtimes: Runtime[] = []
 
 // One runtime at a time on the schema: an open one would claim the next test's runs without its middleware.
 // The rules close here too: each holds a pool of its own, and left open to the end of the file they were 20 idle
-// connections of the role's 64 at once.
+// connections at once, of the 100 CI's server allows the whole suite.
 afterEach(async () => {
   for (const rt of runtimes.splice(0)) await rt.close()
   for (const o of open.splice(0).reverse()) await o.close()

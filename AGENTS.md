@@ -64,7 +64,7 @@ Bun workspaces (`packages/*`). `docs/spikes/**` is excluded from every tool. The
 
 | Command | Does |
 |-|-|
-| `make check` | Frozen install, mini-registry lint, `make static` (oxfmt, oxlint, tsc), `make test` (the merge train's gate), `make usage`. Needs Postgres: `AGW_TEST_PG_URL`, else the mini's through `secrets-run`. |
+| `make check` | Frozen install, mini-registry lint, `make static` (oxfmt, oxlint, tsc), `make test` (the merge train's gate), `make usage`. Needs Postgres: `AGW_TEST_PG_URL`, else a private cluster it starts (`scripts/test-env.sh`). |
 | `make check-fast` | The lead tier (`project.yaml` `checks`): install, registry lint, `make static`, `make test-fast` (`bun test --changed` against the merge base: the tests the branch's TypeScript reaches; none for docs-only; the whole suite for any other change), `make usage`. CI runs `make check` on the pull request head and the merge waits for it. |
 | `make deploy` | Releases `origin/master` to `~/.agent-workflows/releases/<sha>` and restarts the LaunchAgents from it. A release that never turns healthy rolls back. |
 | `make verify` | Exits 0 only when the deployed sha is `origin/master`, `/health` is ok, and the smoke run, the direct LLM call and the gateway calls each land a `done` run with priced usage. |
