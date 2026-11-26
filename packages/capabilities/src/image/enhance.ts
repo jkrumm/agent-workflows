@@ -4,7 +4,7 @@ import { completeJson, type LlmDeps } from '../llm/model-call.ts'
 import { defineCapability } from '../procedure.ts'
 import type { ResolvedImageDeps } from './deps.ts'
 import { estimateCost, snapToNearestPreset } from './estimate.ts'
-import { composePlaybook, INTENTS, PLAYBOOK_VERSION } from './playbook.ts'
+import { composePlaybook, hintedIntent, INTENTS, PLAYBOOK_VERSION } from './playbook.ts'
 import { validateSize } from './size.ts'
 import {
   BACKGROUNDS,
@@ -165,7 +165,7 @@ const OUTPUT_CONTRACT = `You are the Plan brain for a personal image-generation 
 
 The JSON object must have exactly this shape:
 {
-  "intent": { "detected": "<icon|hero|painterly|technical|diagram|article|figure-art|texture>", "confidence": <0-1 number> },
+  "intent": { "detected": "<icon|hero|painterly|technical|diagram|article|figure-art|texture|portrait>", "confidence": <0-1 number> },
   "prompt": "<the finished image-generation prompt, per the playbook's canonical ordering and terminal constraint block>",
   "additions": [{ "slot": "<gap filled, e.g. lighting>", "text": "<the added text>" }],
   "assumptions": ["<free-text notes on what you assumed or corrected>"],
@@ -273,7 +273,9 @@ function planMessages(input: EnhanceInput, applied: ModeApplied) {
   ]
     .filter((section): section is string => section !== null)
     .join('\n\n')
-  return { system: `${composePlaybook(input.intent)}\n\n---\n\n${OUTPUT_CONTRACT}`, user }
+  const loaded =
+    input.intent === 'auto' ? hintedIntent(`${input.brief ?? input.currentPrompt} ${input.delta ?? ''}`) : input.intent
+  return { system: `${composePlaybook(loaded)}\n\n---\n\n${OUTPUT_CONTRACT}`, user }
 }
 
 /** Every quoted string and concrete token (numbers, hex colours, capitalised names) of a text; the first word is only sentence case. */

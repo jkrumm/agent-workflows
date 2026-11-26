@@ -391,7 +391,7 @@ export function createImageDoor(deps: ImageDoorDeps): ImageDoor {
       streaming: false,
       work: async (io) => {
         const plan = await enhance(planToEnhance(fields), io)
-        return { response: planResponse(plan), model: plan.enhanceModel, images: 0, bytes: 0 }
+        return { response: planResponse(plan, fields.intent), model: plan.enhanceModel, images: 0, bytes: 0 }
       },
     }
   }

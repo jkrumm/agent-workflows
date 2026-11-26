@@ -6,7 +6,7 @@ import { createRegistry } from '../registry.ts'
 import { fakeTransports } from '@agent-workflows/testing/transports'
 import { checkVerbatim, modeApplied, verbatimTokens } from './enhance.ts'
 import { createImageCapabilities } from './index.ts'
-import { composePlaybook, PLAYBOOK_VERSION } from './playbook.ts'
+import { composePlaybook, hintedIntent, PLAYBOOK_VERSION } from './playbook.ts'
 
 const route = IMAGE_ROUTES['image.enhance']
 const plan = (overrides: Record<string, unknown> = {}) => ({
@@ -147,6 +147,36 @@ describe('image.enhance', () => {
       expect(icon).toContain(rule)
     // the guidance is the icon intent's own: a plain `auto` call does not carry it
     expect(composePlaybook('auto')).not.toContain('survive 16 px')
+  })
+
+  test('a portrait brief loads the portrait file before anything is detected, and auto stays the detection', async () => {
+    const brief = 'Bewerbungsfoto from my own photo, neutral grey studio background'
+    const { run, transports } = enhance([reply(plan({ intent: { detected: 'portrait', confidence: 0.9 } }))], {
+      brief,
+      hasReferences: true,
+    })
+    const out = await run()
+    const request = transports.chatCalls[0]?.request
+    expect(request?.system).toStartWith(composePlaybook('portrait'))
+    expect(request?.prompt).toContain('Detect the intent from the brief')
+    expect(out.intent.detected).toBe('portrait')
+
+    for (const text of [
+      'a headshot for my CV',
+      'LinkedIn-style portrait',
+      'application photo',
+      'Passfoto',
+      'new profile picture',
+    ])
+      expect(hintedIntent(text)).toBe('portrait')
+    for (const text of ['a lighthouse in portrait orientation', 'a poster for a job application', 'an oil portrait'])
+      expect(hintedIntent(text)).toBe('auto')
+  })
+
+  test('the playbook says an identity-keeping edit of a photo warns, and the portrait file holds the preserve sentence', () => {
+    expect(composePlaybook('auto')).toContain('is severity `warn` (code `real_person_reference`')
+    expect(composePlaybook('portrait')).toContain("Preserve the person's identity exactly")
+    expect(composePlaybook('portrait')).toContain('No film grain')
   })
 
   test('warnings come through, a hard one included', async () => {

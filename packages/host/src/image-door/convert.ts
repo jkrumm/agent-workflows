@@ -153,10 +153,13 @@ export function planToEnhance(request: PlanRequest): EnhanceParams {
 }
 
 /** The plan response of the studio's contract. A planner with no price for its seat reports 0, as the studio's own unpriced plans read. */
-export function planResponse(plan: EnhanceOutput): PlanResponse {
+export function planResponse(plan: EnhanceOutput, requested: PlanRequest['intent']): PlanResponse {
   const { settings } = plan
+  // The studio app parses the response against its own intent enum, which lacks `portrait`: a detected one is `auto` to it.
+  // A caller that pinned `portrait` knows the value and gets it back.
+  const unknownToStudio = plan.intent.detected === 'portrait' && requested !== 'portrait'
   return {
-    intent: plan.intent,
+    intent: unknownToStudio ? { ...plan.intent, detected: 'auto' } : plan.intent,
     prompt: plan.prompt,
     additions: plan.additions,
     verbatim_check: plan.verbatimCheck,

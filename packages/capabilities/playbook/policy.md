@@ -12,9 +12,15 @@ Moderation runs in two stages: an input classifier on the prompt (and on edit re
 
 Our upstream is more permissive than public-API reports: a photoreal named-celebrity portrait generated fine, while a living-artist style blocked at input and a franchise character blocked at output. The trigger tables below describe _public-API_ behavior — treat pre-check verdicts as advisory warnings, not gates, except for the hard walls.
 
+## Calibration (probe-verified 2026-11-26): editing a person's own photo
+
+13 of 13 identity-keeping edits of a real, identifiable face passed on sunburst edits (low and high, 1024x1280 and 1600x2000): no input or output block, identity kept. Such an edit is therefore **not** a hard wall.
+
+An **identity-keeping edit** is all of: a reference photo of a person is attached; the brief changes only background, light, framing, outfit or posture; face, age and body stay as they are. Its warning is severity `warn` (code `real_person_reference`, no `predicted_stage`), never `hard` or `rewrite`. It stays a hard wall when the brief also names another real person, involves a minor, sexualises or undresses the person, or asks for any other boundary below. Do not ask who is in the photo or assume it is someone else's.
+
 ## Hard boundaries — warn, don't rewrite
 
-Explicit sexual content; anything involving minors combined with realism (never combine minors + photorealism + close-up even innocuously); photorealistic identifiable real people (generation or edit — the classifier can't verify consent, including for the user's own photo); individual living artists' styles by name; realistic gore; hate symbols.
+Explicit sexual content; anything involving minors combined with realism (never combine minors + photorealism + close-up even innocuously); photorealistic identifiable real people (generation without a reference, or an edit of a reference that is not identity-keeping as defined above — the classifier can't verify consent); individual living artists' styles by name; realistic gore; hate symbols.
 
 ## False-positive triggers and rewrites
 
@@ -26,7 +32,7 @@ Explicit sexual content; anything involving minors combined with realism (never 
 | Arousal-coded adjectives ("sexy", "seductive", "revealing", "tight", "skimpy") | Craft vocabulary: elegant, sculptural, tailored, fitted, high-fashion editorial                    |
 | Negated sensitive nouns ("no nudity")                                          | Strip the negation; state attire affirmatively ("draped in floor-length ivory silk")               |
 | Weapon/violence nouns in realistic register                                    | Stylized/cinematic/historical-illustration framing; motion and lighting instead of gore            |
-| Reference photo with a real face or visible skin (edits)                       | Warn up front; suggest stylized source or generation instead                                       |
+| Reference photo with a real face or visible skin (edits)                       | Identity-keeping edit: `warn` and plan it (see Calibration). Otherwise warn up front; suggest a stylized source or generation   |
 | Non-English prompt with ambiguous terms                                        | Offer the English translation                                                                      |
 | Trivially innocent prompt blocked                                              | Possible upstream moderation incident — retry later, don't contort                                 |
 

@@ -11,6 +11,7 @@ agw image "a leaf icon, bold silhouette" --size 1024x1024 --background transpare
 agw image --file /abs/subject.png [--model bria]            # a cutout
 agw image "a leaf icon" --enhance --quality low             # plan first: playbook prompt, derived settings, policy check
 agw image "a leaf logo" --enhance --intent icon --n 12      # a mark: pins the planner's icon playbook
+agw image "Bewerbungsfoto, grey studio background" --images '["/abs/me.jpg"]' --enhance --quality low   # an application photo
 ```
 
 Exactly one of `prompt` and `file`. The run answers with the files it made:
@@ -65,7 +66,7 @@ Exactly one of `prompt` and `file`. The run answers with the files it made:
   JPEG with an EXIF rotation, which is re-encoded upright. **A started prediction is billed:** its price is recorded as
   soon as it is created, so a failed poll or the poll deadline still leaves the cost on the run.
 - **`--enhance` is `imgcli gen --enhance`, ported** as the capability `image.enhance` (`brief`, `hasReferences`, optional
-  `intent` and `mode`). image-gateway's playbook (`packages/capabilities/playbook/`, version 6) is the system prompt, one
+  `intent` and `mode`). image-gateway's playbook (`packages/capabilities/playbook/`, version 7) is the system prompt, one
   JSON plan comes back, and code disposes of it: the aggressiveness gate is by word count (under 25 full, 25–100
   gap-fill, over 100 passthrough, never the model's call), settings are routed and an invalid size snaps to the nearest
   preset (each correction is a note), a verbatim check lists brief tokens the prompt dropped, the cost is estimated from
@@ -117,6 +118,18 @@ Two limits, both observed:
 
 The existing commands carry all of this: no new command and no batch mode (`--n` and a shell loop make the breadth round).
 The one change this needed was `--intent` on `agw image`: the capability `image.enhance` always took it, the workflow did not pass it on.
+
+## An application photo (Bewerbungsfoto)
+
+Intent `portrait` (`packages/capabilities/playbook/portrait.md`): an identity-keeping edit of a photo of a person is a
+`warn`, not a hard wall (probe of 2026-11-26: 13 of 13 sunburst edits passed). The plan describes only what the brief
+names, plus the format's reframing and studio light.
+
+- Reference: the uncropped original (long edge about 2048 px, jpeg). A pre-cropped 4:5 frame comes out tighter.
+- Drafts at `1024x1280`, `--quality low` ($0.018, 13 s); the final at `1600x2000`, `--quality high` ($0.084, 50 s).
+- Branch every variant from the original, never from an output.
+- Pin `--intent portrait` when the brief names no headshot or application, CV or passport photo: `auto` loads the
+  portrait rules only for those words (`hintedIntent`, `packages/capabilities/src/image/playbook.ts`).
 
 ## Route
 
