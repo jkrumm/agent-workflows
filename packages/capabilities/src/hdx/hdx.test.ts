@@ -74,6 +74,8 @@ function fakeHyperdx(override?: (seen: Seen, n: number) => Response | undefined)
   }
   const server = Bun.serve({
     port: 0,
+    // Loopback only: on macOS a wildcard bind can share its port with another process's 127.0.0.1 bind, which then takes the requests.
+    hostname: '127.0.0.1',
     async fetch(req) {
       // Never keep-alive: a later fake server can be given this port, and a pooled socket to the stopped one would fail its first request.
       const response = await handle(req)

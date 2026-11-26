@@ -57,6 +57,8 @@ function standInGateway(options: Options, requests: Request[]) {
   }
   return Bun.serve({
     port: 0,
+    // Loopback only: on macOS a wildcard bind can share its port with another process's 127.0.0.1 bind, which then takes the requests.
+    hostname: '127.0.0.1',
     async fetch(request) {
       if (new URL(request.url).pathname === '/health') return Response.json(health)
       const n = requests.length

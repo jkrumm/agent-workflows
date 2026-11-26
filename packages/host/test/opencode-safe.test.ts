@@ -19,6 +19,8 @@ async function run(env: Record<string, string>, answer: Answer = {}) {
   const health = answer.health ?? { status: 200, body: { status: 'ok', version: 'x', build: 'b' } }
   const server = Bun.serve({
     port: 0,
+    // Loopback only: on macOS a wildcard bind can share its port with another process's 127.0.0.1 bind, which then takes the requests.
+    hostname: '127.0.0.1',
     fetch(request) {
       const path = new URL(request.url).pathname
       probed.push(path)
