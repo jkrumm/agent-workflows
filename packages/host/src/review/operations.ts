@@ -37,7 +37,7 @@ const cliOf = (command: string, extra: Partial<ResolvedCliSpec> = {}): ResolvedC
 
 /**
  * Postgres refusing a connection because the role is at its limit (SQLSTATE 53300; a wrapper may keep only the text).
- * The role is shared with `make check`, so this is a passing state of the host, not a failure of the request.
+ * The role's limit is shared by the live processes, so this is a passing state of the host, not a failure of the request.
  */
 function isConnectionExhausted(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false
