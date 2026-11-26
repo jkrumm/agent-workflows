@@ -21,7 +21,7 @@ AGW_API_SECRET=op://mini/agent-workflows/API_SECRET
 # Span export. The key is a separate var: secrets-run resolves whole-value refs only, launch.sh builds the header.
 OTEL_EXPORTER_OTLP_ENDPOINT=op://mini/agent-workflows/OTEL_EXPORTER_OTLP_ENDPOINT
 OTEL_EXPORTER_OTLP_AUTHORIZATION=op://vps/argo/HYPERDX_API_KEY_PROD
-# Journal database password; launch.sh builds AGW_PG_URL from it (the way `make check` builds AGW_TEST_PG_URL).
+# Journal database password; launch.sh builds AGW_PG_URL from it (percent-encoding it).
 AGW_PG_PASSWORD=op://mini/vps-dev/AGENT_WORKFLOWS_DB_PASSWORD
 # Usage database (schema `usage` in `shared`, role `usage`): the middleware outbox writes usage rows there. launch.sh builds
 # USAGE_PG_URL from the password, the same way.
