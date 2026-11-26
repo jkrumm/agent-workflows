@@ -93,6 +93,36 @@ describe('telemetry', () => {
     await t.shutdown()
   })
 
+  test('flush waits for an export the batch timer already started, and reports no loss', async () => {
+    const started = Promise.withResolvers<void>()
+    const exported: string[] = []
+    const logger = captureLogger()
+    const t = new Telemetry({
+      logger,
+      scheduledDelayMillis: 10,
+      exporter: {
+        export(spans, done) {
+          started.resolve()
+          setTimeout(() => {
+            exported.push(...spans.map((s) => s.name))
+            done({ code: 0 })
+          }, 50)
+        },
+        shutdown: () => Promise.resolve(),
+      },
+    })
+    const mw = t.middleware()
+    await mw.runPre?.(run('r-slow'))
+    const { resume: _, ...info } = run('r-slow')
+    const at = new Date()
+    await mw.runPost?.({ ...info, status: 'done', output: null, error: null, startedAt: at, finishedAt: at })
+    await started.promise
+    expect(await t.flush()).toBe(true)
+    expect(exported).toEqual(['agw.run t.wf'])
+    expect(logger.lines).toEqual([])
+    await t.shutdown()
+  })
+
   test('redactForSpan', () => {
     expect(redactForSpan('Authorization: Bearer eyJhbGciOi.x_y')).toBe('Authorization: Bearer [redacted]')
     expect(redactForSpan('https://x.example.com/?api_key=abc&token=def&q=1')).toBe(
