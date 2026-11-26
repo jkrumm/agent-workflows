@@ -60,7 +60,7 @@ fi
 KEYS=( ${(f)"$(/usr/bin/grep -hoE '^[A-Za-z_][A-Za-z0-9_]*=' "$TPL" | /usr/bin/tr -d =)"} )
 
 # secrets-run resolves whole-value refs only, so the composite values are built after it, inside its child. The
-# password is URL-encoded the way `make check` does it (the usage database URL the same way: role usage, database
+# password is percent-encoded (the usage database URL the same way: role usage, database
 # shared). USAGE_PG_PASSWORD is a required deploy secret like every other ref in .env.tpl: unresolved or empty, this script
 # exits 78 and the process never starts, so the usage outbox is never "off" on a deployed host (seed the ref before the
 # deploy that needs it). The raw AGW_PG_PASSWORD, USAGE_PG_PASSWORD and OTEL_EXPORTER_OTLP_AUTHORIZATION are dropped before the host
