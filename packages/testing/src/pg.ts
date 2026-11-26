@@ -7,7 +7,7 @@ export function testPgUrl(): string {
   const url = process.env.AGW_TEST_PG_URL
   if (!url) {
     throw new Error(
-      'AGW_TEST_PG_URL is not set. Run the tests through `make check` (it resolves the mini database via secrets-run) or set it to a Postgres URL whose role may create schemas.',
+      'AGW_TEST_PG_URL is not set. Run the tests through `make check` or `sh scripts/test-env.sh bun test <path>` (a private cluster) or set it to a Postgres URL whose role may create schemas.',
     )
   }
   return url

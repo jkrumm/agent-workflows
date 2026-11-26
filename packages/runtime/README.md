@@ -263,7 +263,7 @@ new input; a fresh session would pay the whole prompt again.
 
 ## Tests
 
-Real Postgres, never mocks: `AGW_TEST_PG_URL` must be set (`make check` builds it on the mini via
-`secrets-run` from `.env.test.tpl`; CI runs a `postgres:18` service). Every test file uses its own throwaway
+Real Postgres, never mocks: `AGW_TEST_PG_URL` must be set (`make check` starts a private cluster and
+sets it, `scripts/test-env.sh`; CI runs a `postgres:18` service). Every test file uses its own throwaway
 schema. `test/kill/` is the S1 kill harness as a regression test: worker subprocesses kill themselves at every
 step boundary and mid-step, deploy onto changed code, and drive 12 concurrent runs through a kill.

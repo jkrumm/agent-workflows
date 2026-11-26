@@ -1,7 +1,7 @@
 // Kill harness (spike S1, kept as a regression test against the real runtime). Worker subprocesses SIGKILL
 // themselves at every step boundary (b-*) and mid-step (m-*), SIGTERM-deploy onto changed code, and drive 12
 // concurrent runs through a kill (each concurrent run holds a lease connection: 12 are more than the journal
-// pool's 3 connections, the case that matters, and fit the test role's connection limit, see the Makefile). The ledger proves: every run done, 0 completed steps re-run, each effect
+// pool's 3 connections, the case that matters, and leave the suite room under the server's connection limit, see the Makefile). The ledger proves: every run done, 0 completed steps re-run, each effect
 // inserted exactly once, each agent session prompted exactly once.
 import { afterAll, expect, test } from 'bun:test'
 import { resolve } from 'node:path'

@@ -2,7 +2,7 @@
 # `make check` runs them after everything else with HEAVY_WORKERS workers (default 1): a parallel worker keeps the high-water
 # mark of the largest file it ran, so four workers that each met one of these held 3-4 GiB between them.
 # The two runtime files that hold the most Postgres connections run here too (kill harness, concurrency): next to other files
-# they pushed the `agent_workflows` role past its connection limit; alone they stay well under it.
+# they pushed the test connections past the server's limit; alone they stay well under it.
 # One path per line; a file missing here only costs memory, a path with no file fails `make check`.
 packages/capabilities/src/image/image.test.ts
 packages/capabilities/src/web/web.test.ts

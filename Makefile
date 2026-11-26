@@ -21,22 +21,15 @@ help:
 	@echo "make verify  prove the deployment: the pinned OpenCode present, the healths at the sha (the gateway at its build), agw smoke ping and audio ping with their journal rows, the door's auth, three real Haiku calls through the gateway with their usage rows"
 
 # docs/spikes/** is excluded from every tool (see .oxfmtrc.json, .oxlintrc.json, tsconfig.json, bunfig.toml).
-# Tests need Postgres via AGW_TEST_PG_URL; unset on the mini, it is built from .env.test.tpl through secrets-run, together with
-# USAGE_TEST_PG_URL (admin, for the usage schema suite's scratch database; that suite skips visibly without it).
-# The test environment therefore holds the admin Postgres credential: CREATE DATABASE needs CREATEDB, which the journal's
-# test role (schemas only) lacks, and the suite must never touch the live `shared` database. The suite only ever runs DDL
-# on the usage_test_<random> name it generated. Follow-up: a dedicated CREATEDB-only test role, so no admin credential
-# reaches the test run.
+# Tests need Postgres via AGW_TEST_PG_URL (and USAGE_TEST_PG_URL, admin, for the usage suites' scratch database); unset,
+# scripts/test-env.sh starts a private throwaway cluster for the run and sets both.
 # The test timeout scales with host load, sampled as each test file starts (bunfig.toml preload, packages/testing); tests that
 # pass their own timeout keep it.
 # Before the tests, packages/testing/src/sweep.ts drops test schemas (agw_t_*) older than a day: what a failed or interrupted run left.
 # Test files run in TEST_WORKERS parallel processes (bun test --parallel, which implies --isolate; see
 # bun.com/docs/test/parallel). Every file brings its own Postgres schema, so files do not collide, but each holds
-# connections: a worker per core on a big machine exhausts the server's slots.
-# Measured on the mini (pg_stat_activity of the role every 500 ms through a full check): the live processes hold 10-20 of the role's
-# 64 (rolconnlimit), the kill harness and the 30-run concurrency test held 25-30 each, and one check peaked at 48, so any second
-# check (another lead's) or a bad overlap failed tests with "too many connections for role". Hence 3 workers, those two files in the
-# second pass (.heavy-tests) at 12 concurrent runs, and scripts/test-env.sh takes a lock on the mini so only one check runs there: the peak is now 38.
+# connections: a worker per core on a big machine exhausts the server's slots. CI's server takes the default 100, so the two
+# files that hold the most (the kill harness and the 30-run concurrency test, 25-30 each) run in the second pass (.heavy-tests).
 # The timings file (.bun-test-timings.json, refreshed by `make test-timings`) orders the files slowest-first.
 TEST_WORKERS ?= 3
 # Memory: a parallel worker keeps the high-water mark of the largest file it ran (a finished file's pages are not given back
@@ -87,8 +80,8 @@ static-steps:
 	@echo "==> typecheck (tsc --noEmit)"
 	@bunx --no-install tsc --noEmit
 
-# scripts/test-env.sh gives the command its Postgres: AGW_TEST_PG_URL as set (CI), else the mini's through secrets-run, else a
-# private cluster from PG_BIN_DIR (the step image). TEST_WORKERS and HEAVY_WORKERS are forwarded because the step host does not
+# scripts/test-env.sh gives the command its Postgres: AGW_TEST_PG_URL as set (CI), else a private cluster from the server
+# binaries in PG_BIN_DIR (the step image; on the mini Homebrew's, the default). TEST_WORKERS and HEAVY_WORKERS are forwarded because the step host does not
 # see the caller's make variables; BUN_TEST_BASE is not (`make test-timings` writes a file on this machine, so it stays here).
 test:
 	@$(call slot,test) sh scripts/test-env.sh make --no-print-directory test-steps TEST_WORKERS=$(TEST_WORKERS) HEAVY_WORKERS=$(HEAVY_WORKERS)

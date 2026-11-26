@@ -315,12 +315,10 @@ writes. `reasoning_tokens` is billed on top of `output_tokens`, so an unnormalis
 
 Real Postgres through the runtime's test support (`AGW_TEST_PG_URL`, a throwaway schema per file). Concurrency
 runs through every test, never a single run. `usage-pg.test.ts` additionally needs an admin connection
-(`USAGE_TEST_PG_URL`, built by `make check` from `.env.test.tpl`) and usage-tracker's migrations
+(`USAGE_TEST_PG_URL`, set by `scripts/test-env.sh` on its private cluster) and usage-tracker's migrations
 (`USAGE_MIGRATIONS_DIR`, default `../usage-tracker/migrations/pg` beside this repo); without either it skips, the reason
-in the suite's name and on stderr (so it does not run in CI). The test environment holds the admin Postgres credential for
-this: creating the scratch database `usage_test_<random>` needs CREATEDB, which the journal's test role (schemas only)
-lacks, and the suite must never write to the live `shared` database. Only the generated scratch name ever reaches DDL.
-Follow-up: a dedicated CREATEDB-only test role, so no admin credential reaches the test run.
+in the suite's name and on stderr (so it does not run in CI). Only the generated scratch name `usage_test_<random>` ever
+reaches DDL.
 
 | File | Covers |
 |-|-|

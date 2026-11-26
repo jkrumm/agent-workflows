@@ -17,8 +17,8 @@ import { captureLogger, freshSchema, inspector, PG_URL, testRuntime, until } fro
 
 // The real `usage` schema in a scratch database: usage-tracker owns the DDL, so its migrations are applied as they are
 // (`USAGE_MIGRATIONS_DIR`, default the sibling checkout). Creating a database needs an admin connection
-// (`USAGE_TEST_PG_URL`, as usage-tracker's own tests: `make check` builds it through secrets-run); the journal's test
-// role may only create schemas. Either one absent skips the suite, with the reason in its name and on stderr.
+// (`USAGE_TEST_PG_URL`, as usage-tracker's own tests: `scripts/test-env.sh` sets it on its private cluster).
+// Either one absent skips the suite, with the reason in its name and on stderr.
 
 const ADMIN_URL = process.env.USAGE_TEST_PG_URL
 const MIGRATIONS_DIR = resolve(

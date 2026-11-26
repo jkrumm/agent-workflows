@@ -4,7 +4,7 @@
 # the real boundary) and zsh (the script tests run the real interpreter; with `CI` set, which a step has, a missing zsh fails
 # the file). Plus what the factory's image carries and a repo's own image must: git, jq, make, the pinned bun and the
 # PostgreSQL 16 server binaries (`initdb` and `pg_ctl` on PATH, PG_BIN_DIR set): scripts/test-env.sh starts a private
-# cluster in the step's container, as the mini's tests use the maintained Postgres. The step host builds this once per
+# cluster in the step's container, as it does on the mini. The step host builds this once per
 # content, from stdin: there is no build context, so nothing here is COPYed.
 FROM ubuntu:24.04
 # The factory passes BUN: the version of package.json's `packageManager`.
