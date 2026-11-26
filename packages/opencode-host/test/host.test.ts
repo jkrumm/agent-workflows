@@ -1166,12 +1166,14 @@ describe('steer and abort', () => {
     await t.host.prompt(handle, 'a')
     const controller = new AbortController()
     const reads = messageReads(t, handle)
-    const waiting = t.host.wait(handle, waitOptions({ signal: controller.signal }))
+    const waiting = failure(t.host.wait(handle, waitOptions({ signal: controller.signal })))
     await waitPolling(t, handle, reads)
-    await t.host.abort(handle)
-    await t.host.abort(handle)
+    // The runtime's order: the signal first, then the interrupt. The other way round a poll in between reads the
+    // interrupted turn and the wait ends with that instead.
     controller.abort(new Error('cancelled by test'))
-    expect(await failure(waiting)).toContain('cancelled by test')
+    await t.host.abort(handle)
+    await t.host.abort(handle)
+    expect(await waiting).toContain('cancelled by test')
     const messages = await t.client.messages(sid(handle))
     expect(messages.filter((m) => m.type === 'idle').map((m) => m.outcome)).toEqual(['interrupted'])
     await t.host.abort({ ...(handle as OpenCodeHandle), sessionId: 'ses_gone' })
