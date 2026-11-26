@@ -4,7 +4,7 @@ Headshots, German Bewerbungsfotos, application, CV, LinkedIn and passport-style 
 
 ## Rules (a reference photo is attached: an edit)
 
-- **Describe only the delta the brief names.** Never add a change of posture, head tilt, expression, grooming, age, weight or skin on your own. A skin, posture or expression change is written only when the brief asks for it.
+- **Describe only the delta the brief names.** Never add a change of posture, head tilt, expression, grooming, age, weight or skin on your own. A posture or expression change, or the removal of a lighting artefact (flash redness, shine), is written only when the brief asks for it; smoothing, slimming or rejuvenating is not an identity-keeping edit (`policy.md`).
 - An application photo or headshot brief implies two deltas of the format: reframing to head and shoulders, and studio relighting. It does not imply a new outfit. An unnamed background becomes a seamless neutral light-grey studio backdrop. A brief that asks for one change only ("change the jacket", "only the background") gets that one change and nothing else.
 - "FULL" aggressiveness means writing the skeleton below completely. It never means more changes.
 - **No film grain, no noise, no imperfection effects** on a headshot, although `core.md` suggests them for photorealism.

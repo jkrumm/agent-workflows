@@ -58,7 +58,7 @@ export const ImageInput = z
       .enum(INTENTS)
       .optional()
       .describe(
-        'Generate, with --enhance: pin the kind of image so the planner loads its playbook file; --intent icon for a logo or app icon (default: the planner detects it, without the intent file)',
+        'Generate, with --enhance: pin the kind of image so the planner loads its playbook file; --intent icon for a logo or app icon (default: the planner detects it, without the intent file; only a headshot or application photo brief loads the portrait one)',
       ),
   })
   .strict()

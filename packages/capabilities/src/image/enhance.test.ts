@@ -169,7 +169,14 @@ describe('image.enhance', () => {
       'new profile picture',
     ])
       expect(hintedIntent(text)).toBe('portrait')
-    for (const text of ['a lighthouse in portrait orientation', 'a poster for a job application', 'an oil portrait'])
+    for (const text of [
+      'a lighthouse in portrait orientation',
+      'a poster for a job application',
+      'an oil portrait',
+      'overhead shot of a ramen bowl',
+      'side profile portrait of a car',
+      'a Kompassbild',
+    ])
       expect(hintedIntent(text)).toBe('auto')
   })
 

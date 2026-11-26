@@ -16,7 +16,7 @@ Our upstream is more permissive than public-API reports: a photoreal named-celeb
 
 13 of 13 identity-keeping edits of a real, identifiable face passed on sunburst edits (low and high, 1024x1280 and 1600x2000): no input or output block, identity kept. Such an edit is therefore **not** a hard wall.
 
-An **identity-keeping edit** is all of: a reference photo of a person is attached; the brief changes only background, light, framing, outfit or posture; face, age and body stay as they are. Its warning is severity `warn` (code `real_person_reference`, no `predicted_stage`), never `hard` or `rewrite`. It stays a hard wall when the brief also names another real person, involves a minor, sexualises or undresses the person, or asks for any other boundary below. Do not ask who is in the photo or assume it is someone else's.
+An **identity-keeping edit** is all of: a reference photo of a person is attached; the brief changes only background, light, framing, outfit, posture, expression or a lighting artefact (flash redness, shine); facial features, face shape, age and body stay as they are. Its warning is severity `warn` (code `real_person_reference`, no `predicted_stage`), never `hard` or `rewrite`. It stays a hard wall when the brief also names another real person, involves a minor, sexualises or undresses the person, or asks for any other boundary below. Do not ask who is in the photo or assume it is someone else's.
 
 ## Hard boundaries — warn, don't rewrite
 
