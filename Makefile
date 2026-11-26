@@ -6,7 +6,7 @@ help:
 	@echo "make check-fast  the lead tier: install, registry lint, make static, make test-fast, make usage; CI runs make check (the full gate) on the pull request head"
 	@echo "make test-fast  the tests the branch touches (bun test --changed against the merge base with origin/master; the whole suite when a change is outside the import graph): one test slot on the mini"
 	@echo "make static  oxfmt check, oxlint type-aware, tsc: one test slot, which the factory may place on its step host"
-	@echo "make test    bun test --parallel against Postgres (the mini's, or a private cluster on the step host): one test slot, which the factory may place on its step host"
+	@echo "make test    bun test --parallel against a private Postgres cluster (CI: its service): one test slot, which the factory may place on its step host"
 	@echo "make usage   the suites that need the usage-tracker checkout's migrations (USAGE_TESTS); they run where this target runs, never on the step host"
 	@echo "make test-timings  re-record .bun-test-timings.json (how long each test file takes, so the slowest start first); run it on an idle machine and commit the result"
 	@echo "make fmt     apply formatting"
