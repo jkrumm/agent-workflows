@@ -3,8 +3,8 @@
 # Runs the command with the tests' Postgres in its environment (AGW_TEST_PG_URL, USAGE_TEST_PG_URL), from the first of:
 #   1. AGW_TEST_PG_URL already set (CI's service container, a developer's own database): the command runs as it is.
 #   2. secrets-run on PATH (the mini): the maintained Postgres, with the role from .env.test.tpl. One command at a time holds
-#      /tmp/agent-workflows-check.lock (lockf, CHECK_LOCK_WAIT seconds, exit 75 when it passes): the role's 48 connections are
-#      shared with the live processes, and a full test run alone peaks at 35. Inside a factory slot already held, the wait
+#      /tmp/agent-workflows-check.lock (lockf, CHECK_LOCK_WAIT seconds, exit 75 when it passes): the role's 64 connections are
+#      shared with the live processes, and a full test run alone peaks at 38. Inside a factory slot already held, the wait
 #      counts toward the slot's 30 min run limit, hence 20 min.
 #   3. PG_BIN_DIR set (the step image on the factory's step host, which has secrets-run nowhere): a private cluster in a
 #      temp directory on a free loopback port, trust auth, stopped and removed when the command ends. The superuser is the
