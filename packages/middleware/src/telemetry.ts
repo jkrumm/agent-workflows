@@ -272,14 +272,16 @@ export class Telemetry {
   async flush(): Promise<boolean> {
     const ended = this.counter.ended
     let timer: ReturnType<typeof setTimeout> | undefined
+    const flushed = this.provider.forceFlush().then(
+      () => true,
+      (err: unknown) => {
+        this.logger.error('telemetry: flush failed', { error: errorMessage(err) })
+        return false
+      },
+    )
     const ok = await Promise.race([
-      this.provider.forceFlush().then(
-        () => this.exporter.drained().then(() => true),
-        (err: unknown) => {
-          this.logger.error('telemetry: flush failed', { error: errorMessage(err) })
-          return false
-        },
-      ),
+      // A failed batch rejects forceFlush at once, with another one possibly still under way.
+      flushed.then((done) => this.exporter.drained().then(() => done)),
       new Promise<false>((resolve) => {
         timer = setTimeout(() => resolve(false), this.flushTimeoutMs)
         timer.unref()
