@@ -321,16 +321,17 @@ async function held(t: ReturnType<typeof setup>, prompt = '[hold] work') {
 }
 
 const STEP = { runId: 'run-1', stepId: 'agent' }
-const MESSAGE_READ = /^GET \/api\/session\/[^/]+\/message$/
-const messageReads = (t: ReturnType<typeof setup>) => t.fake.requests.filter((r) => MESSAGE_READ.test(r)).length
+/** One per poll. Not `/message`: a wait's first read pages through the session, so it makes two of those alone. */
+const POLL_READ = /^GET \/api\/session\/[^/]+\/inbox$/
+const polls = (t: ReturnType<typeof setup>) => t.fake.requests.filter((r) => POLL_READ.test(r)).length
 /**
- * Waits until the wait in flight has taken in everything added so far. Its polls run one after another: a read that
- * began before the call may have missed the change, the next one sees it, and the one after starts only once that
- * one (nudge included) is fully handled.
+ * Waits until the wait in flight has taken in everything added so far. Its polls run one after another: a poll that
+ * began before the call may have missed the change (and may not have arrived yet), the next one sees it, and the one
+ * after starts only once that one (nudge included) is fully handled.
  */
 async function settle(t: ReturnType<typeof setup>) {
-  const from = messageReads(t)
-  await until(() => messageReads(t) >= from + 2, 'two more polls of the wait')
+  const from = polls(t)
+  await until(() => polls(t) >= from + 3, 'three more polls of the wait')
 }
 async function until(check: () => boolean, label: string, ms = 10_000) {
   const deadline = Date.now() + ms
