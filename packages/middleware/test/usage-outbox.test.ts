@@ -172,7 +172,10 @@ describe('usage outbox', () => {
       expect(m2).toMatchObject({ cost_reported_usd: null, raw: { unpricedCalls: 1 } })
       expect(logger.lines.some((l) => l.message.startsWith('usage outbox: flush failed'))).toBe(true)
 
-      // Nothing left: a further flush posts nothing.
+      // Nothing left: a further flush posts nothing. The tickers stop first: a flush while one of their drains is still in
+      // flight joins it and answers with that drain's totals.
+      ticking = false
+      await Promise.all(tickers)
       const before = usage.posts
       expect(await outboxes[0]?.flush()).toMatchObject({ posted: 0, marked: 0, error: null })
       expect(usage.posts).toBe(before)
