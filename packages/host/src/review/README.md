@@ -162,7 +162,7 @@ held. Never downgraded. It is a runaway guard far above the factory's busiest da
 
 For each first-parent commit `c` of the range: required = `routeRange(c^, c)` (none → nothing needed). Covered by a
 submitted job `J` of the repo from the last 30 days when `J.base` ≤ `c^`, `J.head` ≥ `c` or `J.head_tree == c^{tree}`
-(a snapshot later committed as is) or `routeRange(J.head, c)` is none or `c`'s patch equals `J`'s (below), and the
+(a snapshot later committed as is) or `routeRange(J.head, c)` is none or `c` repeats `J`'s change (below), and the
 thread's max tier up to `J.round` ≥ required (round 2+ routes only its fix diff), **and** the thread has no open `important` finding (`disposition =
 open`; `nit` and `pre-existing` never block). A fixed, wrong, intentional or irrelevant finding is settled and covers
 again; a `fixed` one re-reported is reopened by submit. A commit reviewed at its tier but blocked this way is uncovered
@@ -172,7 +172,7 @@ with `reason: 'open-important'` and the blocking `findings` ids.
 ship can tell a review that was never recorded from one that does not match. A *related* job is one of the last 30 days
 whose `base` ≤ `c^` and whose files include one of the commit's. `no-review`: no related job. `tier-too-low`: related
 jobs, none at the tier `c` needs (`related` names the newest three). `stale`: a related job at the tier exists, but its
-head is neither `c`'s tree, nor a descendant of `c`, nor the same patch, nor `c` plus changes that route none
+head is neither `c`'s tree, nor a descendant of `c`, nor the same patch or replay, nor `c` plus changes that route none
 (`related` as above). `open-important`: above. `unreviewed`: a job at the tier exists, but its reply left out files the commit touches (`unreviewed` names them; the next prepare on the thread reads them). `state` is `covered`, `no-review` (every uncovered commit is
 `no-review`) or `uncovered`. A range `covered` could not read is not an answer: the call fails (non-zero exit, a
 message naming the git or ledger read), never `covered: false`.
@@ -181,15 +181,21 @@ message naming the git or ledger read), never `covered: false`.
 yields every commit's parent, tree and subject; one `git rev-list --parents` yields the commit graph of the range's head
 and the jobs' heads, from which every ancestry and "does the head exist" test is answered in process (generation numbers
 cut the walk); REVIEW.md of a revision is read once. The router runs once per commit, four commits at a time. The tests
-run cheapest first, each over every eligible job before the next (tree or history match; patch-id; none-tier delta), so a
+run cheapest first, each over every eligible job before the next (tree or history match; patch-id; replay; none-tier delta), so a
 covered commit costs no git process per job, and the git-backed ones run only for a job whose files include one of the
 commit's. Measured on the live ledger, 8 commits at load 14: 41 s before, 2 s after, the same verdicts.
 
-**Patch-id match.** A lead reviews `--scope uncommitted`, fixes, rebases on a master that moved and squash-merges, so the
-merged commit's tree is never the reviewed tree. The fourth test covers that: `git patch-id --stable` of `c^..c` equals
-that of `J.diff_base..J.head` (the snapshot commit stays in the caller's object store; gone → no match). The id ignores
-context lines and line numbers, so a rebase over lines the change does not touch keeps it; a conflict resolution that
-rewrites a `+`/`-` line, or a fix after the last submitted round, changes it. Of a multi-round thread only the round whose
-patch equals the merged one matches. Tier, `J.base` ≤ `c^` and the open-important block apply unchanged. Both ids are
-computed lazily (only after the cheaper tests failed) and once per job and per commit; an empty diff or a failed git call
-is no match, never an error.
+**Patch-id and replay match.** A lead reviews, fixes, rebases on a master that moved and squash-merges, so the merged
+commit's tree is never the reviewed tree. Two tests cover that, each against the same *reviewed changes*: `J`'s whole
+diff (`J.diff_base..J.head`; a snapshot commit stays in the caller's object store, gone → no match), the cumulative diff
+of a multi-round thread up to `J` (from the first round's `diff_base`), and each commit of `J`'s diff (a rebase-merge).
+
+1. **Patch-id:** `git patch-id --stable` of `c^..c` equals the change's. The id ignores line numbers but not context
+   lines, so a rebase keeps it only while the lines around the change stay as they were.
+2. **Replay:** `git merge-tree --write-tree --merge-base=<change base> c^ <change head>` prints exactly `c`'s tree.
+   Master changing a context line of the change keeps it covered. A conflict is no match, and neither is any line of
+   `c` that differs from git's own merge: a conflict resolution, a fix after the last submitted round, an added line
+   moved elsewhere. The merge runs only for a change whose context-free patch-id (`--unified=0`) equals `c`'s.
+
+Tier, `J.base` ≤ `c^` and the open-important block apply unchanged. Ids and replays are computed lazily (only after the
+cheaper tests failed) and once per change and commit; an empty diff or a failed git call is no match, never an error.

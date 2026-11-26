@@ -26,11 +26,19 @@ export const isAncestor = async (git: GitRunner, cwd: string, a: string, b: stri
   (await tryGit(git, cwd, ['merge-base', '--is-ancestor', a, b])) !== null
 
 /**
- * The stable patch-id of `git diff base head`: equal for two diffs that add and remove the same lines, whatever the
- * context or the line numbers around them. null for an empty diff or any failed git call (never an error).
+ * The stable patch-id of `git diff base head`: equal for two diffs with the same added, removed **and context** lines,
+ * whatever the line numbers. `context: 0` leaves the context out, so it also matches added lines that sit somewhere else
+ * in the file: a filter, never proof on its own. null for an empty diff or any failed git call (never an error).
  */
-export async function patchId(git: GitRunner, cwd: string, base: string, head: string): Promise<string | null> {
-  const diff = await tryGit(git, cwd, ['diff', '--no-color', '--no-ext-diff', '--no-renames', base, head])
+export async function patchId(
+  git: GitRunner,
+  cwd: string,
+  base: string,
+  head: string,
+  options: { context?: 0 } = {},
+): Promise<string | null> {
+  const unified = options.context === undefined ? [] : [`--unified=${options.context}`]
+  const diff = await tryGit(git, cwd, ['diff', '--no-color', '--no-ext-diff', '--no-renames', ...unified, base, head])
   if (!diff?.trim()) return null
   try {
     const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')))
@@ -47,6 +55,28 @@ export async function patchId(git: GitRunner, cwd: string, base: string, head: s
   } catch {
     return null
   }
+}
+
+/**
+ * The tree of `git diff base head` applied to `onto` by git's own three-way merge, as a rebase does it. null on a
+ * conflict or any failed git call. Only unreferenced objects land in the object store.
+ */
+export async function replayTree(
+  git: GitRunner,
+  cwd: string,
+  base: string,
+  head: string,
+  onto: string,
+): Promise<string | null> {
+  const out = await tryGit(git, cwd, [
+    'merge-tree',
+    '--write-tree',
+    '--no-messages',
+    `--merge-base=${base}`,
+    onto,
+    head,
+  ])
+  return out?.split('\n')[0]?.trim() || null
 }
 
 const commitOf = async (git: GitRunner, cwd: string, ref: string): Promise<string> => {

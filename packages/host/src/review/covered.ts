@@ -7,7 +7,7 @@
 // for a job that touched the commit's files, after the free tests failed.
 import type { ReviewContext } from './context.ts'
 import type { Job } from './ledger.ts'
-import { patchId, repoIdentity, resolveRoot, tryGit } from './repo.ts'
+import { patchId, replayTree, repoIdentity, resolveRoot, tryGit } from './repo.ts'
 import { atLeast, type GitRunner, maxTier, routeRange, type Tier } from './route.ts'
 import { type CoveredOutputValue, ReviewError } from './schema.ts'
 import { scopeProblem, splitRange } from './scope.ts'
@@ -156,12 +156,15 @@ export async function covered(ctx: ReviewContext, input: { cwd: string; range: s
   const graphOf = memo<Graph>()
   const graph = () => graphOf('graph', () => commitGraph(git, root, tip, [...new Set(candidates.map((j) => j.head))]))
 
-  // A reviewed change that was rebased or replayed: another tree, the same patch. Two shapes land it: a squash-merge (one
-  // commit whose patch is the whole job's) and a rebase-merge (one commit per job commit, every SHA new, each patch
-  // unchanged). Computed lazily, once per job and once per commit, and only for a job that touched the commit's files.
-  const jobPatch = memo<string | null>()
-  const commitPatch = memo<string | null>()
-  const jobCommitPatches = memo<Set<string>>()
+  // A reviewed change that was rebased or replayed: another tree. Two shapes land it: a squash-merge (one commit that
+  // carries the whole job's change) and a rebase-merge (one commit per job commit, every SHA new). Both are matched
+  // first by equal patch-id, then by replaying the reviewed change onto the commit's parent. Computed lazily, once per
+  // (base, head), and only for a job that touched the commit's files.
+  const patchIds = memo<string | null>()
+  const idOf = (base: string, head: string, options: { context?: 0 } = {}) =>
+    patchIds(`${options.context ?? 'full'} ${base} ${head}`, () => patchId(git, root, base, head, options))
+  const replays = memo<string | null>()
+  const jobCommits = memo<[parent: string, sha: string][]>()
   // A multi-round thread chains: round N's diffBase is round N-1's head, so a squash of the whole branch equals no single
   // job's patch but the cumulative one, from the first round's diffBase to this job's head.
   const chainStart = (job: Job): string => {
@@ -174,26 +177,40 @@ export async function covered(ctx: ReviewContext, input: { cwd: string; range: s
       start = prev
     }
   }
-  const samePatch = async (job: Job, parent: string, sha: string): Promise<boolean> => {
-    const mine = await commitPatch(sha, () => patchId(git, root, parent, sha))
-    if (!mine) return false // an empty or unreadable diff matches nothing, and no job's patch needs computing
-    // a job head that no longer exists fails the diff → null → no match
-    if (mine === (await jobPatch(job.id, () => patchId(git, root, job.diffBase, job.head)))) return true
+  // The reviewed changes a commit can repeat, cheapest first: the job's whole diff, the thread's chain up to it, each
+  // of its commits. A job head that no longer exists fails every git call on it: no match.
+  const anyChange = async (job: Job, matches: (base: string, head: string) => Promise<boolean>): Promise<boolean> => {
+    if (await matches(job.diffBase, job.head)) return true
     const first = chainStart(job)
-    if (
-      first !== job.diffBase &&
-      mine === (await jobPatch(`${job.id}:chain`, () => patchId(git, root, first, job.head)))
-    ) {
-      return true
-    }
-    const each = await jobCommitPatches(job.id, async () => {
-      const listed = await tryGit(git, root, ['rev-list', '--reverse', '--no-merges', `${job.diffBase}..${job.head}`])
-      const commits = listed?.split('\n').filter(Boolean) ?? []
-      // a job commit's parent is `<sha>^`: no merges, so it is the one parent the commit has
-      const ids = await pooled(commits, CONCURRENCY, (c) => commitPatch(c, () => patchId(git, root, `${c}^`, c)))
-      return new Set(ids.filter((id): id is string => id !== null))
+    if (first !== job.diffBase && (await matches(first, job.head))) return true
+    const commits = await jobCommits(job.id, async () => {
+      // no merges, so each line is a commit and its one parent; with real SHAs a one-commit job is the same (base, head)
+      // as its whole diff and is asked about once
+      const range = `${job.diffBase}..${job.head}`
+      const listed = await tryGit(git, root, ['rev-list', '--parents', '--reverse', '--no-merges', range])
+      return (listed?.split('\n') ?? []).flatMap((line): [string, string][] => {
+        const [sha, parent] = line.split(' ')
+        return sha && parent ? [[parent, sha]] : []
+      })
     })
-    return each.has(mine)
+    return (await pooled(commits, CONCURRENCY, ([base, head]) => matches(base, head))).includes(true)
+  }
+  const samePatch = async (job: Job, parent: string, sha: string): Promise<boolean> => {
+    const mine = await idOf(parent, sha)
+    if (!mine) return false // an empty or unreadable diff matches nothing, and no job's patch needs computing
+    return anyChange(job, async (base, head) => (await idOf(base, head)) === mine)
+  }
+  // A master that changed a context line of the reviewed change alters its patch-id but not the change. Git's own merge
+  // decides: the commit is covered when replaying the reviewed change onto its parent gives exactly its tree. The
+  // context-free patch-id only spares a merge per (commit, job) pair for changes that cannot give that tree.
+  const sameReplay = async (job: Job, parent: string, sha: string, tree: string): Promise<boolean> => {
+    const mine = await idOf(parent, sha, { context: 0 })
+    if (!mine || !(await graph()).has(job.head)) return false
+    return anyChange(job, async (base, head) => {
+      if ((await idOf(base, head, { context: 0 })) !== mine) return false
+      const replayed = await replays(`${base} ${head} ${parent}`, () => replayTree(git, root, base, head, parent))
+      return replayed === tree
+    })
   }
 
   const examine = async (fact: CommitFacts): Promise<CoveredOutputValue['commits'][number]> => {
@@ -222,6 +239,7 @@ export async function covered(ctx: ReviewContext, input: { cwd: string; range: s
     const ways: ((job: Job) => boolean | Promise<boolean>)[] = [
       (job) => job.headTree === tree || reaches(sha, job.head),
       (job) => overlaps(job) && samePatch(job, parent, sha),
+      (job) => overlaps(job) && sameReplay(job, parent, sha, tree),
       async (job) =>
         overlaps(job) &&
         has(job.head) &&

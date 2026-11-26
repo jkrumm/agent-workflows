@@ -806,6 +806,65 @@ describe('covered', () => {
       expect(out.commits[0]).toMatchObject({ sha: squash, coveredBy: r2.jobId })
     })
 
+    // master changes line8: two lines above the change, so inside its diff context, and git merges both without conflict
+    const nearby = (text: string) => text.replace('line8 = 8', 'line8 = 80')
+
+    test('a base that changes a context line of the change keeps a rebased commit and a squash covered', async () => {
+      const s = service()
+      const root = repo({ 'REVIEW.md': '---\nnone: [docs/**]\n---\n', 'src/a.ts': body })
+      const start = git(root, 'rev-parse', 'HEAD')
+      git(root, 'checkout', '-q', '-b', 'feature')
+      const original = commit(root, { 'src/a.ts': edited }, 'reviewed')
+      const job = await ready(s.prepare({ cwd: root, scope: `${start}..HEAD` }))
+      await s.submit({ jobId: job.jobId, attempt: 1, reply: fakeReviewer(job.jobDir) })
+      git(root, 'checkout', '-q', '-b', 'landed', start)
+      const upstream = commit(root, { 'src/a.ts': nearby(body) }, 'context line moved')
+      git(root, 'cherry-pick', original)
+      const rebased = git(root, 'rev-parse', 'HEAD')
+      const out = await s.covered({ cwd: root, range: `${upstream}..${rebased}` })
+      expect(out.commits.map((c) => [c.sha, c.coveredBy])).toEqual([[rebased, job.jobId]])
+    })
+
+    test('a squash of a two-round thread over a changed context line is covered', async () => {
+      const s = service()
+      const root = repo({ 'REVIEW.md': '---\nnone: [docs/**]\n---\n', 'src/a.ts': body })
+      const start = git(root, 'rev-parse', 'HEAD')
+      const roundTwo = edited.replace('line15 = 15', 'line15 = 150')
+      git(root, 'checkout', '-q', '-b', 'feature')
+      commit(root, { 'src/a.ts': edited }, 'round one')
+      const r1 = await ready(s.prepare({ cwd: root, scope: `${start}..HEAD` }))
+      await s.submit({ jobId: r1.jobId, attempt: 1, reply: fakeReviewer(r1.jobDir) })
+      commit(root, { 'src/a.ts': roundTwo }, 'round two')
+      const r2 = await ready(s.prepare({ cwd: root, scope: `${start}..HEAD` }))
+      await s.submit({ jobId: r2.jobId, attempt: 1, reply: fakeReviewer(r2.jobDir) })
+      git(root, 'checkout', '-q', '-b', 'landed', start)
+      const upstream = commit(root, { 'src/a.ts': nearby(body) }, 'context line moved')
+      const squash = commit(root, { 'src/a.ts': nearby(roundTwo) }, 'squash')
+      const out = await s.covered({ cwd: root, range: `${upstream}..${squash}` })
+      expect(out.commits.map((c) => [c.sha, c.coveredBy])).toEqual([[squash, r2.jobId]])
+    })
+
+    test('added lines moved or edited after the review stay uncovered over a changed context line', async () => {
+      const added = 'export const added = 1\n'
+      const s = service()
+      const root = repo({ 'REVIEW.md': '---\nnone: [docs/**]\n---\n', 'src/a.ts': body })
+      const insert = (text: string, after: string, extra = added) => text.replace(after, `${after}${extra}`)
+      write(root, 'src/a.ts', insert(body, 'line10 = 10\n'))
+      const job = await ready(s.prepare({ cwd: root }))
+      await s.submit({ jobId: job.jobId, attempt: 1, reply: fakeReviewer(job.jobDir) })
+      git(root, 'checkout', '-q', 'src/a.ts')
+      const upstream = commit(root, { 'src/a.ts': nearby(body) }, 'context line moved')
+      for (const text of [
+        insert(nearby(body), 'line17 = 17\n'), // the same added line, elsewhere
+        insert(nearby(body), 'line10 = 10\n', 'export const added = 2\n'),
+      ]) {
+        git(root, 'checkout', '-q', '-B', 'landed', upstream)
+        const sha = commit(root, { 'src/a.ts': text }, 'changed after review')
+        const out = await s.covered({ cwd: root, range: `${upstream}..${sha}` })
+        expect(out.commits[0]).toMatchObject({ sha, coveredBy: null, reason: 'stale' })
+      }
+    })
+
     test('an edit after the last submitted round leaves it uncovered', async () => {
       const { s, root, upstream } = await reviewed()
       const squash = commit(root, { 'src/a.ts': `${moved(edited)}export const afterReview = 1\n` }, 'squash plus fix')
@@ -834,7 +893,7 @@ describe('covered', () => {
     })
   })
 
-  describe('a rebase-merged multi-commit change (per-commit patch-ids)', () => {
+  describe('a rebase-merged multi-commit change (per commit)', () => {
     const files = { 'REVIEW.md': '---\nnone: [docs/**]\n---\n', 'src/a.ts': lines(20), 'src/b.ts': lines(20) }
 
     // a 3-commit job, reviewed as one range; master moves; then each commit is replayed with a new SHA
@@ -864,6 +923,15 @@ describe('covered', () => {
       const out = await s.covered({ cwd: root, range: `${upstream}..HEAD` })
       expect(out.commits.map((c) => [c.sha, c.coveredBy])).toEqual(landed.map((sha) => [sha, job.jobId]))
       expect(out.covered).toBe(true)
+    })
+
+    test('a base that changes a context line of one commit keeps every replayed commit covered', async () => {
+      const { s, root, job, originals } = await replayed()
+      git(root, 'checkout', '-q', '-B', 'landed', `${originals[0]}^`)
+      const upstream = commit(root, { 'src/a.ts': lines(20).replace('line8 = 8', 'line8 = 80') }, 'context line moved')
+      for (const sha of originals) git(root, 'cherry-pick', sha)
+      const out = await s.covered({ cwd: root, range: `${upstream}..HEAD` })
+      expect(out.commits.map((c) => c.coveredBy)).toEqual([job.jobId, job.jobId, job.jobId])
     })
 
     test('a commit added after the reviewed ones stays uncovered', async () => {
