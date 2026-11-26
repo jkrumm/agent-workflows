@@ -92,6 +92,7 @@ class SpanCounter implements SpanProcessor {
 class LoggingExporter implements SpanExporter {
   exported = 0
   failed = 0
+  private readonly inFlight = new Set<Promise<void>>()
 
   constructor(
     private readonly inner: SpanExporter,
@@ -99,7 +100,11 @@ class LoggingExporter implements SpanExporter {
   ) {}
 
   export(spans: ReadableSpan[], done: (result: ExportResult) => void): void {
+    const settled = Promise.withResolvers<void>()
+    this.inFlight.add(settled.promise)
     this.inner.export(spans, (result) => {
+      this.inFlight.delete(settled.promise)
+      settled.resolve()
       if (result.code === ExportResultCode.SUCCESS) this.exported += spans.length
       else {
         this.failed += spans.length
@@ -110,6 +115,11 @@ class LoggingExporter implements SpanExporter {
       }
       done(result)
     })
+  }
+
+  /** The exports under way now. `BatchSpanProcessor.forceFlush` does not wait for one its timer started. */
+  async drained(): Promise<void> {
+    await Promise.all(this.inFlight)
   }
 
   shutdown(): Promise<void> {
@@ -264,7 +274,7 @@ export class Telemetry {
     let timer: ReturnType<typeof setTimeout> | undefined
     const ok = await Promise.race([
       this.provider.forceFlush().then(
-        () => true,
+        () => this.exporter.drained().then(() => true),
         (err: unknown) => {
           this.logger.error('telemetry: flush failed', { error: errorMessage(err) })
           return false
