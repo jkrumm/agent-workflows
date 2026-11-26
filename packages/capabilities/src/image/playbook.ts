@@ -30,7 +30,7 @@ const read = (key: string): string =>
 
 /** Briefs that name a headshot or an application, CV, profile or passport photo; "portrait orientation" is not one. */
 const PORTRAIT_BRIEF =
-  /head[- ]?shot|bewerbungs-?(foto|bild)|pass(foto|bild)|\b(application|passport|cv|resume|résumé|linkedin|xing|profile)([- ]style)?[- ](photo|picture|portrait|image)/i
+  /\b(head[- ]?shot|bewerbungs-?(foto|bild)|pass(foto|bild)|profile[- ](photo|picture)|(application|passport|cv|resume|résumé|linkedin|xing)([- ]style)?[- ](photo|foto|picture|portrait|image))/i
 
 /**
  * The intent file `auto` loads before the model has detected anything. Only `portrait` has one: its rules (change only

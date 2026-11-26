@@ -95,7 +95,7 @@ A mark is not one prompt and one result. The sequence that worked (found for sof
 
 1. **Breadth round.** About 12 prompts that differ on purpose (subject metaphor, form, palette), each `agw image "<prompt>"
    --enhance --intent icon --quality low --size 1024x1024 --background transparent`. Without `--intent icon` the planner
-   detects the intent but loads none of the intent files, so the mark rules below never reach it; `--intent` needs `--enhance`.
+   detects the intent but loads none of the intent files (a headshot brief is the exception, §An application photo), so the mark rules below never reach it; `--intent` needs `--enhance`.
    Each prompt states the mark's five needs (below); only the variable part differs.
 2. **The owner's pick.** Number the results on one contact sheet and show it; the owner names a number. A mark is chosen
    by eye, never by a score.
