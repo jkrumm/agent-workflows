@@ -160,6 +160,8 @@ const INTENTS = [
   'article',
   'figure-art',
   'texture',
+  // The host's own: the studio's enum has no `portrait` yet, so the door never answers it unasked (`convert.ts`).
+  'portrait',
 ] as const
 const PLAN_MODES = ['auto', 'full', 'gaps', 'off'] as const
 const MAX_PROMPT_FRAGMENT_WORDS = 40

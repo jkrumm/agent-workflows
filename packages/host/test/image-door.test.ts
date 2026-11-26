@@ -756,6 +756,14 @@ describe('POST /door/image/enhance', () => {
     expect(enhanced[1]?.input).not.toHaveProperty('overrides')
   })
 
+  test("a detected portrait answers 'auto', which the studio app's enum holds; a pinned one is echoed", async () => {
+    plan = () => ({ ...planned, intent: { detected: 'portrait', confidence: 0.9 } })
+    const detected = await post('/door/image/enhance', { brief: 'a headshot', has_references: true })
+    expect(planResponseSchema.parse(await detected.json()).intent).toEqual({ detected: 'auto', confidence: 0.9 })
+    const pinned = await post('/door/image/enhance', { brief: 'a headshot', intent: 'portrait' })
+    expect(planResponseSchema.parse(await pinned.json()).intent.detected).toBe('portrait')
+  })
+
   test('an unpriced plan reports 0, the planner failing is a 502, a bad request is a 400', async () => {
     plan = () => ({ ...planned, estimatedCost: null })
     expect(

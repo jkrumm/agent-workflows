@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
  * doctrine the planner is conditioned on. Bumped whenever a file changes in a way that affects planner output; every plan
  * echoes it. The files sit outside `src/` on purpose: they name the image models, and model ids live only in the route table.
  */
-export const PLAYBOOK_VERSION = '6'
+export const PLAYBOOK_VERSION = '7'
 
 const CORE_SECTIONS = ['core', 'settings', 'policy'] as const
 export const INTENTS = [
@@ -18,6 +18,7 @@ export const INTENTS = [
   'article',
   'figure-art',
   'texture',
+  'portrait',
 ] as const
 export type Intent = (typeof INTENTS)[number]
 
@@ -26,6 +27,16 @@ const FILE_OF: Partial<Record<Intent, string>> = { icon: 'icons' }
 
 const read = (key: string): string =>
   readFileSync(new URL(`../../playbook/${key}.md`, import.meta.url), 'utf8').trimEnd()
+
+/** Briefs that name a headshot or an application, CV, profile or passport photo; "portrait orientation" is not one. */
+const PORTRAIT_BRIEF =
+  /head[- ]?shot|bewerbungs-?(foto|bild)|pass(foto|bild)|\b(application|passport|cv|resume|résumé|linkedin|xing|profile)([- ]style)?[- ](photo|picture|portrait|image)/i
+
+/**
+ * The intent file `auto` loads before the model has detected anything. Only `portrait` has one: its rules (change only
+ * what the brief names) must be in front of the model that writes the prompt, and an unpinned call reads no intent file.
+ */
+export const hintedIntent = (text: string): Intent => (PORTRAIT_BRIEF.test(text) ? 'portrait' : 'auto')
 
 /** The core sections plus the intent's own file (none for `auto`: the model detects the intent), joined by rules. */
 export function composePlaybook(intent: Intent): string {
