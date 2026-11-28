@@ -335,6 +335,10 @@ ${untrustedPreamble({
   - irreversible: a change that cannot be undone, such as data loss;
   - owner_fact: a fact or an action only the owner can supply or perform (a portal, an account, hardware, a physical
     or login step), where taking a default would just assume the world has changed.
+  A wait is in no class, whatever its label. A question whose options are to wait or to drop, or that waits on something
+  outside the factory (a release or fix in another repo, a vault or store to unlock, another person's review), is not the
+  owner's, not even as owner_fact. The Judge answers it with the lead's recommendation (source \`default\`), or hands it
+  back where sending back is allowed. An option that cannot be taken back is still the owner's.
 - answer — everything else. A question outside the classes is answered with the lead's recommendation (source
   \`default\`). "Is this plan right?" and "may I go ahead?" are no question: they get the recommendation. Ordinary
   engineering questions that tests, review and git can check or undo are answers, and so is a choice the plan, the
@@ -420,7 +424,9 @@ This request allows a third verdict, back: the question returns to the lead with
 cases:
 
 - yours: the question is outside the owner's classes, or the repo settles most of it but not outright. The note says so
-  and cites what you found (\`path:line\`); the lead decides, because it knows the code best.
+  and cites what you found (\`path:line\`); the lead decides, because it knows the code best. A wait outside the factory always goes back as yours, and its note
+  names the pointer: \`factory issue defer\` for a wait on a time, an Issue or a review; \`factory errand raise\` for a
+  person's chore (an unlock, a login).
 - not_ready: the question is the owner's, but as asked he could not answer it in ten seconds. The note names what is
   missing: the exhibit to look at (a screenshot, a diff, the page or command output), what each option leads to, what
   changes for him or his users.
