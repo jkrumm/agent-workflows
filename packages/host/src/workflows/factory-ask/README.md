@@ -33,7 +33,7 @@ echo '{"decision":"decision_1","repo":"argo","issue":"…","question":"…","rec
   the owner himself), `spend` (money, or a platform that locks in), `security` (who is trusted or let in), `people` (other
   people's or company data), `irreversible`, `owner_fact` (a portal, an account, hardware, a login step: taking a default
   there would assume the world changed). Everything else is answered with the lead's recommendation (source `default`), or from
-  the plan or facts, with a source; "is this plan right" is no question. A wait outside the factory (a release, a vault to unlock, another person's review) is in no class, even when labelled `owner_fact`: it is answered with the recommendation, or sent back with the `factory issue defer` or `factory errand raise` pointer, and a recommendation to wait or drop is never put to the owner. When unsure: owner.
+  the plan or facts, with a source; "is this plan right" is no question. A question that is only whether to wait on something outside the factory (a release, a vault to unlock, another person's review), or whether to drop the Issue, is in no class, even when labelled `owner_fact`: it is answered with the recommendation, or sent back with the `factory issue defer` or `factory errand raise` pointer. A wait or drop recommendation is never put to the owner as a choice, except an option that cannot be taken back (data loss), which stays his. When unsure: owner.
 - **The Decision may carry three more fields, all optional.** `class` (the lead's or the factory's reading, a claim the three
   conditions check, never a verdict), `facts` (the Issue as filed, scrubbed by the factory, at most 8,000 characters) and `spec`
   (the head of the linked Spec with its Build and Decided sections, at most 20,000). `class` and `facts` join the seat's facts,
@@ -76,7 +76,7 @@ at about $0.006 a call. Move it again only on a new measurement (`agw eval run f
 
 ## Eval
 
-`agw eval run factory-ask [--arm <file>] [--yes]` replays `packages/eval/factory-ask/cases.jsonl` (48 cases): real Decisions and Specs of the
+`agw eval run factory-ask [--arm <file>] [--yes]` replays `packages/eval/factory-ask/cases.jsonl` (50 cases): real Decisions and Specs of the
 factory's database, text as the lead wrote it, scrubbed of private names and hosts (the repo is public), plus a few written for
 the set. The reference is the answer that held (the owner's where he answered, otherwise what the Issue's outcome showed),
 never the Judge's own; each case's `basis` says which. The scorer is deterministic (`packages/eval/src/factory-ask.ts`,
